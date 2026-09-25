@@ -1,7 +1,3 @@
-# Changelog
-
-## [Unreleased]
-
 ### Added
 
 - `disabledFeatures` in `config.json` removes feature groups you do not use from the `subagent` tool, such as agent management, watchdog, panes, missions, lane management, and per-call options like `toolBudget` or `machine`. Their parameters leave the tool schema, the tool description and discovery lists stop mentioning them, and calls that still use them, including workflow children, fail with an error that names the setting. `scheduledRuns.enabled: false` now removes the schedule parameters the same way, and a malformed `scheduledRuns` now fails config loading. Nothing changes unless you opt in; with everything disabled the tool declaration shrinks from 18,319 to 11,570 characters. See [configuration](docs/configuration.md#disabledfeatures). Thanks to [@tmustier](https://github.com/tmustier) for [#2542](https://github.com/nicobailon/pi-subagents/pull/2542).
@@ -15,6 +11,8 @@
 - CI now runs the native tool-activation smoke test on the existing Ubuntu typecheck leg, so dynamic activation and schema-budget regressions are covered by required checks. Thanks to [@quifox](https://github.com/quifox) for [#2528](https://github.com/nicobailon/pi-subagents/pull/2528).
 
 ### Fixed
+
+ - The native Node runner's peer preload no longer redirects Pi SDK CommonJS `require` or `require.resolve` through extension aliases. ESM peer imports remain aliased, while host dependencies resolve from their own package tree.
 
 - Updated the pinned `undici` dependency from 8.10.0 to 8.10.2, which is outside the range of [GHSA-3wwx-pv8p-q78v](https://github.com/advisories/GHSA-3wwx-pv8p-q78v). Projects that install pi-subagents no longer fail `npm audit` because of it; pi-subagents only uses undici's proxy agent, not the affected WebSocket client. Thanks to [@advaitpaliwal](https://github.com/advaitpaliwal) for [#2548](https://github.com/nicobailon/pi-subagents/pull/2548).
 - `/reload`, a session resume, or a pi-web project switch stopped running async workflows and their async children, and launching the script again repeated every child, including ones that had already finished. Async children now keep running, the stop is recorded as `workflow.stopCause: "runtime-replaced"`, and its notice says to relaunch. Relaunching the same script with the same args in that session reuses children that finished successfully and waits for the ones still running instead of starting them again. Failed children run again. Fixes [#2546](https://github.com/nicobailon/pi-subagents/issues/2546).

@@ -14,6 +14,8 @@ Windows remains **experimental**: the full standalone lifecycle matrix has not b
 
 Node-hosted npm Pi keeps its existing runner path and is not affected by this virtual-entrypoint detection defect. Installing only the pi-subagents extension through npm does not change a Bun-compiled Pi host into an npm Pi host.
 
+The native Node runner preloads host peer aliases for ESM imports. It leaves CommonJS `require` and `require.resolve` to the Pi SDK's own package resolution, so an extension alias cannot redirect the host's dependency lookup. The TypeScript jiti path retains its existing TUI alias behavior.
+
 ## Official binary gate
 
 On Linux x64 with Node, npm, tar and bubblewrap installed, provision dependencies and the checksum-pinned release separately from execution:
