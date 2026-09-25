@@ -6,4 +6,4 @@ This file intentionally does not duplicate user-global or tool-level instruction
 
 ## Documentation map
 
-- [Standalone background execution](docs/standalone-background.md) documents npm runner peer aliasing and host resolution boundaries.
+- [Standalone background execution](docs/standalone-background.md) documents npm runner peer aliasing, host resolution, and startup compatibility across package updates.
