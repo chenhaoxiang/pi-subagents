@@ -5,6 +5,7 @@
 ### Fixed
 
 - The native Node runner's peer preload no longer redirects Pi SDK CommonJS `require` or `require.resolve` through extension aliases. ESM peer imports remain aliased, while host dependencies resolve from their own package tree.
+- Long-running npm Pi parents loaded before the 0.71 runner bootstrap split can still launch background children after an on-disk update. The former runner path now enters the shared startup handshake instead of exiting successfully without consuming the config.
 
 ## [0.71.0] - 2026-09-23
 
