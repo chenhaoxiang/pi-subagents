@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+## [0.71.1-fork.1] - 2026-09-26
+
+Fork version-marker release on top of upstream `0.71.0` plus the two merged fork hotfixes listed below. The `0.71.1-fork.1` version distinguishes this fork's builds from the official `0.71.0` and from earlier local commit-pinned installs in logs and package metadata. The package name, functional code, and the runner compatibility contract are unchanged.
+
 ### Fixed
 
 - The native Node runner's peer preload no longer redirects Pi SDK CommonJS `require` or `require.resolve` through extension aliases. ESM peer imports remain aliased, while host dependencies resolve from their own package tree.
