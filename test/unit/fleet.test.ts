@@ -1036,8 +1036,10 @@ describe("native subagent fleet", () => {
 
 	it("renders selectable transcript detail and completed artifact paths within terminal width", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-fleet-render-"));
+		const longRoot = path.join(root, "nested", "x".repeat(118));
+		fs.mkdirSync(longRoot, { recursive: true });
 		try {
-			const asyncDir = writeAsyncRun(root, { id: "async-finished", state: "complete", contexts: ["fork"], output: "FINAL ASYNC OUTPUT" });
+			const asyncDir = writeAsyncRun(longRoot, { id: "async-finished", state: "complete", contexts: ["fork"], output: "FINAL ASYNC OUTPUT" });
 			const state = stateForTest();
 			let closed = false;
 			let renderRequests = 0;
@@ -1047,15 +1049,18 @@ describe("native subagent fleet", () => {
 				theme as never,
 				state,
 				() => { closed = true; },
-				{ asyncDirRoot: root, resultsDir: path.join(root, "results"), refreshMs: 60_000 },
+				{ asyncDirRoot: longRoot, resultsDir: path.join(longRoot, "results"), refreshMs: 60_000 },
 			);
 			try {
-				const lines = component.render(100);
-				assert.ok(lines.some((line) => line.includes("FINAL ASYNC OUTPUT")));
-				assert.ok(lines.some((line) => line.includes("output-0.log")));
-				assert.ok(lines.some((line) => line.includes("worker") && line.includes("[fork]")));
-				assert.ok(lines.some((line) => line.includes("worker.jsonl")));
-				for (const line of lines) assert.ok(visibleWidth(line) <= 100, `line exceeded width: ${line}`);
+				assert.ok(Buffer.byteLength(path.join(asyncDir, "output-0.log")) > 100, "fixture must force a wrapped path");
+				const latest = component.render(100);
+				assert.ok(latest.some((line) => line.includes("FINAL ASYNC OUTPUT")));
+				assert.ok(latest.some((line) => line.includes("worker") && line.includes("[fork]")));
+				for (const line of latest) assert.ok(visibleWidth(line) <= 100, `line exceeded width: ${line}`);
+				// Extract the detail column; line wrapping may split a filename in the middle.
+				const detail = latest.map((line) => line.split("│")[2]?.trim() ?? "").join("");
+				assert.match(detail, /Output:.*output-0\.logSession:/);
+				assert.match(detail, /Session:.*worker\.jsonlTranscript tail/);
 				tui.terminal.rows = 10;
 				assert.ok(component.render(100).length <= 8, "short-terminal render should fit the overlay's 85% height cap");
 				component.handleInput("\x1b[6~");

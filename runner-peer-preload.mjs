@@ -10,7 +10,10 @@ const redirected = new Set([
 if (typeof nodeModule.registerHooks === "function") {
 	nodeModule.registerHooks({
 		resolve(specifier, context, nextResolve) {
-			const alias = nativeRunner ? aliases[specifier] : redirected.has(specifier) && aliases[specifier];
+			// Native host require/require.resolve must keep its own dependency graph.
+			const alias = nativeRunner && context.conditions?.includes("require")
+				? undefined
+				: nativeRunner ? aliases[specifier] : redirected.has(specifier) && aliases[specifier];
 			if (alias) {
 				const target = pathToFileURL(alias).href;
 				return nativeRunner ? { url: target, shortCircuit: true } : nextResolve(target, context);
