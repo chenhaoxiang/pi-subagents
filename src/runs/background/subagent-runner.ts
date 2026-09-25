@@ -5,6 +5,7 @@ import { performance } from "node:perf_hooks";
 import { pathToFileURL } from "node:url";
 import type { Message } from "@earendil-works/pi-ai";
 import { installRunnerHttpDispatcher } from "./runner-http-dispatcher.ts";
+import { startConfiguredSubagentEntrypoint } from "./subagent-runner-bootstrap.ts";
 import { writeAtomicJson } from "../../shared/atomic-json.ts";
 import { writeAsyncResultFile, writePendingAsyncResultFile } from "./result-files.ts";
 import { createFileCoalescer } from "../../shared/file-coalescer.ts";
@@ -5153,4 +5154,9 @@ export async function runConfiguredSubagentExecution(config: SubagentRunConfig, 
 			console.error("Failed to dispose runner child sessions:", error);
 		}
 	}
+}
+
+// Parents loaded before the bootstrap split still spawn this on-disk path.
+if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+	startConfiguredSubagentEntrypoint();
 }
