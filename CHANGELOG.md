@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- The native Node runner's peer preload no longer redirects Pi SDK CommonJS `require` or `require.resolve` through extension aliases. ESM peer imports remain aliased, while host dependencies resolve from their own package tree.
+
 ## [0.71.0] - 2026-09-23
 
 ### Highlights

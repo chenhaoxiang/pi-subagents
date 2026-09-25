@@ -106,11 +106,12 @@ describe("watchdog LSP diagnostics", () => {
 				fs.writeFileSync(commandPath, `#!/bin/sh\nexec "${process.execPath}" "$(dirname "$0")/tls-malformed.js" "$@"\n`, { encoding: "utf-8", mode: 0o755 });
 			}
 
+			// This test checks malformed protocol handling, not a cold-start deadline.
 			const diagnostics = await collectWatchdogLspDiagnostics({
 				cwd: temp,
 				root: temp,
 				changedPaths: ["src/file.ts"],
-				config: { enabled: true, timeoutMs: 500, maxFiles: 10, maxDiagnostics: 10 },
+				config: { enabled: true, timeoutMs: 3_000, maxFiles: 10, maxDiagnostics: 10 },
 			});
 
 			assert.equal(diagnostics.status, "failed");
