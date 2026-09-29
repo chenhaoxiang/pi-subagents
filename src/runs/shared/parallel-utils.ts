@@ -37,6 +37,10 @@ export interface RunnerSubagentStep {
 	/** Original cwd input retained for launch diagnostics. */
 	requestedCwd?: string;
 	model?: string;
+	/** Ordered native Pi models to attempt for automatic provider fallback. */
+	modelCandidates?: string[];
+	/** Candidates skipped before launch because they were unavailable. */
+	skippedModels?: Array<{ model: string; reason: string }>;
 	contextLimit?: number;
 	fast?: boolean;
 	thinking?: string;

@@ -1,5 +1,5 @@
 import * as fs from "node:fs";
-import type { ArtifactPaths, SubagentState, Usage, WaitCompletion, WaitCompletionChild } from "../../shared/types.ts";
+import type { ArtifactPaths, ModelAttempt, SkippedModel, SubagentState, Usage, WaitCompletion, WaitCompletionChild } from "../../shared/types.ts";
 import type { AsyncRunSummary } from "./async-status.ts";
 import { readCompletionReplay, writeCompletionReplay } from "./completion-replay.ts";
 import { fallbackResultPayloadPathForSessionRun, resultFilePath, resultPayloadMatchesSessionRun, resultPayloadPathForSessionRun } from "./result-files.ts";
@@ -25,6 +25,54 @@ function projectedUsage(value: unknown): Usage | undefined {
 	const turns = nonNegativeNumber(record.turns);
 	if (input === undefined || output === undefined || cacheRead === undefined || cacheWrite === undefined || cost === undefined || turns === undefined || !Number.isSafeInteger(turns)) return undefined;
 	return { input, output, cacheRead, cacheWrite, cost, turns };
+}
+
+const MAX_MODEL_EVIDENCE_ENTRIES = 32;
+
+function projectedSkippedModels(value: unknown): SkippedModel[] | undefined {
+	if (!Array.isArray(value)) return undefined;
+	const projected = value.flatMap((entry): SkippedModel[] => {
+		if (!entry || typeof entry !== "object" || Array.isArray(entry)) return [];
+		const record = entry as Record<string, unknown>;
+		const model = asNonEmptyString(record.model);
+		const reason = asNonEmptyString(record.reason);
+		return model && reason ? [{ model, reason }] : [];
+	});
+	return projected.length > 0 ? projected.slice(0, MAX_MODEL_EVIDENCE_ENTRIES) : undefined;
+}
+
+function projectedAttemptedModels(value: unknown): string[] | undefined {
+	if (!Array.isArray(value)) return undefined;
+	const projected = value.flatMap((entry): string[] => {
+		const model = asNonEmptyString(entry);
+		return model ? [model] : [];
+	});
+	return projected.length > 0 ? projected.slice(0, MAX_MODEL_EVIDENCE_ENTRIES) : undefined;
+}
+
+function projectedModelAttempts(value: unknown): ModelAttempt[] | undefined {
+	if (!Array.isArray(value)) return undefined;
+	const projected = value.flatMap((entry): ModelAttempt[] => {
+		if (!entry || typeof entry !== "object" || Array.isArray(entry)) return [];
+		const record = entry as Record<string, unknown>;
+		const model = asNonEmptyString(record.model);
+		if (!model || typeof record.success !== "boolean") return [];
+		const exitCode = record.exitCode === null
+			? null
+			: typeof record.exitCode === "number" && Number.isFinite(record.exitCode)
+				? record.exitCode
+				: undefined;
+		const error = asNonEmptyString(record.error);
+		const usage = projectedUsage(record.usage);
+		return [{
+			model,
+			success: record.success,
+			...(exitCode !== undefined ? { exitCode } : {}),
+			...(error ? { error } : {}),
+			...(usage ? { usage } : {}),
+		}];
+	});
+	return projected.length > 0 ? projected.slice(0, MAX_MODEL_EVIDENCE_ENTRIES) : undefined;
 }
 
 function errorCode(error: unknown): string | undefined {
@@ -95,6 +143,9 @@ export function toWaitCompletion(data: Record<string, unknown>, runId: string): 
 			const sessionFile = asNonEmptyString(child.sessionFile);
 			const error = asNonEmptyString(child.error);
 			const model = asNonEmptyString(child.model);
+			const skippedModels = projectedSkippedModels(child.skippedModels);
+			const attemptedModels = projectedAttemptedModels(child.attemptedModels);
+			const modelAttempts = projectedModelAttempts(child.modelAttempts);
 			const structuredOutput = projectStructuredOutput(child.structuredOutput);
 			const structuredOutputPath = asNonEmptyString(child.structuredOutputPath);
 			const contextOverflow = child.contextOverflow === true;
@@ -110,6 +161,9 @@ export function toWaitCompletion(data: Record<string, unknown>, runId: string): 
 				...(structuredOutputPath ? { structuredOutputPath } : {}),
 				...(error ? { error } : {}),
 				...(model ? { model } : {}),
+				...(skippedModels ? { skippedModels } : {}),
+				...(attemptedModels ? { attemptedModels } : {}),
+				...(modelAttempts ? { modelAttempts } : {}),
 				...(contextOverflow ? { contextOverflow: true } : {}),
 				...(artifactPaths ? { artifactPaths } : {}),
 				...(timeoutRecovery ? { timeoutRecovery } : {}),

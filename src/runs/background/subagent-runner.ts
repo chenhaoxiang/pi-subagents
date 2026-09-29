@@ -95,6 +95,7 @@ import { collectDynamicResults, DynamicFanoutError, materializeDynamicParallelSt
 import { claimRunFanoutBatch, getRunFanoutBudgetSnapshot } from "../shared/run-fanout-budget.ts";
 import { nestedSummaryFromAsyncStatus, projectNestedEvents, resolveNestedAsyncDir, writeNestedEvent } from "../shared/nested-events.ts";
 import { formatSubagentModelVerificationError, isContextOverflow } from "../shared/model-resolution.ts";
+import { formatModelAttemptNote, isRetryableModelFailureAttempt } from "../shared/model-fallback.ts";
 import { processTerminalPath, writeProcessTerminalCandidate, type ProcessTerminalCandidate } from "./process-terminal.ts";
 import { persistRunnerStartupFailure } from "./runner-startup-failure.ts";
 import { currentPidNamespaceScope } from "./pid-namespace.ts";
@@ -257,6 +258,9 @@ interface StepResult {
 	sessionFile?: string;
 	intercomTarget?: string;
 	model?: string;
+	skippedModels?: Array<{ model: string; reason: string }>;
+	attemptedModels?: string[];
+	modelAttempts?: import("../../shared/types.ts").ModelAttempt[];
 	nativeMachine?: import("../../shared/types.ts").SingleResult["nativeMachine"];
 	thinking?: string;
 	requestedModel?: string;
@@ -783,6 +787,9 @@ export async function runSingleStepInner(
 				intercomTarget: imported.intercomTarget,
 				model: imported.model,
 				requestedModel: imported.requestedModel,
+				skippedModels: imported.skippedModels,
+				attemptedModels: imported.attemptedModels,
+				modelAttempts: imported.modelAttempts,
 				contextOverflow: imported.contextOverflow,
 				totalCost: imported.totalCost,
 				usage: imported.usage,
@@ -1066,7 +1073,12 @@ export async function runSingleStepInner(
 		alignForkedSessionCwd(step.sessionFile, effectiveCwd);
 	}
 
-	const candidate = step.model;
+	const modelCandidates = step.modelCandidates?.length ? step.modelCandidates : (step.model ? [step.model] : [undefined]);
+	const skippedModels = step.skippedModels;
+	const attemptedModels: string[] = [];
+	const modelAttempts: import("../../shared/types.ts").ModelAttempt[] = [];
+	let modelIndex = 0;
+	let candidate = modelCandidates[0];
 	let capabilityAudit: import("../shared/capability-ceiling.ts").SubagentCapabilityAudit | undefined;
 	let launchResolvedExtensions = step.launchResolvedExtensions;
 	let finalRequiredOutputMissing: boolean | undefined;
@@ -1085,11 +1097,17 @@ export async function runSingleStepInner(
 	let launchWarningsEmitted = false;
 	const aggregateUsage = emptyUsage();
 	let launched = false;
+	let cumulativeToolCount = 0;
 	let recoveryTask = task;
 	let stagedIndexBaseline: string | undefined;
-	singleLaunch: for (let attemptIndex = 0; attemptIndex < 2; attemptIndex++) {
-		if (ctx.timeoutSignal?.aborted || ctx.stopSignal?.aborted || ctx.skipAcceptance?.()) break singleLaunch;
-		const expectedModelForVerification = candidate && !step.skipPrimaryModelVerification ? candidate : undefined;
+	singleLaunch: while (modelIndex < modelCandidates.length) {
+		candidate = modelCandidates[modelIndex];
+		recoveryTask = task;
+		let attemptIndex = 0;
+		let retryNextModel = false;
+		attemptLoop: while (attemptIndex < 2) {
+			if (ctx.timeoutSignal?.aborted || ctx.stopSignal?.aborted || ctx.skipAcceptance?.()) break singleLaunch;
+		const expectedModelForVerification = candidate && !(step.skipPrimaryModelVerification && modelIndex === 0) ? candidate : undefined;
 		try {
 			assertThinkingWithinCeiling({ model: candidate, configThinking: step.thinking, ceiling: step.thinkingCeiling, agent: step.agent, runId: ctx.id });
 		} catch (error) {
@@ -1224,12 +1242,15 @@ export async function runSingleStepInner(
 			mutationTools: step.mutationTools,
 		}));
 		launched = true;
+		const attemptedModel = candidate ?? run.model ?? "default";
+		if (!attemptedModels.includes(attemptedModel)) attemptedModels.push(attemptedModel);
 		aggregateUsage.input += run.usage.input;
 		aggregateUsage.output += run.usage.output;
 		aggregateUsage.cacheRead += run.usage.cacheRead;
 		aggregateUsage.cacheWrite += run.usage.cacheWrite;
 		aggregateUsage.cost += run.usage.cost;
 		aggregateUsage.turns += run.usage.turns;
+		cumulativeToolCount += run.toolCount;
 		// A parked run still owes output diagnostics when it actually finishes.
 		// Stopped/timedOut runs already have terminal failures, so terminal output diagnostics are deferred.
 		const terminalDiagnosticsEligible = !run.interrupted && !run.stopped && !run.timedOut;
@@ -1339,6 +1360,7 @@ export async function runSingleStepInner(
 		} : undefined;
 		const fileMutationEffect = missingRequiredOutputAfterMutation ? { status: "observed" as const, attempted: true as const, evidence: mutationEvidence } : undefined;
 		finalResult = { ...run, exitCode: effectiveExitCode, model: candidate ?? run.model, error, structuredOutput, structuredOutputFailed: structuredError ? true : undefined, runtimeAcknowledgedExtensions, ...(step.agentContract ? { agentContract: step.agentContract } : {}), ...(fileMutationEffect || settlementDiagnostic ? { effects: { ...(fileMutationEffect ? { fileMutation: fileMutationEffect } : {}), ...(settlementDiagnostic ? { settlementDiagnostic } : {}) } } : {}) } as RunChildSessionResult;
+		modelAttempts.push({ model: attemptedModel, success: effectiveExitCode === 0 && !error, exitCode: effectiveExitCode, error, usage: { ...run.usage } });
 		if (run.stopped || run.timedOut || ctx.timeoutSignal?.aborted || ctx.stopSignal?.aborted || ctx.skipAcceptance?.()) break singleLaunch;
 		if (effectiveExitCode === 0 && !error) break singleLaunch;
 		const recovery = planAbortRecovery({
@@ -1358,7 +1380,8 @@ export async function runSingleStepInner(
 		});
 		if (recovery.action === "resume") {
 			recoveryTask = recovery.prompt;
-			continue singleLaunch;
+			attemptIndex++;
+			continue attemptLoop;
 		}
 		if (recovery.diagnostic) {
 			finalResult.abortRecoveryDiagnostic = recovery.diagnostic;
@@ -1368,7 +1391,18 @@ export async function runSingleStepInner(
 			contextOverflow = true;
 			break singleLaunch;
 		}
+		const retryable = isRetryableModelFailureAttempt({ error, messages: run.messages, toolCount: cumulativeToolCount });
+		if (retryable && cumulativeToolCount === 0 && modelIndex < modelCandidates.length - 1) {
+			retryNextModel = true;
+			break attemptLoop;
+		}
 		break singleLaunch;
+	}
+	if (retryNextModel) {
+		modelIndex++;
+		continue singleLaunch;
+	}
+	break;
 	}
 
 	const rawOutput = finalResult?.finalOutput ?? "";
@@ -1526,6 +1560,9 @@ export async function runSingleStepInner(
 		sessionFile: step.sessionFile,
 		intercomTarget: ctx.childIntercomTarget,
 		model: finalResult?.model,
+		...(modelAttempts.length > 1 ? { modelAttempts } : {}),
+		...(attemptedModels.length > 1 ? { attemptedModels } : {}),
+		...(skippedModels?.length ? { skippedModels } : {}),
 		nativeMachine: finalResult?.nativeMachine,
 		thinking: resolveEffectiveThinking(finalResult?.model, step.thinking),
 		requestedModel: step.requestedModel,
@@ -1936,6 +1973,7 @@ export async function runSubagent(
 					...(transcriptPath ? { transcriptPath } : {}),
 					skills: task.skills,
 					model: task.model,
+					...(task.skippedModels?.length ? { skippedModels: task.skippedModels } : {}),
 					...(task.contextLimit !== undefined ? { contextLimit: task.contextLimit } : {}),
 					thinking: task.thinking,
 					requestedModel: task.requestedModel,
@@ -1990,6 +2028,7 @@ export async function runSubagent(
 				...(transcriptPath ? { transcriptPath } : {}),
 				skills: step.skills,
 				model: step.model,
+				...(step.skippedModels?.length ? { skippedModels: step.skippedModels } : {}),
 				...(step.contextLimit !== undefined ? { contextLimit: step.contextLimit } : {}),
 				thinking: step.thinking,
 				requestedModel: step.requestedModel,
@@ -2221,6 +2260,9 @@ export async function runSubagent(
 				model: step.model,
 				thinking: step.thinking,
 				requestedModel: step.requestedModel,
+				skippedModels: step.skippedModels,
+				attemptedModels: step.attemptedModels,
+				modelAttempts: step.modelAttempts,
 				contextOverflow: step.contextOverflow,
 			})),
 			exitCode: state === "complete" || state === "paused" ? 0 : 1,
@@ -3451,9 +3493,10 @@ export async function runSubagent(
 				}
 				for (const [itemIndex] of materialized.parallel.entries()) {
 					const thinkingOverride = step.thinkingOverrides?.[itemIndex];
-					const model = thinkingOverride ? applyThinkingSuffix(step.parallel.model, thinkingOverride, true) : step.parallel.model;
+					const modelCandidates = step.parallel.modelCandidates?.map((candidate) => applyThinkingSuffix(candidate, thinkingOverride, thinkingOverride !== undefined)).filter((candidate): candidate is string => Boolean(candidate));
+					const candidates = modelCandidates?.length ? modelCandidates : [thinkingOverride ? applyThinkingSuffix(step.parallel.model, thinkingOverride, true) : step.parallel.model];
 					const configThinking = thinkingOverride ? thinkingOverride : step.parallel.thinking;
-					assertThinkingWithinCeiling({ model, configThinking, ceiling: step.parallel.thinkingCeiling, agent: step.parallel.agent, runId: id });
+					for (const model of candidates) assertThinkingWithinCeiling({ model, configThinking, ceiling: step.parallel.thinkingCeiling, agent: step.parallel.agent, runId: id });
 				}
 				if (materialized.collectedOnEmpty) await validateDynamicCollection(step.collect.outputSchema, materialized.collectedOnEmpty);
 				if (!config.runFanoutBudget) throw new Error("Async runner is missing its run fan-out budget identity.");
@@ -3556,7 +3599,8 @@ export async function runSubagent(
 
 			const dynamicSteps = materialized.parallel.map((task, itemIndex) => {
 				const thinkingOverride = step.thinkingOverrides?.[itemIndex];
-				const model = thinkingOverride ? applyThinkingSuffix(step.parallel.model, thinkingOverride, true) : step.parallel.model;
+				const modelCandidates = step.parallel.modelCandidates?.map((candidate) => applyThinkingSuffix(candidate, thinkingOverride, thinkingOverride !== undefined)).filter((candidate): candidate is string => Boolean(candidate));
+				const model = modelCandidates?.[0] ?? (thinkingOverride ? applyThinkingSuffix(step.parallel.model, thinkingOverride, true) : step.parallel.model);
 				const thinking = thinkingOverride ? resolveEffectiveThinking(model, thinkingOverride) : undefined;
 				const outputPath = step.parallel.namespaceOutputPath && step.parallel.outputPath
 					? path.join(path.dirname(step.parallel.outputPath), `dynamic-${stepIndex}`, `${itemIndex}-${step.parallel.agent}`, path.basename(step.parallel.outputPath))
@@ -3583,10 +3627,9 @@ export async function runSubagent(
 					outputPath,
 					label: task.label ?? step.parallel.label,
 					...(step.sessionFiles?.[itemIndex] ? { sessionFile: step.sessionFiles[itemIndex] } : {}),
-					...(thinkingOverride ? {
-						...(model ? { model } : {}),
-						...(thinking ? { thinking } : {}),
-					} : {}),
+					...(model ? { model } : {}),
+					...(modelCandidates?.length ? { modelCandidates } : {}),
+					...(thinkingOverride && thinking ? { thinking } : {}),
 					structuredOutputSchema: step.parallel.structuredOutputSchema ?? step.parallel.structuredOutput?.schema,
 				});
 			});
@@ -3609,6 +3652,7 @@ export async function runSubagent(
 					...(transcriptPath ? { transcriptPath } : {}),
 					...(task.skills ? { skills: task.skills } : {}),
 					...(task.model ? { model: task.model } : {}),
+					...(task.skippedModels?.length ? { skippedModels: task.skippedModels } : {}),
 					...(task.contextLimit !== undefined ? { contextLimit: task.contextLimit } : {}),
 					...(task.thinking ? { thinking: task.thinking } : {}),
 					...(task.thinkingCeiling ? { thinkingCeiling: task.thinkingCeiling } : {}),
@@ -3764,6 +3808,9 @@ export async function runSubagent(
 				setOptionalProperty(requiredStatusStep(statusPayload, fi), "model", singleResult.model);
 				setOptionalProperty(requiredStatusStep(statusPayload, fi), "thinking", resolveEffectiveThinking(singleResult.model, requiredStatusStep(statusPayload, fi).thinking));
 				setOptionalProperty(requiredStatusStep(statusPayload, fi), "requestedModel", singleResult.requestedModel);
+				setOptionalProperty(requiredStatusStep(statusPayload, fi), "skippedModels", singleResult.skippedModels);
+				setOptionalProperty(requiredStatusStep(statusPayload, fi), "attemptedModels", singleResult.attemptedModels);
+				setOptionalProperty(requiredStatusStep(statusPayload, fi), "modelAttempts", singleResult.modelAttempts);
 				setOptionalProperty(requiredStatusStep(statusPayload, fi), "contextOverflow", singleResult.contextOverflow);
 				setOptionalProperty(requiredStatusStep(statusPayload, fi), "totalCost", singleResult.totalCost);
 				if (singleResult.totalCost) {
@@ -3833,6 +3880,9 @@ export async function runSubagent(
 					model: pr.model,
 					thinking: pr.thinking,
 					requestedModel: pr.requestedModel,
+					skippedModels: pr.skippedModels,
+					attemptedModels: pr.attemptedModels,
+					modelAttempts: pr.modelAttempts,
 					contextOverflow: pr.contextOverflow,
 					totalCost: pr.totalCost,
 					usage: pr.usage,
@@ -4183,6 +4233,9 @@ export async function runSubagent(
 						setOptionalProperty(requiredStatusStep(statusPayload, fi), "model", singleResult.model);
 						setOptionalProperty(requiredStatusStep(statusPayload, fi), "thinking", resolveEffectiveThinking(singleResult.model, requiredStatusStep(statusPayload, fi).thinking));
 						setOptionalProperty(requiredStatusStep(statusPayload, fi), "requestedModel", singleResult.requestedModel);
+						setOptionalProperty(requiredStatusStep(statusPayload, fi), "skippedModels", singleResult.skippedModels);
+						setOptionalProperty(requiredStatusStep(statusPayload, fi), "attemptedModels", singleResult.attemptedModels);
+						setOptionalProperty(requiredStatusStep(statusPayload, fi), "modelAttempts", singleResult.modelAttempts);
 						setOptionalProperty(requiredStatusStep(statusPayload, fi), "contextOverflow", singleResult.contextOverflow);
 						setOptionalProperty(requiredStatusStep(statusPayload, fi), "totalCost", singleResult.totalCost);
 						if (singleResult.totalCost) {
@@ -4279,6 +4332,9 @@ export async function runSubagent(
 						model: pr.model,
 						thinking: pr.thinking,
 						requestedModel: pr.requestedModel,
+						skippedModels: pr.skippedModels,
+						attemptedModels: pr.attemptedModels,
+						modelAttempts: pr.modelAttempts,
 						contextOverflow: pr.contextOverflow,
 						totalCost: pr.totalCost,
 						usage: pr.usage,
@@ -4577,6 +4633,9 @@ export async function runSubagent(
 				model: singleResult.model,
 				thinking: singleResult.thinking,
 				requestedModel: singleResult.requestedModel,
+				skippedModels: singleResult.skippedModels,
+				attemptedModels: singleResult.attemptedModels,
+				modelAttempts: singleResult.modelAttempts,
 				contextOverflow: singleResult.contextOverflow,
 				totalCost: singleResult.totalCost,
 				usage: singleResult.usage,
@@ -4663,6 +4722,9 @@ export async function runSubagent(
 			setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "model", singleResult.model);
 			setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "thinking", resolveEffectiveThinking(singleResult.model, requiredStatusStep(statusPayload, flatIndex).thinking));
 			setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "requestedModel", singleResult.requestedModel);
+			setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "skippedModels", singleResult.skippedModels);
+			setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "attemptedModels", singleResult.attemptedModels);
+			setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "modelAttempts", singleResult.modelAttempts);
 			setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "contextOverflow", singleResult.contextOverflow);
 			setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "totalCost", singleResult.totalCost);
 			setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "error", stopped || childStopped ? stopMessage : timedOut ? (timeoutMessage ?? "Subagent timed out.") : singleResult.error);
@@ -4978,6 +5040,9 @@ export async function runSubagent(
 				model: r.model,
 				thinking: r.thinking,
 				requestedModel: r.requestedModel,
+				skippedModels: r.skippedModels,
+				attemptedModels: r.attemptedModels,
+				modelAttempts: r.modelAttempts,
 				contextOverflow: r.contextOverflow,
 				totalCost: r.totalCost,
 				usage: r.usage,

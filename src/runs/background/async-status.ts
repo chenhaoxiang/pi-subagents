@@ -3,7 +3,7 @@ import * as path from "node:path";
 import { formatDuration, formatModelThinking, formatTokens, shortenPath } from "../../shared/formatters.ts";
 import { previewDisplayText } from "../../shared/display-text.ts";
 import { formatActivityLabel, formatParallelOutcome } from "../../shared/status-format.ts";
-import { type ActivityState, type AsyncJobStep, type AsyncParallelGroupStatus, type AsyncStatus, type CostSummary, type Details, type HostStepNode, type HostStepState, type LaunchResolvedChildExtensions, type RuntimeAcknowledgedChildExtensions, type NestedRunSummary, type SteeringStatus, type SubagentRunMode, type TimeoutRecoveryProjection, type TokenUsage, type TurnBudgetState, type UsageBudgetState, type WorktreeNaming, type WorkflowPreflight, type WorkflowGraphSnapshot } from "../../shared/types.ts";
+import { type ActivityState, type AsyncJobStep, type AsyncParallelGroupStatus, type AsyncStatus, type CostSummary, type Details, type HostStepNode, type HostStepState, type LaunchResolvedChildExtensions, type RuntimeAcknowledgedChildExtensions, type ModelAttempt, type NestedRunSummary, type SkippedModel, type SteeringStatus, type SubagentRunMode, type TimeoutRecoveryProjection, type TokenUsage, type TurnBudgetState, type UsageBudgetState, type WorktreeNaming, type WorkflowPreflight, type WorkflowGraphSnapshot } from "../../shared/types.ts";
 import type { ResolvedSubagentCapabilityCeiling, SubagentCapabilityAudit } from "../shared/capability-ceiling.ts";
 import { readStatus } from "../../shared/utils.ts";
 import { attachRootChildrenToSteps, buildNestedRouteIndex, findNestedRouteForRootId, type NestedRoute, projectNestedEvents } from "../shared/nested-events.ts";
@@ -69,6 +69,9 @@ interface AsyncRunStepSummary {
 	contextLimit?: number;
 	thinking?: string;
 	requestedModel?: string;
+	skippedModels?: SkippedModel[];
+	attemptedModels?: string[];
+	modelAttempts?: ModelAttempt[];
 	sessionFile?: string;
 	transcriptPath?: string;
 	error?: string;
@@ -371,6 +374,9 @@ function statusToSummary(asyncDir: string, status: AsyncStatus & { cwd?: string 
 			...(step.thinking ? { thinking: step.thinking } : {}),
 			...(step.thinkingCeiling ? { thinkingCeiling: step.thinkingCeiling } : {}),
 			...(step.requestedModel ? { requestedModel: step.requestedModel } : {}),
+			...(step.skippedModels?.length ? { skippedModels: step.skippedModels.map((model) => ({ ...model })) } : {}),
+			...(step.attemptedModels?.length ? { attemptedModels: [...step.attemptedModels] } : {}),
+			...(step.modelAttempts?.length ? { modelAttempts: step.modelAttempts.map((attempt) => ({ ...attempt, usage: attempt.usage ? { ...attempt.usage } : undefined })) } : {}),
 			...(step.sessionFile ? { sessionFile: step.sessionFile } : {}),
 			...(step.transcriptPath ? { transcriptPath: step.transcriptPath } : {}),
 			...(step.error ? { error: step.error } : {}),

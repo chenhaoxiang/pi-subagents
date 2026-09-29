@@ -267,6 +267,19 @@ export interface Usage {
 	turns: number;
 }
 
+export interface ModelAttempt {
+	model: string;
+	success: boolean;
+	exitCode?: number | null;
+	error?: string;
+	usage?: Usage;
+}
+
+export interface SkippedModel {
+	model: string;
+	reason: string;
+}
+
 export interface ToolBudgetConfig {
 	soft?: number;
 	hard: number;
@@ -1303,6 +1316,12 @@ export interface SingleResult {
 	/** Effective thinking level used by this foreground child, when known. */
 	thinking?: string;
 	requestedModel?: string;
+	/** Models skipped before launch because they were unavailable or out of scope. */
+	skippedModels?: SkippedModel[];
+	/** Models actually attempted for this logical child, in order. */
+	attemptedModels?: string[];
+	/** Per-attempt provider/model result evidence. */
+	modelAttempts?: ModelAttempt[];
 	controlEvents?: ControlEvent[];
 	error?: string;
 	/**
@@ -1383,6 +1402,12 @@ export interface WaitCompletionChild {
 	structuredOutputPath?: string;
 	error?: string;
 	model?: string;
+	/** Models skipped before launch because they were unavailable or out of scope. */
+	skippedModels?: SkippedModel[];
+	/** Models actually attempted for this logical child, in order. */
+	attemptedModels?: string[];
+	/** Per-attempt provider/model result evidence. */
+	modelAttempts?: ModelAttempt[];
 	contextOverflow?: boolean;
 	artifactPaths?: Partial<ArtifactPaths>;
 	timeoutRecovery?: TimeoutRecoveryProjection;
@@ -1420,7 +1445,7 @@ export interface AgentCapabilityRow {
 	aliases?: string[];
 	runner: { type: "pi" } | { type: "external-cli"; adapter?: string; command: string; machine?: string; available: boolean; unavailableReason?: string; capabilities: ExternalCliCapabilities } | { type: "external-job"; provider: string; available?: boolean; capabilities: ExternalJobRunnerStatus["capabilities"] };
 	tools: { ambient: boolean; names: string[]; excludeTools?: string[]; mcpDirectTools: string[]; mutationTools?: string[] };
-	model?: { value?: string; thinking?: string | false };
+	model?: { value?: string; fallbackModels?: string[]; thinking?: string | false };
 	execution?: { defaultAsync?: boolean; timeoutMs?: number };
 	acceptance?: { policy?: AcceptanceInput; role?: AcceptanceRole };
 	output?: { path?: string; mode?: OutputMode };
@@ -2014,6 +2039,12 @@ export interface AsyncStatus {
 		contextLimit?: number;
 		thinkingCeiling?: ThinkingLevel;
 		requestedModel?: string;
+		/** Models skipped before launch because they were unavailable or out of scope. */
+		skippedModels?: SkippedModel[];
+		/** Models actually attempted for this logical child, in order. */
+		attemptedModels?: string[];
+		/** Per-attempt provider/model result evidence. */
+		modelAttempts?: ModelAttempt[];
 		/** True when the child input exceeded the model context window. */
 		contextOverflow?: boolean;
 		totalCost?: CostSummary;
