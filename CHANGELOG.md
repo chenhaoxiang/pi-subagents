@@ -1,3 +1,7 @@
+# Changelog
+
+## [Unreleased]
+
 ### Added
 
 - `disabledFeatures` in `config.json` removes feature groups you do not use from the `subagent` tool, such as agent management, watchdog, panes, missions, lane management, and per-call options like `toolBudget` or `machine`. Their parameters leave the tool schema, the tool description and discovery lists stop mentioning them, and calls that still use them, including workflow children, fail with an error that names the setting. `scheduledRuns.enabled: false` now removes the schedule parameters the same way, and a malformed `scheduledRuns` now fails config loading. Nothing changes unless you opt in; with everything disabled the tool declaration shrinks from 18,319 to 11,570 characters. See [configuration](docs/configuration.md#disabledfeatures). Thanks to [@tmustier](https://github.com/tmustier) for [#2542](https://github.com/nicobailon/pi-subagents/pull/2542).
