@@ -16,6 +16,8 @@
 
 ### Fixed
 
+- Background npm runners now tolerate Pi 1.x hosts that removed the legacy `@earendil-works/pi-agent-core/node` export, while remaining fail-closed for unknown or pre-1.0 hosts that lack the export.
+
  - The native Node runner's peer preload no longer redirects Pi SDK CommonJS `require` or `require.resolve` through extension aliases. ESM peer imports remain aliased, while host dependencies resolve from their own package tree.
 
 - Updated the pinned `undici` dependency from 8.10.0 to 8.10.2, which is outside the range of [GHSA-3wwx-pv8p-q78v](https://github.com/advisories/GHSA-3wwx-pv8p-q78v). Projects that install pi-subagents no longer fail `npm audit` because of it; pi-subagents only uses undici's proxy agent, not the affected WebSocket client. Thanks to [@advaitpaliwal](https://github.com/advaitpaliwal) for [#2548](https://github.com/nicobailon/pi-subagents/pull/2548).
