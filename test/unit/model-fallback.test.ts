@@ -41,7 +41,7 @@ describe("model fallback", () => {
 		]);
 	});
 
-	it("omits the parent model identity from the heterogeneous fallback pool", () => {
+	it("defers the parent model identity until heterogeneous fallbacks are exhausted", () => {
 		const evidence = buildModelCandidates("codex-local/gpt-6.1-sol", undefined, poolModels);
 
 		assert.deepEqual(evidence.candidates, [
@@ -49,6 +49,19 @@ describe("model fallback", () => {
 			"codex-local/kimi-k3:high",
 			"zai-coding-cn/glm-5.3:max",
 			"codex-local/deepseek-flash:high",
+			"codex-local/gpt-6.1-sol:max",
+		]);
+	});
+
+	it("keeps same-name models as the final fallback tier", () => {
+		const evidence = buildModelCandidates("codex-local/kimi-k3", undefined, poolModels);
+
+		assert.deepEqual(evidence.candidates, [
+			"codex-local/kimi-k3",
+			"codex-local/gpt-6.1-sol:max",
+			"zai-coding-cn/glm-5.3:max",
+			"codex-local/deepseek-flash:high",
+			"codex-local/kimi-k3:high",
 		]);
 	});
 

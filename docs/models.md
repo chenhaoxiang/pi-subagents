@@ -108,6 +108,7 @@ Fallback behavior is ordered and observable:
 
 - A custom agent's `fallbackModels` list is used exactly in the declared order.
 - If the list is omitted, the runtime uses the heterogeneous priority pool aligned with the local probe ladder: `codex-local/kimi-k3:high`, `codex-local/gpt-6.1-sol:max`, `zai-coding-cn/glm-5.3:max`, then `codex-local/deepseek-flash:high`. The `qoder-cli` channel is not part of the default heterogeneous pool.
+- A candidate with the same model identity as the parent is deferred until every heterogeneous candidate has failed; it is a same-model fallback, not heterogeneous evidence.
 - Candidates unavailable in the active registry are skipped before launch and recorded as `skippedModels`.
 - A provider/model failure before tool activity advances to the next candidate. The result records `attemptedModels`, `modelAttempts`, and the final model.
 - Tool failures, context overflow, user cancellation, run deadlines, and failures after child tool activity do not replay the task on another model.
