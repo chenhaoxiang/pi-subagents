@@ -2209,6 +2209,54 @@ syncBuiltinESMExports();
 		assert.match(readMockPiArgs(mockPi, 1).at(-1) ?? "", /Continue from the current files and transcript/);
 	});
 
+	it("background does not fallback after tool activity followed by compaction recovery and a provider failure", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		const sessionFile = path.join(tempDir, "async-fallback-after-compaction-session.jsonl");
+		mockPi.onCall({
+			jsonl: [
+				events.toolStart("write", { path: "side-effect.txt", content: "done" }),
+				events.toolEnd("write"),
+				events.toolResult("write", "Wrote side-effect.txt"),
+				{ type: "message_end", message: { role: "assistant", content: [], model: "openai/gpt-5-mini", stopReason: "error", errorMessage: "This operation was aborted", usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: { total: 0 } } } },
+				{ type: "agent_settled" },
+				{ type: "compaction_start" },
+			],
+			omitImplicitFinalEvents: true,
+			writeFiles: [{ path: "side-effect.txt", content: "done" }, { path: sessionFile, content: "{}\n" }],
+			keepAliveAfterFinalMessageMs: 5_000,
+			exitCode: 0,
+		});
+		mockPi.onCall({
+			jsonl: [{
+				type: "message_end",
+				message: { role: "assistant", content: [{ type: "text", text: "provider failed during recovery" }], model: "openai/gpt-5-mini", stopReason: "error", errorMessage: "503 provider unavailable", usage: { input: 5, output: 0, cacheRead: 0, cost: { total: 0.01 } } },
+			}],
+			exitCode: 1,
+		});
+		mockPi.onCall({ output: "unexpected fallback" });
+		const id = `async-no-fallback-after-compaction-side-effect-${Date.now().toString(36)}`;
+		executeAsyncSingle(id, {
+			agent: "worker",
+			task: "Do work",
+			sessionFile,
+			agentConfig: makeAgent("worker", { model: "openai/gpt-5-mini", fallbackModels: ["anthropic/claude-sonnet-4"] }),
+			availableModels: [
+				{ provider: "openai", id: "gpt-5-mini", fullId: "openai/gpt-5-mini" },
+				{ provider: "anthropic", id: "claude-sonnet-4", fullId: "anthropic/claude-sonnet-4" },
+			],
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+			shareEnabled: false,
+			maxSubagentDepth: 2,
+		});
+
+		const payload = JSON.parse(fs.readFileSync(await waitForAsyncResultFile(id), "utf-8"));
+		assert.equal(payload.success, false);
+		assert.match(payload.results[0]?.error ?? "", /503 provider unavailable/);
+		assert.equal(payload.results[0]?.model, "openai/gpt-5-mini");
+		assert.equal(mockPi.callCount(), 2, "the fallback model must not launch after earlier tool activity");
+		for (let index = 0; index < 2; index++) assert.equal(readMockPiArgs(mockPi, index)[readMockPiArgs(mockPi, index).indexOf("--model") + 1], "openai/gpt-5-mini");
+	});
+
 	it("background does not recover a compaction abort without a retained session", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
 		mockPi.onCall({
 			jsonl: [

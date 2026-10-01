@@ -14,6 +14,7 @@ export const KNOWN_FIELDS = new Set([
 	"allowNestedSubagents",
 	"allowedAgents",
 	"model",
+	"fallbackModels",
 	"fast",
 	"thinking",
 	"systemPromptMode",
@@ -23,6 +24,7 @@ export const KNOWN_FIELDS = new Set([
 	"defaultContext",
 	"async",
 	"timeoutMs",
+	"idleTimeoutMs",
 	"toolTimeoutMs",
 	"acceptance",
 	"acceptanceRole",
@@ -84,6 +86,8 @@ export function serializeAgent(config: AgentConfig, options: SerializeAgentOptio
 	}
 
 	if (config.model || preserve("model")) lines.push(`model: ${config.model ?? ""}`);
+	const fallbackModelsValue = joinComma(config.fallbackModels);
+	if (fallbackModelsValue || preserve("fallbackModels")) lines.push(`fallbackModels: ${fallbackModelsValue ?? ""}`);
 	if (config.fast === true || preserve("fast")) lines.push(`fast: ${config.fast === undefined ? "" : config.fast ? "true" : "false"}`);
 	if ((config.thinking && (config.thinking !== "off" || preserve("thinking"))) || (!config.thinking && preserve("thinking"))) {
 		lines.push(`thinking: ${config.thinking ?? ""}`);
@@ -103,6 +107,7 @@ export function serializeAgent(config: AgentConfig, options: SerializeAgentOptio
 	}
 	if (config.defaultAsync !== undefined || preserve("async")) lines.push(`async: ${config.defaultAsync === undefined ? "" : config.defaultAsync ? "true" : "false"}`);
 	if (config.defaultTimeoutMs !== undefined || preserve("timeoutMs")) lines.push(`timeoutMs: ${config.defaultTimeoutMs ?? ""}`);
+	if (config.defaultIdleTimeoutMs !== undefined || preserve("idleTimeoutMs")) lines.push(`idleTimeoutMs: ${config.defaultIdleTimeoutMs ?? ""}`);
 	if (config.defaultToolTimeoutMs !== undefined || preserve("toolTimeoutMs")) lines.push(`toolTimeoutMs: ${config.defaultToolTimeoutMs ?? ""}`);
 	if (config.defaultAcceptance !== undefined || preserve("acceptance")) {
 		lines.push(`acceptance: ${config.defaultAcceptance === undefined

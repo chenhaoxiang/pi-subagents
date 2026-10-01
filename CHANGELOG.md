@@ -16,6 +16,8 @@
 
 ### Fixed
 
+ - The native Node runner's peer preload no longer redirects Pi SDK CommonJS `require` or `require.resolve` through extension aliases. ESM peer imports remain aliased, while host dependencies resolve from their own package tree.
+
 - Updated the pinned `undici` dependency from 8.10.0 to 8.10.2, which is outside the range of [GHSA-3wwx-pv8p-q78v](https://github.com/advisories/GHSA-3wwx-pv8p-q78v). Projects that install pi-subagents no longer fail `npm audit` because of it; pi-subagents only uses undici's proxy agent, not the affected WebSocket client. Thanks to [@advaitpaliwal](https://github.com/advaitpaliwal) for [#2548](https://github.com/nicobailon/pi-subagents/pull/2548).
 - `/reload`, a session resume, or a pi-web project switch stopped running async workflows and their async children, and launching the script again repeated every child, including ones that had already finished. Async children now keep running, the stop is recorded as `workflow.stopCause: "runtime-replaced"`, and its notice says to relaunch. Relaunching the same script with the same args in that session reuses children that finished successfully and waits for the ones still running instead of starting them again. Failed children run again. Fixes [#2546](https://github.com/nicobailon/pi-subagents/issues/2546).
 - Compaction-triggered child aborts now recover when Pi reports `compaction_start` after `agent_settled`. Thanks to [@jiuai233](https://github.com/jiuai233) for [#2537](https://github.com/nicobailon/pi-subagents/pull/2537).
@@ -34,6 +36,8 @@
 - Turning on `subagent` mid-session no longer throws away the prompt cache, so the next message no longer resends the whole conversation.
 
 ### Fixed
+
+- Long-running npm Pi parents loaded before the 0.71 runner bootstrap split can still launch background children after an on-disk update. The former runner path now enters the shared startup handshake instead of exiting successfully without consuming the config.
 
 - Turning on `subagent` no longer throws away the prompt cache. The catalog of advertised agents is now sent as its own `advertised_subagents` prompt section, which Pi adds at the end of the conversation. Before, pi-subagents rewrote the whole system prompt, so the first message after `subagents_enable` resent the entire conversation to the cache. Fixes [#2518](https://github.com/nicobailon/pi-subagents/issues/2518). Thanks to [@javapacr](https://github.com/javapacr) for [#2519](https://github.com/nicobailon/pi-subagents/pull/2519).
 - Stopping a background run while it was shutting down could report "Stop requested" even though the runner never read the stop, so an interrupted run finished as paused instead of stopped. The stop now fails with a message to retry once the runner has exited, and that retry stops a paused run.
