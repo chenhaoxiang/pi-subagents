@@ -9,8 +9,7 @@ import {
 
 const poolModels = [
 	{ provider: "codex-local", id: "kimi-k3", fullId: "codex-local/kimi-k3" },
-	{ provider: "codex-local", id: "gpt-6-astra", fullId: "codex-local/gpt-6-astra" },
-	{ provider: "codex-local", id: "gpt-5.6-sol", fullId: "codex-local/gpt-5.6-sol" },
+	{ provider: "codex-local", id: "gpt-6.1-sol", fullId: "codex-local/gpt-6.1-sol" },
 	{ provider: "zai-coding-cn", id: "glm-5.3", fullId: "zai-coding-cn/glm-5.3" },
 	{ provider: "codex-local", id: "deepseek-flash", fullId: "codex-local/deepseek-flash" },
 ];
@@ -35,11 +34,21 @@ describe("model fallback", () => {
 
 		assert.equal(evidence.candidates[0], "codex-local/gpt-6-sol");
 		assert.deepEqual(evidence.candidates.slice(1), [
-			"codex-local/kimi-k3:max",
-			"codex-local/gpt-6-astra:high",
-			"codex-local/gpt-5.6-sol:max",
-			"zai-coding-cn/glm-5.3",
-			"codex-local/deepseek-flash",
+			"codex-local/kimi-k3:high",
+			"codex-local/gpt-6.1-sol:max",
+			"zai-coding-cn/glm-5.3:max",
+			"codex-local/deepseek-flash:high",
+		]);
+	});
+
+	it("omits the parent model identity from the heterogeneous fallback pool", () => {
+		const evidence = buildModelCandidates("codex-local/gpt-6.1-sol", undefined, poolModels);
+
+		assert.deepEqual(evidence.candidates, [
+			"codex-local/gpt-6.1-sol",
+			"codex-local/kimi-k3:high",
+			"zai-coding-cn/glm-5.3:max",
+			"codex-local/deepseek-flash:high",
 		]);
 	});
 
@@ -56,16 +65,15 @@ describe("model fallback", () => {
 		const evidence = buildModelCandidates(undefined, undefined, poolModels);
 
 		assert.deepEqual(evidence.candidates, [
-			"codex-local/kimi-k3:max",
-			"codex-local/gpt-6-astra:high",
-			"codex-local/gpt-5.6-sol:max",
-			"zai-coding-cn/glm-5.3",
-			"codex-local/deepseek-flash",
+			"codex-local/kimi-k3:high",
+			"codex-local/gpt-6.1-sol:max",
+			"zai-coding-cn/glm-5.3:max",
+			"codex-local/deepseek-flash:high",
 		]);
 	});
 
 	it("treats models served by different providers as the same model identity", () => {
-		assert.equal(modelKey("codex-local/kimi-k3:max"), modelKey("qoder-cli/kimi-k3:max"));
+		assert.equal(modelKey("codex-local/kimi-k3:high"), modelKey("zai-coding-cn/kimi-k3:max"));
 	});
 
 	it("allows provider failures only before child tool activity", () => {
