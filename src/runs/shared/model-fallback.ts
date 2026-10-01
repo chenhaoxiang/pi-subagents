@@ -124,7 +124,7 @@ export function buildModelCandidates(
 			return;
 		}
 		const parsed = splitThinkingSuffix(normalized);
-		const identity = `${parsed.baseModel.toLowerCase()}${parsed.thinkingSuffix.toLowerCase()}`;
+		const identity = `${modelKey(normalized)}${parsed.thinkingSuffix.toLowerCase()}`;
 		if (seen.has(identity)) return;
 		if (index > 0) enforceFallbackScope(normalized, options?.scope, options?.onWarn);
 		seen.add(identity);
