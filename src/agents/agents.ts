@@ -159,6 +159,7 @@ export interface AgentConfig {
 	defaultContext?: AgentDefaultContext;
 	defaultAsync?: boolean;
 	defaultTimeoutMs?: number;
+	defaultIdleTimeoutMs?: number;
 	defaultToolTimeoutMs?: number;
 	defaultAcceptance?: AcceptanceInput;
 	acceptanceRole?: AcceptanceRole;
@@ -2214,6 +2215,14 @@ function loadAgentsFromDefinitionFiles(files: AgentDefinitionFile[], source: Age
 			}
 			defaultTimeoutMs = parsed;
 		}
+		let defaultIdleTimeoutMs: number | undefined;
+		if (frontmatter.idleTimeoutMs !== undefined) {
+			const parsed = Number(frontmatter.idleTimeoutMs);
+			if (!Number.isInteger(parsed) || parsed <= 0 || parsed > 2_147_483_647) {
+				throw new Error(`Agent '${localName}' has invalid idleTimeoutMs frontmatter; expected a positive integer no larger than 2147483647.`);
+			}
+			defaultIdleTimeoutMs = parsed;
+		}
 		let defaultToolTimeoutMs: number | undefined;
 		if (frontmatter.toolTimeoutMs !== undefined) {
 			const parsed = Number(frontmatter.toolTimeoutMs);
@@ -2310,6 +2319,7 @@ function loadAgentsFromDefinitionFiles(files: AgentDefinitionFile[], source: Age
 			...(defaultContext !== undefined ? { defaultContext } : {}),
 			...(defaultAsync !== undefined ? { defaultAsync } : {}),
 			...(defaultTimeoutMs !== undefined ? { defaultTimeoutMs } : {}),
+			...(defaultIdleTimeoutMs !== undefined ? { defaultIdleTimeoutMs } : {}),
 			...(defaultToolTimeoutMs !== undefined ? { defaultToolTimeoutMs } : {}),
 			...(defaultAcceptance !== undefined ? { defaultAcceptance } : {}),
 			...(acceptanceRole !== undefined ? { acceptanceRole } : {}),

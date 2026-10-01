@@ -591,16 +591,43 @@ async function runSingleAttempt(
 		let removeInterruptListener: (() => void) | undefined;
 		let activityTimer: NodeJS.Timeout | undefined;
 		let timeoutTimer: NodeJS.Timeout | undefined;
+		let idleTimeoutTimer: NodeJS.Timeout | undefined;
 		let timeoutHardFinishTimer: NodeJS.Timeout | undefined;
 		const clearTimeoutTimers = () => {
 			if (timeoutTimer) {
 				clearTimeout(timeoutTimer);
 				timeoutTimer = undefined;
 			}
+			if (idleTimeoutTimer) {
+				clearTimeout(idleTimeoutTimer);
+				idleTimeoutTimer = undefined;
+			}
 			if (timeoutHardFinishTimer) {
 				clearTimeout(timeoutHardFinishTimer);
 				timeoutHardFinishTimer = undefined;
 			}
+		};
+		const resetIdleTimeout = () => {
+			if (options.idleTimeoutMs === undefined || sessionSettled || lifecycleFinished) return;
+			if (idleTimeoutTimer) clearTimeout(idleTimeoutTimer);
+			idleTimeoutTimer = setTimeout(() => {
+				if (sessionSettled || lifecycleFinished || interruptedByControl) return;
+				result.timedOut = true;
+				clearAllToolTimeouts();
+				result.error = `Subagent idle timed out after ${options.idleTimeoutMs}ms.`;
+				result.finalOutput = result.error;
+				progress.status = "failed";
+				progress.error = result.error;
+				progress.durationMs = Date.now() - startTime;
+				fireUpdate();
+				abortChild();
+				timeoutHardFinishTimer = setTimeout(() => {
+					if (sessionSettled || lifecycleFinished) return;
+					settle(undefined, true);
+				}, 4000);
+				timeoutHardFinishTimer.unref?.();
+			}, options.idleTimeoutMs);
+			idleTimeoutTimer.unref?.();
 		};
 		const abortChild = (): void => {
 			if (!session || sessionSettled || lifecycleFinished) return;
@@ -976,6 +1003,7 @@ async function runSingleAttempt(
 
 		const processEvent = (evt: ChildSessionEvent & { message?: Message; toolName?: string; toolCallId?: string; args?: unknown; willRetry?: unknown }) => {
 			if (lifecycleFinished) return;
+			if (!isChildWatchdogStatusEvent(evt)) resetIdleTimeout();
 			jsonlWriter.writeLine(JSON.stringify(projectChildSessionEventForJson(evt)));
 			shared.transcriptWriter?.writeChildEvent(evt);
 			shared.orcaProgressTab?.event(evt);
@@ -1198,6 +1226,7 @@ async function runSingleAttempt(
 		onWatchdogStatus = (event) => processEvent(event as unknown as Parameters<typeof processEvent>[0]);
 
 		fireUpdate();
+		resetIdleTimeout();
 		if (controlConfig.enabled || options.onUpdate) {
 			activityTimer = setInterval(() => {
 				if (sessionSettled || lifecycleFinished) {

@@ -24,6 +24,7 @@ export const KNOWN_FIELDS = new Set([
 	"defaultContext",
 	"async",
 	"timeoutMs",
+	"idleTimeoutMs",
 	"toolTimeoutMs",
 	"acceptance",
 	"acceptanceRole",
@@ -106,6 +107,7 @@ export function serializeAgent(config: AgentConfig, options: SerializeAgentOptio
 	}
 	if (config.defaultAsync !== undefined || preserve("async")) lines.push(`async: ${config.defaultAsync === undefined ? "" : config.defaultAsync ? "true" : "false"}`);
 	if (config.defaultTimeoutMs !== undefined || preserve("timeoutMs")) lines.push(`timeoutMs: ${config.defaultTimeoutMs ?? ""}`);
+	if (config.defaultIdleTimeoutMs !== undefined || preserve("idleTimeoutMs")) lines.push(`idleTimeoutMs: ${config.defaultIdleTimeoutMs ?? ""}`);
 	if (config.defaultToolTimeoutMs !== undefined || preserve("toolTimeoutMs")) lines.push(`toolTimeoutMs: ${config.defaultToolTimeoutMs ?? ""}`);
 	if (config.defaultAcceptance !== undefined || preserve("acceptance")) {
 		lines.push(`acceptance: ${config.defaultAcceptance === undefined

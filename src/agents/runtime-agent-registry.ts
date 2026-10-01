@@ -33,6 +33,7 @@ export interface RuntimeAgentDefinition {
 	defaultContext?: AgentDefaultContext;
 	defaultAsync?: boolean;
 	defaultTimeoutMs?: number;
+	defaultIdleTimeoutMs?: number;
 	defaultToolTimeoutMs?: number;
 	defaultAcceptance?: AcceptanceInput;
 	acceptanceRole?: AcceptanceRole;
@@ -200,7 +201,7 @@ function validateDefinition(value: unknown): RuntimeAgentDefinition {
 	const definition = value as Record<string, unknown>;
 	const supported = new Set([
 		"description", "systemPrompt", "aliases", "tools", "excludeTools", "allowNestedSubagents", "mcpDirectTools", "model", "fallbackModels", "thinking",
-		"systemPromptMode", "inheritProjectContext", "inheritGlobalContext", "inheritSkills", "defaultContext", "defaultAsync", "defaultTimeoutMs",
+		"systemPromptMode", "inheritProjectContext", "inheritGlobalContext", "inheritSkills", "defaultContext", "defaultAsync", "defaultTimeoutMs", "defaultIdleTimeoutMs",
 		"defaultToolTimeoutMs", "defaultAcceptance", "acceptanceRole", "runner", "machine", "skills", "skillPath",
 		"extensions", "subagentOnlyExtensions", "mutationTools", "output", "outputMode", "defaultReads", "defaultProgress", "interactive",
 		"maxSubagentDepth", "toolBudget", "permissions",
@@ -229,6 +230,7 @@ function validateDefinition(value: unknown): RuntimeAgentDefinition {
 	const inheritSkills = validateBoolean(definition.inheritSkills, "Runtime agent definition inheritSkills");
 	const defaultAsync = validateBoolean(definition.defaultAsync, "Runtime agent definition defaultAsync");
 	const defaultTimeoutMs = validatePositiveInteger(definition.defaultTimeoutMs, "Runtime agent definition defaultTimeoutMs");
+	const defaultIdleTimeoutMs = validatePositiveInteger(definition.defaultIdleTimeoutMs, "Runtime agent definition defaultIdleTimeoutMs");
 	const defaultToolTimeoutMs = validatePositiveInteger(definition.defaultToolTimeoutMs, "Runtime agent definition defaultToolTimeoutMs");
 	const defaultAcceptance = validateAcceptance(definition.defaultAcceptance);
 	const runner = validateRunner(definition.runner);
@@ -263,6 +265,7 @@ function validateDefinition(value: unknown): RuntimeAgentDefinition {
 		...(defaultContext !== undefined ? { defaultContext: defaultContext as AgentDefaultContext } : {}),
 		...(defaultAsync !== undefined ? { defaultAsync } : {}),
 		...(defaultTimeoutMs !== undefined ? { defaultTimeoutMs } : {}),
+		...(defaultIdleTimeoutMs !== undefined ? { defaultIdleTimeoutMs } : {}),
 		...(defaultToolTimeoutMs !== undefined ? { defaultToolTimeoutMs } : {}),
 		...(defaultAcceptance !== undefined ? { defaultAcceptance } : {}),
 		...(acceptanceRole !== undefined ? { acceptanceRole: acceptanceRole as AcceptanceRole } : {}),

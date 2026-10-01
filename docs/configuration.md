@@ -308,6 +308,16 @@ Use it when foreground orchestration or plain async single-agent runs need a lon
 
 Composite async runs (async chains, parallel tasks, and scripted workflows) stay unbounded at the top level by design. Their runner children are bounded individually by their own agent or runner defaults, so this value does not cap them. Must be a positive integer no greater than `2147483647` (the largest delay a Node.js timer can honor, roughly 24.8 days); invalid or out-of-range values are ignored and the built-in defaults apply.
 
+## `idleTimeoutMs`
+
+```json
+{ "idleTimeoutMs": 1800000 }
+```
+
+Global default inactivity window in milliseconds. Child stream events (`message_update`, completed messages, tool lifecycle events) and external stdout/stderr activity reset the window. When the window expires, the child is terminated with `timedOut: true`; there is no wall-clock maximum. A per-call `idleTimeoutMs` or agent frontmatter `idleTimeoutMs` overrides the global default. It cannot be combined with `timeoutMs`/`maxRuntimeMs`; `timeoutMs` remains the separate hard wall-clock deadline.
+
+The bundled `reviewer` agent defaults to a 30-minute inactivity window so long model thinking is not cut off by a short caller deadline. Prefer `idleTimeoutMs: 1800000` for long reviews and omit `timeoutMs`/`maxRuntimeMs`.
+
 ## `toolTimeoutMs`
 
 ```json

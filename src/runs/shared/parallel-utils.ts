@@ -75,6 +75,8 @@ export interface RunnerSubagentStep {
 	sessionFile?: string;
 	maxSubagentDepth?: number;
 	timeoutMs?: number;
+	/** Inactivity timeout (ms); stream/tool activity resets it and there is no wall-clock cap. */
+	idleTimeoutMs?: number;
 	/** Resolved configured hard per-tool-call timeout (ms); fast tools still have a default when undefined. */
 	toolTimeoutMs?: number;
 	waitToolEnabled?: boolean;

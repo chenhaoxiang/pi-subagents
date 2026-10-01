@@ -384,6 +384,8 @@ export interface SubagentParamsLike {
 	async?: boolean;
 	foregroundOnly?: boolean;
 	timeoutMs?: number;
+	/** Inactivity timeout; stream/tool activity resets it and there is no wall-clock cap. */
+	idleTimeoutMs?: number;
 	maxRuntimeMs?: number;
 	/** Async runs only: steer the child to checkpoint and stop this many ms before the run deadline. */
 	checkpointBeforeDeadlineMs?: number;
@@ -523,6 +525,7 @@ interface ExecutionContextData {
 	intercomBridge: IntercomBridgeState;
 	nestedRoute?: NestedRouteInfo;
 	timeoutMs?: number;
+	idleTimeoutMs?: number;
 	deadlineAt?: number;
 	/** Raw global config.toolTimeoutMs, for per-step resolution in async runners. */
 	configToolTimeoutMs?: number;
@@ -2259,6 +2262,7 @@ async function resumeAsyncRun(input: {
 		...(recoveryDescriptor?.skills ? { skills: [...recoveryDescriptor.skills] } : {}),
 		...(acceptance !== undefined ? { acceptance } : {}),
 		...(input.params.timeoutMs !== undefined ? { timeoutMs: input.params.timeoutMs } : {}),
+		...(recoveryDescriptor?.idleTimeoutMs !== undefined ? { idleTimeoutMs: recoveryDescriptor.idleTimeoutMs } : input.params.idleTimeoutMs !== undefined ? { idleTimeoutMs: input.params.idleTimeoutMs } : {}),
 		...(input.absoluteDeadlineAt !== undefined ? { absoluteDeadlineAt: input.absoluteDeadlineAt } : {}),
 		...(input.params.toolBudget !== undefined ? { toolBudget: input.params.toolBudget } : {}),
 		// Recovery descriptors, remembered foreground runs, and current workflow roots
@@ -2878,6 +2882,10 @@ function applySingleAgentLaunchDefaults(params: SubagentParamsLike, agents: Agen
 	if ((params.chain?.length ?? 0) > 0 || (params.tasks?.length ?? 0) > 0 || !params.agent) return params;
 	const agent = agents.find((candidate) => candidate.name === params.agent);
 	if (!agent) return params;
+	if (agent.defaultIdleTimeoutMs !== undefined && params.idleTimeoutMs === undefined) {
+		const { timeoutMs: _timeoutMs, maxRuntimeMs: _maxRuntimeMs, ...withoutTimeouts } = params;
+		return { ...withoutTimeouts, idleTimeoutMs: agent.defaultIdleTimeoutMs };
+	}
 	const parentTimeoutMs = params.timeoutMs === undefined && params.maxRuntimeMs === undefined && agent.defaultTimeoutMs === undefined && params.workflowParentDeadlineAt !== undefined
 		? Math.max(1, params.workflowParentDeadlineAt - Date.now())
 		: undefined;
@@ -2953,9 +2961,26 @@ export function resolveConfigDefaultTimeoutMs(raw: unknown): number | undefined 
 	return raw;
 }
 
-export function resolveForegroundTimeout(params: SubagentParamsLike, defaultTimeoutMs?: number): { timeoutMs?: number; error?: string } {
+export function resolveForegroundTimeout(
+	params: SubagentParamsLike,
+	defaultTimeoutMs?: number,
+	defaultIdleTimeoutMs?: number,
+): { timeoutMs?: number; idleTimeoutMs?: number; error?: string } {
 	const rawTimeout = params.timeoutMs;
 	const rawMaxRuntime = params.maxRuntimeMs;
+	const rawIdleTimeout = params.idleTimeoutMs;
+	if (rawIdleTimeout !== undefined && (rawTimeout !== undefined || rawMaxRuntime !== undefined)) {
+		return { error: "idleTimeoutMs cannot be combined with timeoutMs or maxRuntimeMs." };
+	}
+	if (rawIdleTimeout !== undefined || (rawTimeout === undefined && rawMaxRuntime === undefined && defaultIdleTimeoutMs !== undefined)) {
+		const idleTimeoutMs = rawIdleTimeout ?? defaultIdleTimeoutMs;
+		if (typeof idleTimeoutMs !== "number" || !Number.isInteger(idleTimeoutMs) || idleTimeoutMs <= 0) {
+			return { error: "idleTimeoutMs must be a positive integer." };
+		}
+		const overflowError = timerDelayOverflowError("idleTimeoutMs", idleTimeoutMs);
+		if (overflowError) return { error: overflowError };
+		return { idleTimeoutMs };
+	}
 	if (rawTimeout === undefined && rawMaxRuntime === undefined) {
 		return defaultTimeoutMs === undefined ? {} : { timeoutMs: defaultTimeoutMs };
 	}
@@ -2985,12 +3010,18 @@ export function resolveForegroundTimeout(params: SubagentParamsLike, defaultTime
  * set — even with a config default — while their runner children resolve separate
  * deadlines. Exported so the executor wiring is directly testable.
  */
-export function resolveSingleAgentLaunchTimeout(params: SubagentParamsLike, async: boolean, configDefaultTimeoutMs?: number): { timeoutMs?: number; error?: string } {
+export function resolveSingleAgentLaunchTimeout(
+	params: SubagentParamsLike,
+	async: boolean,
+	configDefaultTimeoutMs?: number,
+	configDefaultIdleTimeoutMs?: number,
+): { timeoutMs?: number; idleTimeoutMs?: number; error?: string } {
 	const isComposite = (params.chain?.length ?? 0) > 0 || (params.tasks?.length ?? 0) > 0 || params.workflowScript !== undefined;
 	const foregroundDefault = configDefaultTimeoutMs ?? DEFAULT_FOREGROUND_TIMEOUT_MS;
 	const asyncSingleDefault = configDefaultTimeoutMs ?? DEFAULT_ASYNC_TIMEOUT_MS;
 	const defaultTimeoutMs = !async ? foregroundDefault : isComposite ? undefined : asyncSingleDefault;
-	return resolveForegroundTimeout(params, defaultTimeoutMs);
+	const defaultIdleTimeoutMs = isComposite && async ? undefined : configDefaultIdleTimeoutMs;
+	return resolveForegroundTimeout(params, defaultTimeoutMs, defaultIdleTimeoutMs);
 }
 
 function resolveToolBudget(
@@ -3570,6 +3601,7 @@ async function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): Pro
 			extensionBindings: params.extensionBindings,
 			acceptance: params.acceptance,
 			timeoutMs: data.timeoutMs,
+			idleTimeoutMs: data.idleTimeoutMs,
 			toolBudget: data.toolBudget,
 			usageBudget: data.usageBudget,
 			configToolBudget: data.configToolBudget,
@@ -4301,6 +4333,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 			deadlineAt,
 			toolTimeoutMs: params.toolTimeoutMs,
 			configToolTimeoutMs: data.configToolTimeoutMs,
+			idleTimeoutMs: data.idleTimeoutMs,
 			toolBudget: effectiveToolBudget.toolBudget,
 			usageBudget: data.usageBudget ?? data.inheritedUsageBudget,
 			capabilityCeiling: data.capabilityCeiling,
@@ -7375,6 +7408,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			effectiveParams,
 			effectiveAsync,
 			resolveConfigDefaultTimeoutMs(deps.config.timeoutMs),
+			resolveConfigDefaultTimeoutMs(deps.config.idleTimeoutMs),
 		);
 		if (foregroundTimeout.error) return buildRequestedModeError(effectiveParams, foregroundTimeout.error);
 		const controlConfig = resolveControlConfig(deps.config.control, effectiveParams.control);
@@ -7570,6 +7604,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			intercomBridge,
 			nestedRoute,
 			timeoutMs: foregroundTimeout.timeoutMs,
+			idleTimeoutMs: foregroundTimeout.idleTimeoutMs,
 			toolBudget: runToolBudget.toolBudget,
 			usageBudget: usageBudget.budget,
 			inheritedUsageBudget,

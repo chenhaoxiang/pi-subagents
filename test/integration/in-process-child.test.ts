@@ -179,6 +179,28 @@ describe("in-process foreground child", () => {
 		assert.equal(mockPi.sessions[0]?.disposed, true);
 	});
 
+	it("resets the idle timeout on streamed child activity", async () => {
+		mockPi.onCall({
+			steps: [
+				{ delay: 45, jsonl: [events.assistantMessage("first activity")] },
+				{ delay: 45, jsonl: [events.assistantMessage("second activity")] },
+			],
+		});
+		const result = await runSync(tempDir, makeAgentConfigs(["echo"]), "echo", "Task", { runId: "idle-stream-session", idleTimeoutMs: 60 });
+		assert.equal(result.exitCode, 0, result.error);
+		assert.equal(result.timedOut, undefined);
+		assert.equal(result.finalOutput, "second activity");
+	});
+
+	it("times out an idle child without a wall-clock deadline", async () => {
+		mockPi.onCall({ hangUntilAbort: true });
+		const result = await runSync(tempDir, makeAgentConfigs(["echo"]), "echo", "Task", { runId: "idle-timeout-session", idleTimeoutMs: 40 });
+		assert.equal(result.timedOut, true);
+		assert.equal(result.exitCode, 1);
+		assert.match(result.error ?? "", /idle timed out after 40ms/);
+		assert.equal(mockPi.sessions[0]?.aborted, true);
+	});
+
 	it("disposes the child session after a normal completion", async () => {
 		mockPi.onCall({ output: "finished" });
 		const result = await runSync(tempDir, makeAgentConfigs(["echo"]), "echo", "Task", { runId: "dispose-session" });

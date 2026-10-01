@@ -884,6 +884,7 @@ export interface SteeringRecoveryDescriptor {
 	/** Raw per-run bridge override. Omitted descriptors continue to use global config. */
 	intercomBridge?: IntercomBridgeConfig;
 	lane?: WorkflowLaneMetadata;
+	idleTimeoutMs?: number;
 	absoluteDeadlineAt?: number;
 	initialToolBudget?: ResolvedToolBudget;
 	maxSubagentDepth: number;
@@ -1488,6 +1489,7 @@ export interface Details {
 	background?: boolean;
 	asyncDir?: string;
 	timeoutMs?: number;
+	idleTimeoutMs?: number;
 	deadlineAt?: number;
 	timedOut?: boolean;
 	stopped?: boolean;
@@ -1716,6 +1718,7 @@ export interface NestedRunSummary extends NestedRunAddress {
 	endedAt?: number;
 	lastUpdate?: number;
 	timeoutMs?: number;
+	idleTimeoutMs?: number;
 	deadlineAt?: number;
 	timedOut?: boolean;
 	stopped?: boolean;
@@ -1931,6 +1934,7 @@ export interface AsyncStatus {
 	endedAt?: number;
 	lastUpdate?: number;
 	timeoutMs?: number;
+	idleTimeoutMs?: number;
 	deadlineAt?: number;
 	timedOut?: boolean;
 	stopped?: boolean;
@@ -2125,6 +2129,7 @@ export interface AsyncJobState {
 	startedAt?: number;
 	updatedAt?: number;
 	timeoutMs?: number;
+	idleTimeoutMs?: number;
 	deadlineAt?: number;
 	timedOut?: boolean;
 	stopped?: boolean;
@@ -2502,6 +2507,8 @@ export interface RunSyncOptions {
 	signal?: AbortSignal;
 	interruptSignal?: AbortSignal;
 	timeoutMs?: number;
+	/** Inactivity timeout (ms); child stream/tool activity resets the timer and disables the wall-clock deadline. */
+	idleTimeoutMs?: number;
 	deadlineAt?: number;
 	/** Per-call per-tool timeout (ms), resolved with the agent/config/environment ladder at execution. */
 	toolTimeoutMs?: number;
@@ -2717,16 +2724,10 @@ export interface ExtensionConfig {
 	capacity?: ActiveAsyncCapacityConfig;
 	/** Global cap on simultaneously-running subagent tasks within a single run. Defaults to 20. */
 	globalConcurrencyLimit?: number;
-	/**
-	 * Global default runtime deadline in milliseconds. It replaces the built-in
-	 * 30-minute backstop for single, parallel, and chain launches (foreground, plus
-	 * plain single-agent async runs) when neither the call (`timeoutMs`/`maxRuntimeMs`)
-	 * nor the selected agent provides a timeout. Explicit call values and agent
-	 * frontmatter defaults still win. Composite async runs (chain/parallel/workflow)
-	 * stay unbounded at the top level by design — their children are bounded individually.
-	 * Must be a positive integer; invalid values are ignored.
-	 */
+	/** Global default runtime deadline in milliseconds. Explicit call values and agent defaults win. */
 	timeoutMs?: number;
+	/** Global default inactivity window in milliseconds. Child stream/tool activity resets it; no wall-clock cap is imposed. */
+	idleTimeoutMs?: number;
 	/**
 	 * Optional hard per-tool-call timeout in milliseconds. Bounds a single
 	 * subagent tool call inside the child; the run-level timeout remains

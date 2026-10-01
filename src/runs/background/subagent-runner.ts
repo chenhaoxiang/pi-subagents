@@ -206,6 +206,8 @@ export interface SubagentRunConfig {
 	nestedRoute?: NestedRouteInfo;
 	nestedSelf?: { parentRunId: string; parentStepIndex?: number; depth: number; path?: Array<{ runId: string; stepIndex?: number; agent?: string }> };
 	timeoutMs?: number;
+	/** Inactivity timeout (ms); stream/tool activity resets it and there is no wall-clock cap. */
+	idleTimeoutMs?: number;
 	deadlineAt?: number;
 	/** Resolved configured hard per-tool-call timeout (ms); fast tools still have a default when undefined. */
 	toolTimeoutMs?: number;
@@ -1924,11 +1926,14 @@ export async function runSubagent(
 	let currentActivityState: ActivityState | undefined;
 	let activityTimer: NodeJS.Timeout | undefined;
 	let timeoutTimer: NodeJS.Timeout | undefined;
+	let idleTimeoutTimer: NodeJS.Timeout | undefined;
 	let checkpointTimer: NodeJS.Timeout | undefined;
 	let timedOut = false;
 	let stopped = false;
 	let usageBudgetExceeded = false;
-	const timeoutMessage = config.timeoutMs !== undefined ? `Subagent timed out after ${config.timeoutMs}ms.` : undefined;
+	const idleTimeoutMessage = config.idleTimeoutMs !== undefined ? `Subagent idle timed out after ${config.idleTimeoutMs}ms.` : undefined;
+	const timeoutMessage = idleTimeoutMessage ?? (config.timeoutMs !== undefined ? `Subagent timed out after ${config.timeoutMs}ms.` : undefined);
+	let resetIdleTimeout: () => void = () => {};
 	const stopMessage = "Subagent stopped by user.";
 	const timeoutAbortController = new AbortController();
 	const stopAbortController = new AbortController();
@@ -2072,6 +2077,7 @@ export async function runSubagent(
 		startedAt: overallStartTime,
 		lastUpdate: overallStartTime,
 		...(config.timeoutMs !== undefined ? { timeoutMs: config.timeoutMs } : {}),
+		...(config.idleTimeoutMs !== undefined ? { idleTimeoutMs: config.idleTimeoutMs } : {}),
 		...(config.deadlineAt !== undefined ? { deadlineAt: config.deadlineAt } : {}),
 		...(config.toolBudget ? { toolBudget: initialToolBudgetState(config.toolBudget) } : {}),
 		...(config.usageBudget ? { usageBudget: usageBudgetState(config.usageBudget, undefined) } : {}),
@@ -2651,6 +2657,7 @@ export async function runSubagent(
 		const evidence = externalActivityEvidence.get(index) ?? {};
 		externalActivityEvidence.set(index, evidence);
 		evidence.lastStreamActivityAt = Date.now();
+		resetIdleTimeout();
 	};
 	const stepOutputActivityAt = (index: number): number => {
 		const step = statusPayload.steps[index];
@@ -3001,6 +3008,7 @@ export async function runSubagent(
 		writeStatusPayload();
 	};
 	const updateStepFromChildEvent = (flatIndex: number, event: ChildEvent): void => {
+		if (!isChildWatchdogStatusEvent(event)) resetIdleTimeout();
 		const step = statusPayload.steps[flatIndex];
 		if (!step) return;
 		const previousActivityState = step.activityState;
@@ -3371,7 +3379,7 @@ export async function runSubagent(
 		if (timedOut || stopped || interrupted || statusPayload.state !== "running") return;
 		timedOut = true;
 		const now = Date.now();
-		const message = timeoutMessage ?? "Subagent timed out.";
+		const message = idleTimeoutMessage ?? timeoutMessage ?? "Subagent timed out.";
 		statusPayload.timedOut = true;
 		statusPayload.error = message;
 		currentActivityState = undefined;
@@ -3394,6 +3402,7 @@ export async function runSubagent(
 			ts: now,
 			runId: id,
 			timeoutMs: config.timeoutMs,
+			idleTimeoutMs: config.idleTimeoutMs,
 			deadlineAt: config.deadlineAt,
 			message,
 		}));
@@ -3422,7 +3431,14 @@ export async function runSubagent(
 			}
 		},
 	});
-	if (config.deadlineAt !== undefined) {
+	resetIdleTimeout = () => {
+		if (config.idleTimeoutMs === undefined || timedOut || stopped || interrupted || statusPayload.state !== "running") return;
+		if (idleTimeoutTimer) clearTimeout(idleTimeoutTimer);
+		idleTimeoutTimer = setTimeout(timeoutRunner, config.idleTimeoutMs);
+		idleTimeoutTimer.unref?.();
+	};
+	resetIdleTimeout();
+	if (config.deadlineAt !== undefined && config.idleTimeoutMs === undefined) {
 		const remainingMs = Math.max(0, config.deadlineAt - Date.now());
 		timeoutTimer = setTimeout(timeoutRunner, remainingMs);
 		timeoutTimer.unref?.();
@@ -4918,11 +4934,15 @@ export async function runSubagent(
 		clearTimeout(timeoutTimer);
 		timeoutTimer = undefined;
 	}
+	if (idleTimeoutTimer) {
+		clearTimeout(idleTimeoutTimer);
+		idleTimeoutTimer = undefined;
+	}
 	if (checkpointTimer) {
 		clearTimeout(checkpointTimer);
 		checkpointTimer = undefined;
 	}
-	if (!timedOut && !stopped && !interrupted && config.timeoutMs !== undefined && timeoutMessage !== undefined && results.some((result) => result.timedOut === true && result.error?.startsWith(timeoutMessage))) {
+	if (!timedOut && !stopped && !interrupted && (config.timeoutMs !== undefined || config.idleTimeoutMs !== undefined) && (timeoutMessage !== undefined || idleTimeoutMessage !== undefined) && results.some((result) => result.timedOut === true && (result.error?.startsWith(timeoutMessage ?? "") || result.error?.startsWith(idleTimeoutMessage ?? "")))) {
 		timedOut = true;
 	}
 	disposeControlInbox();

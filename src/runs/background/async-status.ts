@@ -118,6 +118,7 @@ export interface AsyncRunSummary {
 	lastUpdate?: number;
 	endedAt?: number;
 	timeoutMs?: number;
+	idleTimeoutMs?: number;
 	deadlineAt?: number;
 	timedOut?: boolean;
 	stopped?: boolean;
@@ -428,6 +429,7 @@ function statusToSummary(asyncDir: string, status: AsyncStatus & { cwd?: string 
 		lastUpdate: status.lastUpdate,
 		endedAt: status.endedAt,
 		...(status.timeoutMs !== undefined ? { timeoutMs: status.timeoutMs } : {}),
+		...(status.idleTimeoutMs !== undefined ? { idleTimeoutMs: status.idleTimeoutMs } : {}),
 		...(status.deadlineAt !== undefined ? { deadlineAt: status.deadlineAt } : {}),
 		...(status.timedOut !== undefined ? { timedOut: status.timedOut } : {}),
 		...(status.stopped !== undefined ? { stopped: status.stopped } : {}),
