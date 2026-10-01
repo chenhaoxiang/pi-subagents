@@ -11,15 +11,10 @@ import type { Usage } from "../../shared/types.ts";
  * model-probe ladder; runtime attempts are the authoritative availability check.
  */
 export const DEFAULT_HETERO_MODEL_POOL = [
-	"codex-local/kimi-k3:max",
-	"codex-local/gpt-6-astra:high",
-	"codex-local/gpt-5.6-sol:max",
-	"zai-coding-cn/glm-5.3",
-	"codex-local/deepseek-flash",
-	"qoder-cli/sonus",
-	"qoder-cli/cantus",
-	"qoder-cli/kimi-k3:max",
-	"qoder-cli/qwen3.8-max:max",
+	"codex-local/kimi-k3:high",
+	"codex-local/gpt-6.1-sol:max",
+	"zai-coding-cn/glm-5.3:max",
+	"codex-local/deepseek-flash:high",
 ] as const;
 
 export interface SkippedModel {
