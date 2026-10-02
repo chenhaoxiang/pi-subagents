@@ -284,6 +284,7 @@ test("skips the pi-agent-core/node alias when the host package declares no ./nod
 	const packageDir = path.join(root, "node_modules", "@earendil-works", "pi-agent-core");
 	const distDir = path.join(packageDir, "dist");
 	try {
+		fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "@earendil-works/pi-coding-agent", version: "1.0.0" }), "utf-8");
 		fs.mkdirSync(distDir, { recursive: true });
 		fs.writeFileSync(path.join(packageDir, "package.json"), JSON.stringify({
 			name: "@earendil-works/pi-agent-core",
