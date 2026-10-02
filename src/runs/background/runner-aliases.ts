@@ -57,7 +57,7 @@ function readManifest(packageDir: string): PackageManifest | undefined {
 
 function isPiOneOrNewer(version: unknown): boolean {
 	if (typeof version !== "string") return false;
-	const match = /^(\d+)\.\d+\.\d+(?:[-+].*)?$/.exec(version);
+	const match = /^(\d+)\.\d+\.\d+$/.exec(version);
 	return match !== null && Number(match[1]) >= 1;
 }
 

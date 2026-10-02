@@ -2907,9 +2907,11 @@ function applySingleAgentLaunchDefaults(params: SubagentParamsLike, agents: Agen
 	if ((params.chain?.length ?? 0) > 0 || (params.tasks?.length ?? 0) > 0 || !params.agent) return params;
 	const agent = agents.find((candidate) => candidate.name === params.agent);
 	if (!agent) return params;
-	if (agent.defaultIdleTimeoutMs !== undefined && params.idleTimeoutMs === undefined) {
-		const { timeoutMs: _timeoutMs, maxRuntimeMs: _maxRuntimeMs, ...withoutTimeouts } = params;
-		return { ...withoutTimeouts, idleTimeoutMs: agent.defaultIdleTimeoutMs };
+	if (agent.defaultIdleTimeoutMs !== undefined
+		&& params.idleTimeoutMs === undefined
+		&& params.timeoutMs === undefined
+		&& params.maxRuntimeMs === undefined) {
+		return { ...params, idleTimeoutMs: agent.defaultIdleTimeoutMs };
 	}
 	const parentTimeoutMs = params.timeoutMs === undefined && params.maxRuntimeMs === undefined && agent.defaultTimeoutMs === undefined && params.workflowParentDeadlineAt !== undefined
 		? Math.max(1, params.workflowParentDeadlineAt - Date.now())
@@ -3045,6 +3047,9 @@ export function resolveSingleAgentLaunchTimeout(
 	const foregroundDefault = configDefaultTimeoutMs ?? DEFAULT_FOREGROUND_TIMEOUT_MS;
 	const asyncSingleDefault = configDefaultTimeoutMs ?? DEFAULT_ASYNC_TIMEOUT_MS;
 	const defaultTimeoutMs = !async ? foregroundDefault : isComposite ? undefined : asyncSingleDefault;
+	if (async && isComposite && params.idleTimeoutMs !== undefined) {
+		return { error: "idleTimeoutMs is only supported for single-agent launches." };
+	}
 	const defaultIdleTimeoutMs = isComposite && async ? undefined : configDefaultIdleTimeoutMs;
 	return resolveForegroundTimeout(params, defaultTimeoutMs, defaultIdleTimeoutMs);
 }

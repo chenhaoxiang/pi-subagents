@@ -257,7 +257,7 @@ test("chord is omitted before 0.85, but required host-first on chord-era and unk
 		assert.equal(preChord.aliases[`${chord}/context`], undefined);
 		// An extension-local copy must never satisfy a missing host chord export.
 		writePackage(path.join(extension, "node_modules", chord), chord, "0.85.1", { ".": "./index.mjs", "./context": "./context.mjs" });
-		for (const version of ["0.85.0", "0.85.1", "1.0.0", "0.84.4-test", "unknown"]) {
+		for (const version of ["0.85.0", "0.85.1", "1.0.0", "1.0.0-beta.1", "0.84.4-test", "unknown"]) {
 			writePackage(host, "@earendil-works/pi-coding-agent", version, hostExports);
 			const result = resolveHostPeerAliases(host);
 			for (const specifier of [chord, `${chord}/context`]) assert.ok(result.missing.includes(specifier), version);

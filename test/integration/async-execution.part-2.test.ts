@@ -627,6 +627,32 @@ syncBuiltinESMExports();
 		assert.equal(payload.results[0]?.error, "Subagent timed out after 150ms.");
 	});
 
+	it("enforces an agent-level idle timeout on an async serial child", { skip: !isAsyncAvailable() ? "jiti not available" : process.platform === "win32" ? "timeout signal delivery intermittent on Windows CI" : undefined }, async () => {
+		mockPi.onCall({ hangUntilAbort: true });
+		const id = `async-child-idle-timeout-chain-${Date.now().toString(36)}`;
+		executeAsyncChain(id, {
+			chain: [{ agent: "slow", task: "Wait silently" }],
+			agents: [makeAgent("slow", { defaultIdleTimeoutMs: 80 })],
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			artifactConfig: {
+				enabled: false,
+				includeInput: false,
+				includeOutput: false,
+				includeJsonl: false,
+				includeMetadata: false,
+				cleanupDays: 7,
+			},
+			shareEnabled: false,
+			maxSubagentDepth: 2,
+		});
+
+		const payload = await readAsyncPayload(id);
+		assert.equal(payload.timeoutMs, undefined, "composite parent must remain unbounded by default");
+		assert.equal(payload.timedOut, undefined, "a child idle timeout is not a whole-run deadline");
+		assert.equal(payload.results[0]?.timedOut, true);
+		assert.equal(payload.results[0]?.error, "Subagent idle timed out after 80ms.");
+	});
+
 	it("classifies a timed-out dirty child with a missing requested report as recovery-needed", { skip: !isAsyncAvailable() ? "jiti not available" : process.platform === "win32" ? "timeout signal delivery intermittent on Windows CI" : undefined }, async () => {
 		const repo = createRepo("pi-subagents-timeout-recovery-");
 		const changedPath = path.join(repo, "input.md");

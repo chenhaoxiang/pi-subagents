@@ -95,7 +95,7 @@ import { collectDynamicResults, DynamicFanoutError, materializeDynamicParallelSt
 import { claimRunFanoutBatch, getRunFanoutBudgetSnapshot } from "../shared/run-fanout-budget.ts";
 import { nestedSummaryFromAsyncStatus, projectNestedEvents, resolveNestedAsyncDir, writeNestedEvent } from "../shared/nested-events.ts";
 import { formatSubagentModelVerificationError, isContextOverflow } from "../shared/model-resolution.ts";
-import { formatModelAttemptNote, isRetryableModelFailureAttempt } from "../shared/model-fallback.ts";
+import { isRetryableModelFailureAttempt } from "../shared/model-fallback.ts";
 import { processTerminalPath, writeProcessTerminalCandidate, type ProcessTerminalCandidate } from "./process-terminal.ts";
 import { persistRunnerStartupFailure } from "./runner-startup-failure.ts";
 import { currentPidNamespaceScope } from "./pid-namespace.ts";
@@ -1866,19 +1866,25 @@ async function runSingleStepWithTimeout(
 	ctx: SingleStepContext,
 	parentDeadlineAt?: number,
 ): Promise<SingleStepResult> {
-	if (step.timeoutMs === undefined) return runSingleStep(step, parentDeadlineAt === undefined ? ctx : {
+	const idleTimeoutMs = step.idleTimeoutMs;
+	const parentRemainingMs = parentDeadlineAt === undefined ? undefined : Math.max(0, parentDeadlineAt - Date.now());
+	if (step.timeoutMs === undefined && idleTimeoutMs === undefined) return runSingleStep(step, parentDeadlineAt === undefined ? ctx : {
 		...ctx,
 		deadlineAt: ctx.deadlineAt === undefined ? parentDeadlineAt : Math.min(ctx.deadlineAt, parentDeadlineAt),
 	});
 
-	const parentRemainingMs = parentDeadlineAt === undefined ? undefined : Math.max(0, parentDeadlineAt - Date.now());
-	const timeoutMs = parentRemainingMs === undefined ? step.timeoutMs : Math.min(step.timeoutMs, parentRemainingMs);
-	const timeoutMessage = parentRemainingMs !== undefined && parentRemainingMs <= step.timeoutMs
+	const timeoutMs = step.timeoutMs === undefined || parentRemainingMs === undefined
+		? step.timeoutMs
+		: Math.min(step.timeoutMs, parentRemainingMs);
+	const timeoutMessage = parentRemainingMs !== undefined && step.timeoutMs !== undefined && parentRemainingMs <= step.timeoutMs
 		? ctx.timeoutMessage
-		: `Subagent timed out after ${step.timeoutMs}ms.`;
+		: step.timeoutMs === undefined
+			? `Subagent idle timed out after ${idleTimeoutMs}ms.`
+			: `Subagent timed out after ${step.timeoutMs}ms.`;
 	const timeoutController = new AbortController();
 	let timeoutAction: (() => void) | undefined;
 	let timeoutTriggered = false;
+	let idleTimer: NodeJS.Timeout | undefined;
 	const triggerTimeout = (): void => {
 		if (timeoutTriggered) return;
 		timeoutTriggered = true;
@@ -1890,18 +1896,43 @@ async function runSingleStepWithTimeout(
 		ctx.registerTimeout?.(action ? triggerTimeout : undefined);
 		if (action && timeoutTriggered) action();
 	};
-	const timer = setTimeout(triggerTimeout, timeoutMs);
-	timer.unref?.();
+	const resetIdleTimeout = (): void => {
+		if (idleTimeoutMs === undefined || timeoutTriggered) return;
+		if (idleTimer) clearTimeout(idleTimer);
+		idleTimer = setTimeout(triggerTimeout, idleTimeoutMs);
+		idleTimer.unref?.();
+	};
+	const onChildEvent = (event: ChildEvent): void => {
+		if (!isChildWatchdogStatusEvent(event)) resetIdleTimeout();
+		ctx.onChildEvent?.(event);
+	};
+	const onExternalStreamActivity = (): void => {
+		resetIdleTimeout();
+		ctx.onExternalStreamActivity?.();
+	};
+	const onExternalJob = (status: ExternalJobStatus): void => {
+		resetIdleTimeout();
+		ctx.onExternalJob?.(status);
+	};
+	if (idleTimeoutMs !== undefined) resetIdleTimeout();
+	const timer = timeoutMs === undefined ? undefined : setTimeout(triggerTimeout, timeoutMs);
+	timer?.unref?.();
 	try {
 		return await runSingleStep(step, {
 			...ctx,
 			registerTimeout,
-			deadlineAt: Date.now() + timeoutMs,
+			deadlineAt: timeoutMs === undefined
+				? (ctx.deadlineAt === undefined ? parentDeadlineAt : parentDeadlineAt === undefined ? ctx.deadlineAt : Math.min(ctx.deadlineAt, parentDeadlineAt))
+				: Date.now() + timeoutMs,
 			timeoutSignal: combinedAbortSignal([ctx.timeoutSignal, timeoutController.signal]),
 			timeoutMessage,
+			onChildEvent,
+			onExternalStreamActivity,
+			onExternalJob,
 		});
 	} finally {
-		clearTimeout(timer);
+		if (timer) clearTimeout(timer);
+		if (idleTimer) clearTimeout(idleTimer);
 		ctx.registerTimeout?.(undefined);
 	}
 }
