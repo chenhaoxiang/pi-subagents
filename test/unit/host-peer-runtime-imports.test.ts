@@ -297,6 +297,10 @@ test("skips the pi-agent-core/node alias when the host package declares no ./nod
 		assert.equal(resolved.aliases["@earendil-works/pi-agent-core"], fs.realpathSync(path.join(distDir, "index.js")));
 		assert.equal(resolved.aliases["@earendil-works/pi-agent-core/node"], undefined);
 		assert.ok(!resolved.missing.includes("@earendil-works/pi-agent-core/node"));
+
+		fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "@earendil-works/pi-coding-agent", version: "1.0.0-beta.1" }), "utf-8");
+		const prerelease = resolveHostPeerAliases(root);
+		assert.ok(prerelease.missing.includes("@earendil-works/pi-agent-core/node"));
 	} finally {
 		fs.rmSync(root, { recursive: true, force: true });
 	}
