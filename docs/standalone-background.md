@@ -2,7 +2,7 @@
 
 Supported standalone target: **official Pi 0.86.1, Linux x64**. Keep its adjacent release assets with the executable. Other versions, operating systems, architectures and packagers are outside the fully validated support target; limited experimental Windows coverage is described below.
 
-Pi's extension loader supplies its embedded SDK to `binary-bootstrap.ts`, which awaits the existing configured runner before exiting. Startup authorization, revival leases, controls, disposal and process-close observation remain shared with npm. Each independent run has its own host; native sessions inside that run share it. No per-session CLI protocol, runtime download/install, alternate SDK or foreground fallback is introduced. Npm Pi keeps its Node runner, peer aliases and detected npm `PI_PACKAGE_DIR` override (including refusal when no npm root exists).
+Pi's extension loader supplies its embedded SDK to `binary-bootstrap.ts`, which awaits the existing configured runner before exiting. Startup authorization, revival leases, controls, disposal and process-close observation remain shared with npm. Each independent run has its own host; native sessions inside that run share it. No per-session CLI protocol, runtime download/install, alternate SDK or foreground fallback is introduced. Npm Pi keeps its Node runner, peer aliases and detected npm `PI_PACKAGE_DIR` override (including refusal when no npm root exists). The npm runner supports the current Pi 1.x host layout: Pi 1.x removed the legacy `@earendil-works/pi-agent-core/node` export, so that alias is optional only for a positively identified 1.x host; unknown and pre-1.0 hosts still fail closed when it is missing.
 
 Implementation and lifecycle fixtures derive from [@xz-dev](https://github.com/xz-dev)'s [PR #2049](https://github.com/nicobailon/pi-subagents/pull/2049), source commit `910807bfefcf9ee41d73fa25ec86dcd75ab8f4b2` (Xiangzhe, `xiangzhedev@gmail.com`). Integration retains the lifecycle contract and reduces commentary rather than removing its evidence gates.
 
@@ -43,7 +43,7 @@ For a focused diagnostic, use `node test/smoke/standalone-background.mjs "$relea
 
 ## Npm regressions and local trial
 
-Existing npm clean-install CI covers real SDK 0.86.1. The standalone CI job also checks the public npm launch path without execution-time network:
+Existing npm clean-install CI covers the supported Pi 0.86.1 and Pi 1.0.0 host layouts. The standalone CI job also checks the public npm launch path without execution-time network:
 
 ```bash
 npm_checks="$(mktemp -d)"

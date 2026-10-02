@@ -190,6 +190,45 @@ test("validateStructuredOutputValue validates values against a JSON Schema", asy
 	assert.ok(invalid.status === "invalid" && invalid.message.length > 0);
 });
 
+test("Pi 1.x hosts may omit the removed pi-agent-core/node export", () => {
+	const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-pi-one-host-alias-"));
+	const host = path.join(root, "host");
+	const chord = "@earendil-works/chord";
+	function writePackage(dir: string, name: string, version: string, exports: Record<string, string>) {
+		fs.mkdirSync(dir, { recursive: true });
+		fs.writeFileSync(path.join(dir, "package.json"), JSON.stringify({ name, version, exports }));
+		for (const target of Object.values(exports)) {
+			fs.mkdirSync(path.dirname(path.join(dir, target)), { recursive: true });
+			fs.writeFileSync(path.join(dir, target), "export {};\n");
+		}
+	}
+	try {
+		const packages = new Map<string, Record<string, string>>();
+		for (const { pkg, specifier, subpath } of HOST_PEER_ALIASES) {
+			if (specifier === "@earendil-works/pi-agent-core/node") continue;
+			const exports = packages.get(pkg) ?? {};
+			exports[subpath] = `./${subpath === "." ? "index" : subpath.slice(2).replaceAll("/", "-")}.mjs`;
+			packages.set(pkg, exports);
+		}
+		for (const [pkg, exports] of packages) {
+			const dir = pkg === "@earendil-works/pi-coding-agent" ? host : path.join(host, "node_modules", pkg);
+			writePackage(dir, pkg, "1.0.0", exports);
+		}
+		writePackage(path.join(host, "node_modules", chord), chord, "1.0.0", {
+			".": "./index.mjs",
+			"./context": "./context.mjs",
+		});
+
+		const resolved = resolveHostPeerAliases(host);
+		assert.deepEqual(resolved.missing, []);
+		assert.equal(resolved.aliases["@earendil-works/pi-agent-core/node"], undefined);
+		assert.ok(resolved.aliases[chord]);
+		assert.ok(resolved.aliases[`${chord}/context`]);
+	} finally {
+		fs.rmSync(root, { recursive: true, force: true });
+	}
+});
+
 test("chord is omitted before 0.85, but required host-first on chord-era and unknown hosts (#2026)", () => {
 	const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-chord-alias-"));
 	const host = path.join(root, "host");
