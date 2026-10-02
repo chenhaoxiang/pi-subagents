@@ -11,6 +11,8 @@
 
 ### Fixed
 
+- Background npm runners now tolerate Pi 1.x hosts that removed the legacy `@earendil-works/pi-agent-core/node` export, while remaining fail-closed for unknown or pre-1.0 hosts that lack the export.
+- The native Node runner's peer preload no longer redirects Pi SDK CommonJS `require` or `require.resolve` through extension aliases. ESM peer imports remain aliased, while host dependencies resolve from their own package tree.
 - On Windows, external-CLI agents such as `claude-code`, `codex-exec`, and `cursor-agent` can now launch a CLI installed with npm. npm installs these as `.cmd` shims, which Node cannot start without a shell, so the launch failed with `EINVAL`. The runner now starts Node on the shim's script with the original arguments, still without a shell, and rejects any other `.cmd` or `.bat` wrapper before it runs. Thanks to [@lexxbyte](https://github.com/lexxbyte) for tracing the cause in [#2631](https://github.com/nicobailon/pi-subagents/issues/2631).
 - Builtin agent settings overrides now stage JSON before replacing the settings file, so an interrupted save leaves the previous settings readable. Thanks to [@quifox](https://github.com/quifox) for [#2627](https://github.com/nicobailon/pi-subagents/pull/2627).
 - A host-required child extension (`registerRequiredChildExtensions`) that threw during `session_start` no longer leaves a usable child. Pi only reports such handler errors, so the child was created and could still send model requests without the policy the extension was meant to set up. A failure attributed to a required extension while the child binds its extensions now disposes the child and rejects the launch, as missing files and failed provider registrations already did. Ordinary extensions keep the existing behavior: their startup errors are reported and the child still starts. Thanks to [@doc-krieger](https://github.com/doc-krieger) for reporting [#2639](https://github.com/nicobailon/pi-subagents/issues/2639).
@@ -32,6 +34,14 @@
 - Some MCP clients, such as pi-claude-bridge, send `workflow: true` as the string `"true"`. The `subagent` tool then looked for a workflow resource named `true` and failed with an error telling the caller to use `workflow: true`, which it already had, so retrying could not help. `workflow: "true"` now runs and validates the reply's ```` ```js workflow ```` block exactly like `workflow: true` (#2600).
 - Async runs now reach `run-history.jsonl`. `recordRun()` was only called by the foreground executor, so with `asyncByDefault` every subagent launch was invisible to `loadRunsForAgent()` census tooling (on a live machine the file stayed frozen at its last foreground entry while 140 async launches went unrecorded in a single day). The background runner now records at terminal publication: single-step runs keep the exact foreground shape, multi-step runs record one row per child step so per-agent lookups see every child, and paused runs record as `interrupted` with a later resume recording again — one entry per attempt. Thanks to [@limin411](https://github.com/limin411) for [#2620](https://github.com/nicobailon/pi-subagents/pull/2620).
 - `/subagent-cost` and the RPC `cost` method now count every round of a resumed foreground workflow child. Each round appends to the same child session file, and its tool result carried no run id, so every round after the first was dropped as a duplicate and the totals came out low without any warning. Foreground workflow results now include the child's run id, the same id that workflow receipts use. Results recorded before this fix still lack it. Thanks to [@chagwood](https://github.com/chagwood) for [#2601](https://github.com/nicobailon/pi-subagents/issues/2601).
+## [0.74.0-fork.1] - 2026-10-02
+
+### Fork additions
+
+- Restored guarded heterogeneous model fallback for native Pi children. Explicit fallback chains and the built-in pool only advance on provider/model failures before child tool activity, and every attempt is retained as evidence.
+- Added activity-based `idleTimeoutMs` for foreground and background children. Stream and tool lifecycle activity resets the inactivity window; it does not impose a wall-clock cap.
+- Preserved runner compatibility for long-lived parents and Pi 1.x hosts with fail-closed handling for unknown or pre-1.0 host layouts.
+
 ## [0.74.0] - 2026-09-30
 
 ### Highlights
@@ -94,6 +104,7 @@
 
 ### Fixed
 
+- Long-running npm Pi parents loaded before the 0.71 runner bootstrap split can still launch background children after an on-disk update. The former runner path now enters the shared startup handshake instead of exiting successfully without consuming the config.
 - Turning on `subagent` no longer throws away the prompt cache. The catalog of advertised agents is now sent as its own `advertised_subagents` prompt section, which Pi adds at the end of the conversation. Before, pi-subagents rewrote the whole system prompt, so the first message after `subagents_enable` resent the entire conversation to the cache. Fixes [#2518](https://github.com/nicobailon/pi-subagents/issues/2518). Thanks to [@javapacr](https://github.com/javapacr) for [#2519](https://github.com/nicobailon/pi-subagents/pull/2519).
 - Stopping a background run while it was shutting down could report "Stop requested" even though the runner never read the stop, so an interrupted run finished as paused instead of stopped. The stop now fails with a message to retry once the runner has exited, and that retry stops a paused run.
 

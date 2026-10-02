@@ -15,7 +15,9 @@ Precedence, strongest first: per-run override → provider-scoped role override 
 
 On the two Claude Code adapters a model is Claude Code's own alias or id rather than a Pi child model, so a value set for one of them resolves nothing against the registry. `subagents.defaultModel` is ignored there, because it is a default for Pi children. An explicit `agentOverrides.<name>.model` or agent frontmatter `model` is passed on as given, and Claude Code reports it when it does not recognize the value. See [agents](agents.md).
 
-Each launch resolves one model. Provider errors, including HTTP 429 responses, are returned from that model rather than selecting another one. Separately, a verified compaction abort after useful progress may continue the retained child session once on the same resolved model; this lifecycle recovery preserves work and is not model fallback.
+Fallback precedence is independent for native Pi children: an agent's `fallbackModels` frontmatter or `agentOverrides.<name>.fallbackModels` wins; otherwise `subagents.fallbackModels` from project settings, then user settings, supplies the explicit chain; when none is configured, the built-in heterogeneous priority pool is used. Set `fallbackModels: []` to explicitly disable automatic fallback for a role. External runners reject this Pi-only field.
+
+Each native Pi launch resolves an ordered model chain. An agent's explicit `fallbackModels` list wins; when it is absent, the child uses the built-in heterogeneous priority pool and filters it against the active model registry. Provider/model failures before any child tool activity advance to the next candidate. Tool failures, context overflow, user interruption, run deadlines, and failures after tool activity remain terminal so the task is never blindly replayed after side effects. Every attempted model and skipped candidate is retained in the result evidence. Separately, a verified compaction abort after useful progress may continue the retained child session once on the same resolved model; this lifecycle recovery is distinct from model fallback.
 
 Use `model: "inherit"` in agent frontmatter or `agentOverrides.<name>.model` to select the current parent session model explicitly.
 
@@ -31,7 +33,8 @@ In `~/.pi/agent/settings.json` (user) or the project config settings file (`.pi/
     "defaultProvider": "gpu-a",
     "agentOverrides": {
       "oracle": {
-        "model": "deepseek-v4-pro"
+        "model": "deepseek-v4-pro",
+        "fallbackModels": ["openai-codex/gpt-5.6-luna:low", "zai-coding-cn/glm-5.3"]
       },
       "worker": {
         "defaultProvider": "gpu-b"
@@ -69,7 +72,7 @@ For one run, put the override in the command:
 /run reviewer[model=anthropic/claude-sonnet-4:high] "Review this diff"
 ```
 
-For a persistent role override:
+For a persistent role override with an explicit fallback chain:
 
 ```json
 {
@@ -103,7 +106,15 @@ A setup that works well in practice: route agents by task shape instead of runni
 
 The routing rule: use the capability tiers (1–3) when the task is well-scoped, and the intent tier (4) when scoping or judging is the task itself.
 
-Each launch resolves one model and starts the child once. Provider, authentication, quota, rate-limit, stream, empty-response, context-overflow, and provisioning failures are returned from that attempt. To try another model, the parent or operator must issue a later explicit launch.
+Fallback behavior is ordered and observable:
+
+- A custom agent's `fallbackModels` list is used exactly in the declared order.
+- If the list is omitted, the runtime uses the heterogeneous priority pool aligned with the local probe ladder: `codex-local/kimi-k3:max`, `codex-local/gpt-6-astra:high`, `codex-local/gpt-5.6-sol:max`, `zai-coding-cn/glm-5.3`, `codex-local/deepseek-flash`, then the Qoder entries when they are present in the active registry.
+- Candidates unavailable in the active registry are skipped before launch and recorded as `skippedModels`.
+- A provider/model failure before tool activity advances to the next candidate. The result records `attemptedModels`, `modelAttempts`, and the final model.
+- Tool failures, context overflow, user cancellation, run deadlines, and failures after child tool activity do not replay the task on another model.
+
+This keeps automatic availability fallback while preserving the safety boundary that prevents replaying a task after it may have changed files or external state.
 
 ## Thinking level defaults
 

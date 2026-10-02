@@ -235,6 +235,29 @@ describe("workflow wait completion projection", () => {
 		assert.doesNotMatch(JSON.stringify(completion), /must not be copied/);
 	});
 
+	it("retains heterogeneous model fallback evidence in completion details", () => {
+		const completion = toWaitCompletion({
+			success: true,
+			results: [{
+				agent: "worker",
+				model: "anthropic/claude-sonnet-4",
+				skippedModels: [{ model: "codex-local/kimi-k3:max", reason: "unavailable in the active model registry" }],
+				attemptedModels: ["openai/gpt-5-mini", "anthropic/claude-sonnet-4"],
+				modelAttempts: [
+					{ model: "openai/gpt-5-mini", success: false, exitCode: 1, error: "rate limit exceeded", usage: { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, cost: 0.01, turns: 1 } },
+					{ model: "anthropic/claude-sonnet-4", success: true, exitCode: 0, usage: { input: 12, output: 8, cacheRead: 0, cacheWrite: 0, cost: 0.02, turns: 1 } },
+				],
+			}],
+		}, "run-model-fallback");
+
+		assert.deepEqual(completion.results?.[0]?.skippedModels, [{ model: "codex-local/kimi-k3:max", reason: "unavailable in the active model registry" }]);
+		assert.deepEqual(completion.results?.[0]?.attemptedModels, ["openai/gpt-5-mini", "anthropic/claude-sonnet-4"]);
+		assert.deepEqual(completion.results?.[0]?.modelAttempts, [
+			{ model: "openai/gpt-5-mini", success: false, exitCode: 1, error: "rate limit exceeded", usage: { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, cost: 0.01, turns: 1 } },
+			{ model: "anthropic/claude-sonnet-4", success: true, exitCode: 0, usage: { input: 12, output: 8, cacheRead: 0, cacheWrite: 0, cost: 0.02, turns: 1 } },
+		]);
+	});
+
 	it("retains only bounded timeout recovery evidence in completion details", () => {
 		const changedFiles = Array.from({ length: 25 }, (_, index) => `src/file-${String(index + 1).padStart(2, "0")}.ts`);
 		const completion = toWaitCompletion({

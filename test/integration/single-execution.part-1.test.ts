@@ -840,6 +840,30 @@ Answer only from the supplied synthetic text.
 		assert.equal(mockPi.callCount(), 3, "wrong-then-right must not spawn");
 	});
 
+	it("fails closed before spawning when a workflow permit would need model fallback", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const executor = makeExecutor([makeAgent("echo", { model: "openai/gpt-5-mini", fallbackModels: ["anthropic/claude-sonnet-4"] })]);
+		const ctx = makeMinimalCtx(tempDir);
+		const script = `return runs.run("main", { agent: "echo", task: "Exact task", acceptance: false });`;
+		mockPi.onCall({ output: "projection probe" });
+		const probe = await executor.execute("workflow-fallback-probe", { async: false, workflowScript: script }, new AbortController().signal, undefined, ctx);
+		const launchContractDigest = (probe.details as { results?: Array<{ launchContractDigest?: string }> }).results?.[0]?.launchContractDigest;
+		assert.ok(launchContractDigest);
+		const permit = createWorkflowChildPermit({
+			issuerPackage: "permit-secret-package",
+			workflowRunId: "workflow-fallback",
+			childKey: "main",
+			agent: "echo",
+			launchContractDigest,
+			context: "fresh",
+		});
+
+		const denied = await executor.executeDelegated("workflow-fallback", { async: false, workflowScript: script, delegatedWorkflowPermit: permit }, new AbortController().signal, undefined, ctx);
+		assert.equal(denied.isError, true);
+		assert.match(denied.content[0]?.text ?? "", /automatic model fallback/);
+		assert.equal(workflowChildPermitConsumed(permit), true, "workflow fallback rejection must consume the delegated permit once");
+		assert.equal(mockPi.callCount(), 1, "workflow fallback rejection must not spawn a child");
+	});
+
 	it("resolves workflow child profile context from its agent default", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		mockPi.onCall({ output: "Workflow child completed" });
 		const result = await makeExecutor([makeAgent("echo", { defaultContext: "fresh" })], { defaultSubagentContext: "fork" }).execute(

@@ -208,18 +208,21 @@ describe("profiles helpers", () => {
 		assert.equal(agents.some((agent) => agent.source === "builtin"), false);
 	});
 
-	it("rejects removed profile fallback models", () => {
+	it("accepts profile fallback models", () => {
 		const profilesDir = getSubagentProfilesDir();
 		fs.mkdirSync(profilesDir, { recursive: true });
 		fs.writeFileSync(path.join(profilesDir, "invalid.json"), JSON.stringify({
 			subagents: {
 				agentOverrides: {
-					worker: { fallbackModels: ["openai/gpt-5", 42] },
+					worker: { fallbackModels: ["openai/gpt-5", "anthropic/claude-sonnet-4"] },
 				},
 			},
 		}, null, 2));
 
-		assert.throws(() => applySubagentProfile("invalid"), /removed field fallbackModels/);
+		const result = applySubagentProfile("invalid");
+		assert.equal(result.filePath.endsWith("invalid.json"), true);
+		const settings = JSON.parse(fs.readFileSync(result.settingsPath, "utf-8")) as { subagents: { agentOverrides: { worker: { fallbackModels: string[] } } } };
+		assert.deepEqual(settings.subagents.agentOverrides.worker.fallbackModels, ["openai/gpt-5", "anthropic/claude-sonnet-4"]);
 	});
 
 	it("rejects profile and provider path traversal names", async () => {

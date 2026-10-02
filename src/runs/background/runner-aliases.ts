@@ -36,6 +36,10 @@ const CHORD_PEER_ALIASES = [
 	{ specifier: "@earendil-works/chord/context", pkg: "@earendil-works/chord", subpath: "./context" },
 ];
 
+// Pi 1.0 removed the legacy Node-specific core export. It is only optional for
+// known Pi 1.x+ hosts; unknown and pre-1.0 hosts remain fail-closed.
+const OPTIONAL_ON_PI_1_ALIASES = new Set(["@earendil-works/pi-agent-core/node"]);
+
 interface PackageManifest {
 	name?: unknown;
 	version?: unknown;
@@ -49,6 +53,18 @@ function readManifest(packageDir: string): PackageManifest | undefined {
 	} catch {
 		return undefined;
 	}
+}
+
+function isPiOneOrNewer(version: unknown): boolean {
+	if (typeof version !== "string") return false;
+	const match = /^(\d+)\.\d+\.\d+(?:[-+].*)?$/.exec(version);
+	return match !== null && Number(match[1]) >= 1;
+}
+
+function mayOmitAlias(hostManifest: PackageManifest | undefined, specifier: string): boolean {
+	return typeof hostManifest !== "undefined"
+		&& isPiOneOrNewer(hostManifest.version)
+		&& OPTIONAL_ON_PI_1_ALIASES.has(specifier);
 }
 
 const BLOCKED_EXPORT = Symbol("blocked export");
@@ -145,11 +161,12 @@ export function resolveHostPeerAliases(piPackageRoot: string): { aliases: Record
 	for (const { specifier, pkg, subpath, optional } of required) {
 		const packageDir = findPeerPackageDir(piPackageRoot, pkg, hostManifest?.name);
 		const target = packageDir ? resolvePackageSubpath(packageDir, subpath) : undefined;
-		// An optional subpath the package does not declare is unreachable, so skip it; a declared but missing file still fails.
-		if (optional && packageDir && target === undefined) continue;
+		// Only a positively identified Pi 1.x host may omit the removed export; unknown
+		// and pre-1.0 hosts remain fail-closed even when the subpath is absent.
+		if (optional && packageDir && target === undefined && mayOmitAlias(hostManifest, specifier)) continue;
 		// Native loaders short-circuit resolution, so aliases must retain the real package's dependency scope.
 		if (target && fs.existsSync(target)) aliases[specifier] = fs.realpathSync(target);
-		else missing.push(specifier);
+		else if (!mayOmitAlias(hostManifest, specifier)) missing.push(specifier);
 	}
 	return { aliases, missing };
 }

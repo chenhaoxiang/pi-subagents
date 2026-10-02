@@ -2,7 +2,7 @@
 
 `pi-subagents` reads optional JSON config from `~/.pi/agent/extensions/subagent/config.json`. This page lists every key, plus the environment variables and the settings-file keys that affect config resolution.
 
-Settings-level keys (`subagents.defaultModel`, `defaultProvider`, `defaultThinking`, `defaultExtensions`, `defaultSubagentOnlyExtensions`, `agentOverrides`, `machines`, `agentScanDirs`, `agentExcludeDirs`, `modelScope`, `disableThinking`, `disableBuiltins`, watchdog settings) live in Pi settings files, not this config file. `modelScope.agents.<name>` adds per-agent restrictions, `allow: ["inherit"]` permits the current parent model, and `allow: ["scoped"]` permits the parent session's scoped models (the parent model when the session is unscoped). See [models.md](models.md), [agents.md](agents.md), and [watchdog.md](watchdog.md).
+Settings-level keys (`subagents.defaultModel`, `defaultProvider`, `fallbackModels`, `defaultThinking`, `defaultExtensions`, `defaultSubagentOnlyExtensions`, `agentOverrides`, `machines`, `agentScanDirs`, `agentExcludeDirs`, `modelScope`, `disableThinking`, `disableBuiltins`, watchdog settings) live in Pi settings files, not this config file. `modelScope.agents.<name>` adds per-agent restrictions, `allow: ["inherit"]` permits the current parent model, and `allow: ["scoped"]` permits the parent session's scoped models (the parent model when the session is unscoped). See [models.md](models.md), [agents.md](agents.md), and [watchdog.md](watchdog.md).
 
 ## Project root resolution (settings)
 
@@ -347,6 +347,16 @@ This deadline bounds the whole run. The wait for a single model response is boun
 Use it when foreground orchestration or plain async single-agent runs need a longer default than 30 minutes. It does not set async composite top-level deadlines, and it does not replace async fan-out child deadlines.
 
 Composite async runs (async chains, parallel tasks, and scripted workflows) stay unbounded at the top level by design. Their runner children are bounded individually by their own agent or runner defaults, so this value does not cap them. Must be a positive integer no greater than `2147483647` (the largest delay a Node.js timer can honor, roughly 24.8 days); invalid or out-of-range values are ignored and the built-in defaults apply.
+
+## `idleTimeoutMs`
+
+```json
+{ "idleTimeoutMs": 1800000 }
+```
+
+Global default inactivity window in milliseconds. Child stream events (`message_update`, completed messages, tool lifecycle events) and external stdout/stderr activity reset the window. When the window expires, the child is terminated with `timedOut: true`; there is no wall-clock maximum. A per-call `idleTimeoutMs` or agent frontmatter `idleTimeoutMs` overrides the global default. It cannot be combined with `timeoutMs`/`maxRuntimeMs`; `timeoutMs` remains the separate hard wall-clock deadline.
+
+The bundled `reviewer` agent defaults to a 30-minute inactivity window so long model thinking is not cut off by a short caller deadline. Prefer `idleTimeoutMs: 1800000` for long reviews and omit `timeoutMs`/`maxRuntimeMs`.
 
 ## `toolTimeoutMs`
 

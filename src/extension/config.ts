@@ -149,6 +149,13 @@ function validateConfig(config: Record<string, unknown>): void {
 		throw new Error('config.defaultSubagentContext must be "fresh" or "fork"');
 	}
 	validateForkContextConfig(config.forkContext);
+	if (config.idleTimeoutMs !== undefined
+		&& (typeof config.idleTimeoutMs !== "number"
+			|| !Number.isInteger(config.idleTimeoutMs)
+			|| config.idleTimeoutMs <= 0
+			|| config.idleTimeoutMs > 2_147_483_647)) {
+		throw new Error("config.idleTimeoutMs must be a positive integer no larger than 2147483647");
+	}
 	if (config.checkpointBeforeDeadlineMs !== undefined
 		&& (typeof config.checkpointBeforeDeadlineMs !== "number"
 			|| !Number.isInteger(config.checkpointBeforeDeadlineMs)

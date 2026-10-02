@@ -37,6 +37,10 @@ export interface RunnerSubagentStep {
 	/** Original cwd input retained for launch diagnostics. */
 	requestedCwd?: string;
 	model?: string;
+	/** Ordered native Pi models to attempt for automatic provider fallback. */
+	modelCandidates?: string[];
+	/** Candidates skipped before launch because they were unavailable. */
+	skippedModels?: Array<{ model: string; reason: string }>;
 	contextLimit?: number;
 	fast?: boolean;
 	thinking?: string;
@@ -75,6 +79,8 @@ export interface RunnerSubagentStep {
 	sessionFile?: string;
 	maxSubagentDepth?: number;
 	timeoutMs?: number;
+	/** Inactivity timeout (ms); stream/tool activity resets it and there is no wall-clock cap. */
+	idleTimeoutMs?: number;
 	/** Resolved configured hard per-tool-call timeout (ms); fast tools still have a default when undefined. */
 	toolTimeoutMs?: number;
 	waitToolEnabled?: boolean;

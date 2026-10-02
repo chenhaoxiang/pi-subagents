@@ -187,6 +187,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 			startedAt: run.startedAt,
 			updatedAt: run.lastUpdate ?? run.startedAt,
 			timeoutMs: run.timeoutMs,
+			idleTimeoutMs: run.idleTimeoutMs,
 			deadlineAt: run.deadlineAt,
 			timedOut: run.timedOut,
 			stopped: run.stopped,

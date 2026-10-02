@@ -302,6 +302,156 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.equal(statusPayload.steps?.[0]?.exitCode, 0);
 	});
 
+	it("background runs fallback to the next explicit model before tool activity", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		mockPi.onCall({
+			jsonl: [{
+				type: "message_end",
+				message: {
+					role: "assistant",
+					content: [{ type: "text", text: "temporary provider failure" }],
+					model: "openai/gpt-5-mini",
+					stopReason: "error",
+					errorMessage: "rate limit exceeded",
+					usage: { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, cost: { total: 0.01 } },
+				},
+			}],
+			exitCode: 1,
+		});
+		mockPi.onCall({ output: "async fallback output" });
+		const id = `async-explicit-fallback-${Date.now().toString(36)}`;
+		executeAsyncSingle(id, {
+			agent: "worker",
+			task: "Do work",
+			agentConfig: makeAgent("worker", { model: "openai/gpt-5-mini", fallbackModels: ["anthropic/claude-sonnet-4"] }),
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+			shareEnabled: false,
+			maxSubagentDepth: 2,
+		});
+
+		const resultPath = await waitForAsyncResultFile(id);
+		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
+		assert.equal(payload.success, true);
+		assert.equal(payload.results[0]?.success, true);
+		assert.equal(payload.results[0]?.model, "anthropic/claude-sonnet-4");
+		assert.deepEqual(payload.results[0]?.attemptedModels, ["openai/gpt-5-mini", "anthropic/claude-sonnet-4"]);
+		assert.equal(payload.results[0]?.modelAttempts?.length, 2);
+		const statusPayload = await waitForAsyncState(id, (candidate) => candidate.state === "complete");
+		assert.deepEqual(statusPayload.steps?.[0]?.attemptedModels, ["openai/gpt-5-mini", "anthropic/claude-sonnet-4"]);
+		assert.equal(statusPayload.steps?.[0]?.modelAttempts?.length, 2);
+		assert.equal(mockPi.callCount(), 2);
+	});
+
+	it("background runs fallback from an explicitly overridden unknown primary model", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		mockPi.onCall({
+			jsonl: [{
+				type: "message_end",
+				message: {
+					role: "assistant",
+					content: [{ type: "text", text: "temporary provider failure" }],
+					model: "missing/primary",
+					stopReason: "error",
+					errorMessage: "model unavailable",
+					usage: { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, cost: { total: 0.01 } },
+				},
+			}],
+			exitCode: 1,
+		});
+		mockPi.onCall({ output: "unknown primary fallback output" });
+		const id = `async-unknown-primary-fallback-${Date.now().toString(36)}`;
+		executeAsyncSingle(id, {
+			agent: "worker",
+			task: "Do work",
+			modelOverride: "missing/primary",
+			agentConfig: makeAgent("worker", { model: "openai/gpt-5-mini", fallbackModels: ["anthropic/claude-sonnet-4"] }),
+			availableModels: [
+				{ provider: "anthropic", id: "claude-sonnet-4", fullId: "anthropic/claude-sonnet-4" },
+			],
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+			shareEnabled: false,
+			maxSubagentDepth: 2,
+		});
+
+		const payload = JSON.parse(fs.readFileSync(await waitForAsyncResultFile(id), "utf-8")) as AsyncResultPayload;
+		assert.equal(payload.success, true);
+		assert.equal(payload.results[0]?.model, "anthropic/claude-sonnet-4");
+		assert.deepEqual(payload.results[0]?.attemptedModels, ["missing/primary", "anthropic/claude-sonnet-4"]);
+		assert.equal(mockPi.callCount(), 2);
+	});
+
+	it("background chains preserve fallback evidence for a failed primary step", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		mockPi.onCall({
+			jsonl: [{
+				type: "message_end",
+				message: {
+					role: "assistant",
+					content: [{ type: "text", text: "temporary provider failure" }],
+					model: "openai/gpt-5-mini",
+					stopReason: "error",
+					errorMessage: "rate limit exceeded",
+					usage: { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, cost: { total: 0.01 } },
+				},
+			}],
+			exitCode: 1,
+		});
+		mockPi.onCall({ output: "chain fallback output" });
+		const id = `async-chain-fallback-${Date.now().toString(36)}`;
+		executeAsyncChain(id, {
+			chain: [{ agent: "worker", task: "Do work" }],
+			agents: [makeAgent("worker", { model: "openai/gpt-5-mini", fallbackModels: ["anthropic/claude-sonnet-4"] })],
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+			shareEnabled: false,
+			maxSubagentDepth: 2,
+		});
+
+		const payload = JSON.parse(fs.readFileSync(await waitForAsyncResultFile(id), "utf-8")) as AsyncResultPayload;
+		assert.equal(payload.success, true);
+		assert.equal(payload.results[0]?.model, "anthropic/claude-sonnet-4");
+		assert.deepEqual(payload.results[0]?.attemptedModels, ["openai/gpt-5-mini", "anthropic/claude-sonnet-4"]);
+		assert.equal(payload.results[0]?.modelAttempts?.length, 2);
+		assert.equal(mockPi.callCount(), 2);
+	});
+
+	it("background parallel steps fallback one child without affecting its sibling", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		mockPi.onCall({
+			matchArgIncludes: "Do A",
+			jsonl: [{
+				type: "message_end",
+				message: {
+					role: "assistant",
+					content: [{ type: "text", text: "temporary provider failure" }],
+					model: "openai/gpt-5-mini",
+					stopReason: "error",
+					errorMessage: "rate limit exceeded",
+					usage: { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, cost: { total: 0.01 } },
+				},
+			}],
+			exitCode: 1,
+		});
+		mockPi.onCall({ matchArgIncludes: "Do B", output: "sibling output" });
+		mockPi.onCall({ matchArgIncludes: "Do A", output: "parallel fallback output" });
+		const id = `async-parallel-fallback-${Date.now().toString(36)}`;
+		executeAsyncChain(id, {
+			chain: [{ parallel: [{ agent: "worker", task: "Do A" }, { agent: "worker", task: "Do B" }] }],
+			resultMode: "parallel",
+			agents: [makeAgent("worker", { model: "openai/gpt-5-mini", fallbackModels: ["anthropic/claude-sonnet-4"] })],
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+			shareEnabled: false,
+			maxSubagentDepth: 2,
+		});
+
+		const payload = JSON.parse(fs.readFileSync(await waitForAsyncResultFile(id), "utf-8")) as AsyncResultPayload;
+		assert.equal(payload.success, true);
+		const fallbackResult = payload.results.find((result) => result.attemptedModels?.length === 2);
+		assert.deepEqual(fallbackResult?.attemptedModels, ["openai/gpt-5-mini", "anthropic/claude-sonnet-4"]);
+		assert.equal(fallbackResult?.model, "anthropic/claude-sonnet-4");
+		assert.equal(payload.results.find((result) => result.output === "sibling output")?.attemptedModels, undefined);
+		assert.equal(mockPi.callCount(), 3);
+	});
+
 	it("background runs keep provider errors failed when followed only by empty assistant output", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
 		mockPi.onCall({
 			jsonl: [

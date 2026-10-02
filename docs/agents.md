@@ -360,6 +360,7 @@ Field notes:
 | `extensions` | Omitted means a background child loads the parent's ambient extensions; empty means no ambient extensions; list values load exactly those extensions. Foreground children never load ambient extensions, so for them only listed values apply. |
 | `subagentOnlyExtensions` | Extension paths loaded only in this agent's child sessions. Tools registered there are unavailable to the main agent unless also installed through normal Pi extension configuration. |
 | `model` | Default model. Bare ids prefer the current provider when possible, then unique registry matches. On the two Claude Code adapters this is Claude Code's own alias or id, and a trailing `:level` picks the effort. |
+| `fallbackModels` | Optional ordered backup models for native Pi children. When omitted, the runtime uses the heterogeneous priority pool. Automatic switching only occurs for provider/model failures before child tool activity; tool failures and post-tool failures remain terminal. External runners still reject this Pi-only field. |
 | `thinking` | Appended as a `:level` suffix at runtime unless a suffix is already present. On the two Claude Code adapters it becomes `--effort`, and a suffix on `model` wins over it. |
 | `systemPromptMode` | `replace` by default; `append` keeps Pi's base prompt. |
 | `inheritProjectContext` | Keeps or strips inherited repository instruction blocks. |
@@ -372,7 +373,8 @@ Field notes:
 | `defaultReads` | Files to read before running the agent. |
 | `defaultProgress` | Maintain `progress.md`. |
 | `async` | Default a single-agent launch to background (`true`) or foreground (`false`) when the call omits `async`. Explicit call values and `forceTopLevelAsync` win. |
-| `timeoutMs` | Positive integer default runtime deadline in milliseconds for single-agent launches. Foreground launches use 30 minutes when neither the call nor agent provides a timeout; explicit `timeoutMs`/`maxRuntimeMs` and agent defaults win. |
+| `timeoutMs` | Positive integer hard wall-clock deadline in milliseconds for single-agent launches. Foreground launches use 30 minutes when neither the call nor agent provides a timeout; explicit `timeoutMs`/`maxRuntimeMs` and agent defaults win. |
+| `idleTimeoutMs` | Positive integer inactivity window in milliseconds. Child stream/tool activity resets it; no wall-clock cap. Cannot be combined with `timeoutMs`/`maxRuntimeMs`; explicit per-call and agent defaults win. |
 | `toolTimeoutMs` | Optional positive integer hard per-tool-call deadline in milliseconds. An explicit call value wins, then this agent default, global `toolTimeoutMs`, and `PI_SUBAGENT_TOOL_TIMEOUT_MS`. When omitted, known-fast built-in tools get a five-minute default; long-running tools get attention notices but no hard default. It does not extend the run-level deadline; `contact_supervisor`, `intercom`, and `bg_wait` are exempt. |
 | `acceptance` | Acceptance default for single-agent launches. Use a scalar level such as `checked` or an inline/block YAML map such as `{ level: "none", reason: "lightweight lookup" }`. Explicit call values win; chain and parallel acceptance remains task/step configuration. |
 | `acceptanceRole` | Optional `read-only` or `writer` role for automatic acceptance inference. When omitted, automatic acceptance uses lightweight attestation; task wording and agent names do not escalate it. This does not grant or revoke tools. |

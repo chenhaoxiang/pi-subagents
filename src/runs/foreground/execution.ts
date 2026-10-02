@@ -23,6 +23,7 @@ import {
 	type RunSyncOptions,
 	type SingleResult,
 	type Usage,
+	type ModelAttempt,
 	DEFAULT_MAX_OUTPUT,
 	INTERCOM_DETACH_REQUEST_EVENT,
 	INTERCOM_DETACH_RESPONSE_EVENT,
@@ -71,9 +72,14 @@ import { buildTimeoutRecoverySummary, collectTrackedMutationEvidence, snapshotTr
 import { captureSingleOutputSnapshot, extractChildWrittenOutput, finalizeSingleOutput, formatSavedOutputReference, hasSingleOutputChangedSinceSnapshot, resolveSingleOutput, validateFileOnlyOutputMode, type SingleOutputSnapshot } from "../shared/single-output.ts";
 import {
 	formatSubagentModelVerificationError,
-	isContextOverflow,
 	resolveModelSelection,
 } from "../shared/model-resolution.ts";
+import {
+	buildModelCandidates,
+	formatModelAttemptNote,
+	isContextOverflow,
+	isRetryableModelFailureAttempt,
+} from "../shared/model-fallback.ts";
 import {
 	createMutatingFailureState,
 	didMutatingToolFail,
@@ -153,6 +159,9 @@ function persistSingleResultMetadata(input: {
 		usage: target.usage,
 		model: target.model,
 		requestedModel: target.requestedModel,
+		skippedModels: target.skippedModels,
+		attemptedModels: target.attemptedModels,
+		modelAttempts: target.modelAttempts,
 		durationMs: target.progressSummary?.durationMs,
 		toolCount: target.progressSummary?.toolCount,
 		error: target.error,
@@ -251,6 +260,9 @@ function snapshotResult(result: SingleResult, progress: AgentProgress): SingleRe
 		task: PROMPT_REDACTED,
 		messages: result.outputMode === "file-only" && result.savedOutputPath ? undefined : result.messages ? [...result.messages] : undefined,
 		usage: { ...result.usage },
+		skippedModels: result.skippedModels ? result.skippedModels.map((model) => ({ ...model })) : undefined,
+		attemptedModels: result.attemptedModels ? [...result.attemptedModels] : undefined,
+		modelAttempts: result.modelAttempts ? result.modelAttempts.map((attempt) => ({ ...attempt, usage: attempt.usage ? { ...attempt.usage } : undefined })) : undefined,
 		skills: result.skills ? [...result.skills] : undefined,
 		controlEvents: result.controlEvents ? result.controlEvents.map((event) => ({ ...event })) : undefined,
 		progress,
@@ -580,16 +592,43 @@ async function runSingleAttempt(
 		let removeInterruptListener: (() => void) | undefined;
 		let activityTimer: NodeJS.Timeout | undefined;
 		let timeoutTimer: NodeJS.Timeout | undefined;
+		let idleTimeoutTimer: NodeJS.Timeout | undefined;
 		let timeoutHardFinishTimer: NodeJS.Timeout | undefined;
 		const clearTimeoutTimers = () => {
 			if (timeoutTimer) {
 				clearTimeout(timeoutTimer);
 				timeoutTimer = undefined;
 			}
+			if (idleTimeoutTimer) {
+				clearTimeout(idleTimeoutTimer);
+				idleTimeoutTimer = undefined;
+			}
 			if (timeoutHardFinishTimer) {
 				clearTimeout(timeoutHardFinishTimer);
 				timeoutHardFinishTimer = undefined;
 			}
+		};
+		const resetIdleTimeout = () => {
+			if (options.idleTimeoutMs === undefined || sessionSettled || lifecycleFinished) return;
+			if (idleTimeoutTimer) clearTimeout(idleTimeoutTimer);
+			idleTimeoutTimer = setTimeout(() => {
+				if (sessionSettled || lifecycleFinished || interruptedByControl) return;
+				result.timedOut = true;
+				clearAllToolTimeouts();
+				result.error = `Subagent idle timed out after ${options.idleTimeoutMs}ms.`;
+				result.finalOutput = result.error;
+				progress.status = "failed";
+				progress.error = result.error;
+				progress.durationMs = Date.now() - startTime;
+				fireUpdate();
+				abortChild();
+				timeoutHardFinishTimer = setTimeout(() => {
+					if (sessionSettled || lifecycleFinished) return;
+					settle(undefined, true);
+				}, 4000);
+				timeoutHardFinishTimer.unref?.();
+			}, options.idleTimeoutMs);
+			idleTimeoutTimer.unref?.();
 		};
 		const abortChild = (): void => {
 			if (!session || sessionSettled || lifecycleFinished) return;
@@ -968,6 +1007,7 @@ async function runSingleAttempt(
 
 		const processEvent = (evt: ChildSessionEvent & { message?: Message; toolName?: string; toolCallId?: string; args?: unknown; willRetry?: unknown }) => {
 			if (lifecycleFinished) return;
+			if (!isChildWatchdogStatusEvent(evt)) resetIdleTimeout();
 			jsonlWriter.writeLine(JSON.stringify(projectChildSessionEventForJson(evt)));
 			shared.transcriptWriter?.writeChildEvent(evt);
 			shared.orcaProgressTab?.event(evt);
@@ -1190,6 +1230,7 @@ async function runSingleAttempt(
 		onWatchdogStatus = (event) => processEvent(event as unknown as Parameters<typeof processEvent>[0]);
 
 		fireUpdate();
+		resetIdleTimeout();
 		if (controlConfig.enabled || options.onUpdate) {
 			activityTimer = setInterval(() => {
 				if (sessionSettled || lifecycleFinished) {
@@ -1748,19 +1789,61 @@ async function runSyncCompletionInner(
 	}
 	const systemPrompt = buildEffectiveSystemPrompt({ agent, resolvedSkills, cwd: skillCwd, ...(options.outputPath ? { outputPath: options.outputPath } : {}) });
 
-	const { model: selectedModel, requestedModel } = resolveModelSelection(
-		options.modelOverride ?? agent.model,
+	const modelOrigin = options.modelOrigin ?? (options.modelOverrideFromParent ? "inherited" : "configured");
+	const requestedPrimaryModel = options.modelOverride ?? agent.model;
+	let selectedModel: string | undefined;
+	let requestedModel: string | undefined;
+	let unresolvedPrimaryModelError: unknown;
+	try {
+		const selection = resolveModelSelection(
+			requestedPrimaryModel,
+			options.availableModels,
+			agent.modelProvider ?? options.preferredModelProvider,
+			{
+				scope: options.modelScope,
+				primaryModelFromParent: options.modelOverrideFromParent,
+				origin: modelOrigin,
+			},
+		);
+		selectedModel = selection.model;
+		requestedModel = selection.requestedModel;
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		const canFallbackFromUnknownPrimary = /Unknown subagent model/i.test(message)
+			&& Boolean(agent.fallbackModels?.length || options.availableModels?.length);
+		if (!canFallbackFromUnknownPrimary) throw error;
+		unresolvedPrimaryModelError = error;
+		selectedModel = options.modelOverride ?? agent.model;
+		requestedModel = modelOrigin === "inherited" ? undefined : selectedModel;
+	}
+	const modelEvidence = buildModelCandidates(
+		selectedModel,
+		agent.fallbackModels,
 		options.availableModels,
 		agent.modelProvider ?? options.preferredModelProvider,
 		{
 			scope: options.modelScope,
 			primaryModelFromParent: options.modelOverrideFromParent,
-			origin: options.modelOrigin ?? (options.modelOverrideFromParent ? "inherited" : "configured"),
+			origin: modelOrigin,
 		},
 	);
+	if (unresolvedPrimaryModelError && modelEvidence.candidates.length <= 1) throw unresolvedPrimaryModelError;
+	if (options.workflowChildPermitLaunch && modelEvidence.candidates.length > 1) {
+		return redactResultPrompt(withRunContext({
+			index: options.index ?? 0,
+			agent: agent.name,
+			task,
+			exitCode: 1,
+			messages: [],
+			usage: emptyUsage(),
+			error: "Workflow child permit does not support automatic model fallback.",
+		}, options.context));
+	}
 	try {
-		const model = applyThinkingSuffix(selectedModel, options.thinkingOverride ?? agent.thinking, options.thinkingOverride !== undefined);
-		assertThinkingWithinCeiling({ model, configThinking: options.thinkingOverride ?? agent.thinking, ceiling: options.thinkingCeiling, agent: agent.name, runId: options.runId });
+		for (const candidate of modelEvidence.candidates) {
+			const model = applyThinkingSuffix(candidate, options.thinkingOverride ?? agent.thinking, options.thinkingOverride !== undefined);
+			assertThinkingWithinCeiling({ model, configThinking: options.thinkingOverride ?? agent.thinking, ceiling: options.thinkingCeiling, agent: agent.name, runId: options.runId });
+		}
 	} catch (error) {
 		return redactResultPrompt(withRunContext({
 			index: options.index ?? 0,
@@ -1787,9 +1870,7 @@ async function runSyncCompletionInner(
 		if (options.artifactConfig?.includeInput !== false) {
 			writeArtifact(artifactPathsResult.inputPath, `# Task for ${agentName}\n\n${PROMPT_REDACTED}; live Prompt Audit only.\n`);
 		}
-		if (options.artifactConfig?.includeJsonl !== false) {
-			jsonlPath = artifactPathsResult.jsonlPath;
-		}
+		if (options.artifactConfig?.includeJsonl !== false) jsonlPath = artifactPathsResult.jsonlPath;
 		if (options.artifactConfig?.includeTranscript !== false) {
 			transcriptWriter = createChildTranscriptWriter({
 				transcriptPath: artifactPathsResult.transcriptPath,
@@ -1835,16 +1916,13 @@ async function runSyncCompletionInner(
 				receipt.metadataSaveError = error instanceof Error ? error.message : String(error);
 			}
 			const accepted = options.onDetachReceipt?.(receipt) === true;
-			if (accepted) {
-				detachedReason = receipt.detachedReason;
-			}
+			if (accepted) detachedReason = receipt.detachedReason;
 			return accepted;
 		},
 	};
-	const candidate = selectedModel;
-	const verifyModel = Boolean(candidate) && !options.modelOverrideFromParent;
+	const aggregateAttempts: ModelAttempt[] = [];
+	const attemptedModels: string[] = [];
 	let lastResult: SingleResult | undefined;
-	let recoveryPrompt = task;
 	let stagedIndexBaseline: string | undefined;
 	if (effectiveAcceptance.preserveStagedIndex) {
 		try {
@@ -1861,54 +1939,70 @@ async function runSyncCompletionInner(
 			}, options.context));
 		}
 	}
-	for (let attemptIndex = 0; attemptIndex < 2; attemptIndex++) {
-		const outputSnapshot = captureSingleOutputSnapshot(options.outputPath);
-		const attemptResult = await runSingleAttempt(runtimeCwd, agent, recoveryPrompt, candidate, attemptOptions, {
-			sessionEnabled,
-			systemPrompt,
-			acceptancePrompt,
-			resolvedSkillNames: resolvedSkills.length > 0 ? resolvedSkills.map((skill) => skill.name) : undefined,
-			skillsWarning: missingSkills.length > 0 ? `Skills not found: ${missingSkills.join(", ")}` : undefined,
-			jsonlPath,
-			artifactPaths: artifactPathsResult,
-			transcriptWriter,
-			attemptNotes,
-			outputSnapshot,
-			originalTask: task,
-			orcaProgressTab,
-			launchWarnings,
-			verifyModel,
-		});
-		lastResult = attemptResult;
-		sumUsage(aggregateUsage, attemptResult.usage);
-		totalToolCount += attemptResult.progressSummary?.toolCount ?? 0;
-		totalDurationMs += attemptResult.progressSummary?.durationMs ?? 0;
-		if (attemptResult.exitCode === 0 && !attemptResult.error) break;
-		const recovery = planAbortRecovery({
-			messages: attemptResult.messages ?? [],
-			error: attemptResult.error,
-			processSignal: attemptResult.processSignal,
-			sessionAvailable: Boolean(options.sessionFile && existsSync(options.sessionFile)),
-			alreadyResumed: attemptIndex > 0,
-			stopped: attemptResult.stopped || attemptResult.detached || Boolean(detachedReason) || Boolean(options.workflowChildPermitLaunch) || options.signal?.aborted,
-			interrupted: attemptResult.interrupted || options.interruptSignal?.aborted,
-			timedOut: attemptResult.timedOut,
-			toolBudgetExhausted: attemptResult.toolBudgetBlocked,
-			usageBudgetExhausted: false,
-			structuredOutputFailed: attemptResult.structuredOutputFailed,
-			acceptanceFailed: false,
-			currentTool: attemptResult.progress?.currentTool,
-			afterCompactionSettlement: (attemptResult as AbortRecoverySingleResult)[AFTER_COMPACTION_SETTLEMENT],
-		});
-		if (recovery.action === "resume") {
-			recoveryPrompt = recovery.prompt;
-			attemptNotes.push("[abort-recovery] compaction abort after useful progress; resuming the retained child session once on the same model.");
-			continue;
+
+	modelLoop: for (let modelIndex = 0; modelIndex < Math.max(1, modelEvidence.candidates.length); modelIndex++) {
+		const candidate = modelEvidence.candidates[modelIndex];
+		let recoveryPrompt = task;
+		for (let attemptIndex = 0; attemptIndex < 2; attemptIndex++) {
+			const outputSnapshot = captureSingleOutputSnapshot(options.outputPath);
+			const attemptResult = await runSingleAttempt(runtimeCwd, agent, recoveryPrompt, candidate, attemptOptions, {
+				sessionEnabled,
+				systemPrompt,
+				acceptancePrompt,
+				resolvedSkillNames: resolvedSkills.length > 0 ? resolvedSkills.map((skill) => skill.name) : undefined,
+				skillsWarning: missingSkills.length > 0 ? `Skills not found: ${missingSkills.join(", ")}` : undefined,
+				jsonlPath,
+				artifactPaths: artifactPathsResult,
+				transcriptWriter,
+				attemptNotes,
+				outputSnapshot,
+				originalTask: task,
+				orcaProgressTab,
+				launchWarnings,
+				verifyModel: Boolean(candidate) && !(options.modelOverrideFromParent && modelIndex === 0),
+			});
+			lastResult = attemptResult;
+			const model = attemptResult.model ?? candidate ?? "default";
+			if (!attemptedModels.includes(model)) attemptedModels.push(model);
+			sumUsage(aggregateUsage, attemptResult.usage);
+			totalToolCount += attemptResult.progressSummary?.toolCount ?? 0;
+			totalDurationMs += attemptResult.progressSummary?.durationMs ?? 0;
+			const attemptSucceeded = attemptResult.exitCode === 0 && !attemptResult.error;
+			aggregateAttempts.push({ model, success: attemptSucceeded, exitCode: attemptResult.exitCode, error: attemptResult.error, usage: { ...attemptResult.usage } });
+			if (attemptSucceeded) break modelLoop;
+
+			const recovery = planAbortRecovery({
+				messages: attemptResult.messages ?? [],
+				error: attemptResult.error,
+				processSignal: attemptResult.processSignal,
+				sessionAvailable: Boolean(options.sessionFile && existsSync(options.sessionFile)),
+				alreadyResumed: attemptIndex > 0,
+				stopped: attemptResult.stopped || attemptResult.detached || Boolean(detachedReason) || Boolean(options.workflowChildPermitLaunch) || options.signal?.aborted,
+				interrupted: attemptResult.interrupted || options.interruptSignal?.aborted,
+				timedOut: attemptResult.timedOut,
+				toolBudgetExhausted: attemptResult.toolBudgetBlocked,
+				usageBudgetExhausted: false,
+				structuredOutputFailed: attemptResult.structuredOutputFailed,
+				acceptanceFailed: false,
+				currentTool: attemptResult.progress?.currentTool,
+				afterCompactionSettlement: (attemptResult as AbortRecoverySingleResult)[AFTER_COMPACTION_SETTLEMENT],
+			});
+			if (recovery.action === "resume") {
+				recoveryPrompt = recovery.prompt;
+				attemptNotes.push("[abort-recovery] compaction abort after useful progress; resuming the retained child session once on the same model.");
+				continue;
+			}
+			if (recovery.diagnostic) attemptResult.error = attemptResult.error ? `${attemptResult.error}\n${recovery.diagnostic}` : recovery.diagnostic;
+			if (isContextOverflow(attemptResult.error)) {
+				attemptResult.contextOverflow = true;
+				break modelLoop;
+			}
+			if (attemptResult.timedOut || attemptResult.stopped || attemptResult.detached || attemptResult.interrupted || detachedReason || options.signal?.aborted || options.interruptSignal?.aborted) break modelLoop;
+			const retryable = isRetryableModelFailureAttempt({ error: attemptResult.error, messages: attemptResult.messages, toolCount: totalToolCount });
+			if (!retryable || totalToolCount > 0 || modelIndex >= modelEvidence.candidates.length - 1) break modelLoop;
+			attemptNotes.push(formatModelAttemptNote(aggregateAttempts[aggregateAttempts.length - 1]!, modelEvidence.candidates[modelIndex + 1]));
+			break;
 		}
-		if (recovery.diagnostic) {
-			attemptResult.error = attemptResult.error ? `${attemptResult.error}\n${recovery.diagnostic}` : recovery.diagnostic;
-		}
-		break;
 	}
 	if (!lastResult) throw new Error("Subagent did not produce a result.");
 	if (isContextOverflow(lastResult.error)) lastResult.contextOverflow = true;
@@ -1926,6 +2020,12 @@ async function runSyncCompletionInner(
 
 	result.usage = aggregateUsage;
 	result.requestedModel = requestedModel;
+	if (modelEvidence.skippedModels?.length) result.skippedModels = modelEvidence.skippedModels;
+	else delete result.skippedModels;
+	if (attemptedModels.length > 1) result.attemptedModels = attemptedModels;
+	else delete result.attemptedModels;
+	if (aggregateAttempts.length > 1) result.modelAttempts = aggregateAttempts;
+	else delete result.modelAttempts;
 	result.progressSummary = {
 		...(childSessionName ? { sessionName: childSessionName } : {}),
 		toolCount: totalToolCount,

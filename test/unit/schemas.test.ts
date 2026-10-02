@@ -304,13 +304,16 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 	it("documents workflow timeout aliases and omits removed turn budgets", () => {
 		const timeoutSchema = SubagentParams?.properties?.timeoutMs;
 		const maxRuntimeSchema = SubagentParams?.properties?.maxRuntimeMs;
+		const idleTimeoutSchema = SubagentParams?.properties?.idleTimeoutMs;
 		const turnBudgetSchema = SubagentParams?.properties?.turnBudget;
 		const toolBudgetSchema = SubagentParams?.properties?.toolBudget;
 		assert.ok(timeoutSchema, "timeoutMs schema should exist");
 		assert.ok(maxRuntimeSchema, "maxRuntimeMs schema should exist");
+		assert.ok(idleTimeoutSchema, "idleTimeoutMs schema should exist");
 		assert.equal(timeoutSchema.minimum, 1);
+		assert.equal(idleTimeoutSchema.minimum, 1);
+		assert.match(String(idleTimeoutSchema.description ?? ""), /activity resets/i);
 		assert.equal(maxRuntimeSchema.minimum, 1);
-		assert.match(String(timeoutSchema.description ?? ""), /foreground and single async runs/i);
 		assert.match(String(timeoutSchema.description ?? ""), /use config timeoutMs, else 30m/i);
 		assert.match(String(timeoutSchema.description ?? ""), /async composites have no default parent deadline/i);
 		assert.doesNotMatch(String(timeoutSchema.description ?? ""), /foreground-only/i);
@@ -465,7 +468,9 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		assert.ok(SubagentParams, "SubagentParams schema should exist");
 		const schema = SubagentParams as unknown as JsonSchemaNode;
 		const serialized = JSON.stringify(schema);
-		assert.ok(serialized.length <= 13_010, `expected concise schema at or under 13,010 chars, got ${serialized.length}`);
+		// The idle-timeout launch option adds one compact top-level field; keep the same
+		// budget envelope while allowing that bounded observability control.
+		assert.ok(serialized.length <= 13_100, `expected concise schema at or under 13.1k chars, got ${serialized.length}`);
 		assert.equal(serialized.includes('"$ref"'), false);
 		assert.equal(serialized.includes('"$defs"'), false);
 		assert.equal(serialized.split("Evidence policy;").length - 1, 1);
