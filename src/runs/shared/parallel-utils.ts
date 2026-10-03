@@ -37,13 +37,11 @@ export interface RunnerSubagentStep {
 	/** Original cwd input retained for launch diagnostics. */
 	requestedCwd?: string;
 	model?: string;
-	/** Ordered native Pi models to attempt for automatic provider fallback. */
-	modelCandidates?: string[];
-	/** Candidates skipped before launch because they were unavailable. */
-	skippedModels?: Array<{ model: string; reason: string }>;
 	contextLimit?: number;
 	fast?: boolean;
 	thinking?: string;
+	/** Trailing Claude Code argv for an explicit model/thinking request. */
+	claudeCodeOverrideArgs?: string[];
 	thinkingCeiling?: import("../../shared/model-info.ts").ThinkingLevel;
 	requestedModel?: string;
 	/** The primary model is inherited from the parent session and should not be verified against the child-reported active registry model. */
@@ -60,6 +58,8 @@ export interface RunnerSubagentStep {
 	/** Private immutable host policy snapshot serialized to the native runner. */
 	requiredExtensions?: import("../../shared/required-child-extensions.ts").RequiredChildExtensionSnapshot;
 	mcpDirectTools?: string[];
+	/** The parent's resolution of `mcpDirectTools` against Pi's built-in MCP; the runner has no host to repeat it. */
+	builtinMcpTools?: import("./mcp-direct-tool-grant.ts").ResolvedMcpDirectToolSelection[];
 	mutationTools?: string[];
 	systemPrompt?: string | null;
 	systemPromptMode?: "append" | "replace";
@@ -75,8 +75,6 @@ export interface RunnerSubagentStep {
 	sessionFile?: string;
 	maxSubagentDepth?: number;
 	timeoutMs?: number;
-	/** Inactivity timeout (ms); stream/tool activity resets it and there is no wall-clock cap. */
-	idleTimeoutMs?: number;
 	/** Resolved configured hard per-tool-call timeout (ms); fast tools still have a default when undefined. */
 	toolTimeoutMs?: number;
 	waitToolEnabled?: boolean;

@@ -70,42 +70,6 @@ describe("async chain root attachment", () => {
 		});
 	});
 
-	it("preserves fallback evidence when importing a normal result-file attachment", async () => {
-		const importedRoot = root();
-		writeJson(path.join(importedRoot.asyncDir, "status.json"), {
-			runId: importedRoot.runId,
-			mode: "single",
-			state: "complete",
-			startedAt: 1,
-			steps: [{ agent: "worker", status: "complete" }],
-		});
-		writeJson(importedRoot.resultPath, {
-			state: "complete",
-			success: true,
-			results: [{
-				agent: "worker",
-				output: "root output",
-				success: true,
-				model: "anthropic/claude-sonnet-4",
-				skippedModels: [{ model: "codex-local/kimi-k3:max", reason: "unavailable in the active model registry" }],
-				attemptedModels: ["openai/gpt-5-mini", "anthropic/claude-sonnet-4"],
-				modelAttempts: [
-					{ model: "openai/gpt-5-mini", success: false, exitCode: 1, error: "rate limit exceeded" },
-					{ model: "anthropic/claude-sonnet-4", success: true, exitCode: 0 },
-				],
-			}],
-		});
-
-		const result = await waitForImportedAsyncRoot(importedRoot, { pollIntervalMs: 1 });
-
-		assert.deepEqual(result.skippedModels, [{ model: "codex-local/kimi-k3:max", reason: "unavailable in the active model registry" }]);
-		assert.deepEqual(result.attemptedModels, ["openai/gpt-5-mini", "anthropic/claude-sonnet-4"]);
-		assert.deepEqual(result.modelAttempts, [
-			{ model: "openai/gpt-5-mini", success: false, exitCode: 1, error: "rate limit exceeded" },
-			{ model: "anthropic/claude-sonnet-4", success: true, exitCode: 0 },
-		]);
-	});
-
 	it("imports a session-indexed pending result before terminal status fallback", async () => {
 		const importedRoot = { ...root(), resultPath: path.join(tempDir, "root-run", "workflow-result.json") };
 		writeJson(path.join(importedRoot.asyncDir, "status.json"), {

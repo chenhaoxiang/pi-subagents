@@ -190,45 +190,6 @@ test("validateStructuredOutputValue validates values against a JSON Schema", asy
 	assert.ok(invalid.status === "invalid" && invalid.message.length > 0);
 });
 
-test("Pi 1.x hosts may omit the removed pi-agent-core/node export", () => {
-	const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-pi-one-host-alias-"));
-	const host = path.join(root, "host");
-	const chord = "@earendil-works/chord";
-	function writePackage(dir: string, name: string, version: string, exports: Record<string, string>) {
-		fs.mkdirSync(dir, { recursive: true });
-		fs.writeFileSync(path.join(dir, "package.json"), JSON.stringify({ name, version, exports }));
-		for (const target of Object.values(exports)) {
-			fs.mkdirSync(path.dirname(path.join(dir, target)), { recursive: true });
-			fs.writeFileSync(path.join(dir, target), "export {};\n");
-		}
-	}
-	try {
-		const packages = new Map<string, Record<string, string>>();
-		for (const { pkg, specifier, subpath } of HOST_PEER_ALIASES) {
-			if (specifier === "@earendil-works/pi-agent-core/node") continue;
-			const exports = packages.get(pkg) ?? {};
-			exports[subpath] = `./${subpath === "." ? "index" : subpath.slice(2).replaceAll("/", "-")}.mjs`;
-			packages.set(pkg, exports);
-		}
-		for (const [pkg, exports] of packages) {
-			const dir = pkg === "@earendil-works/pi-coding-agent" ? host : path.join(host, "node_modules", pkg);
-			writePackage(dir, pkg, "1.0.0", exports);
-		}
-		writePackage(path.join(host, "node_modules", chord), chord, "1.0.0", {
-			".": "./index.mjs",
-			"./context": "./context.mjs",
-		});
-
-		const resolved = resolveHostPeerAliases(host);
-		assert.deepEqual(resolved.missing, []);
-		assert.equal(resolved.aliases["@earendil-works/pi-agent-core/node"], undefined);
-		assert.ok(resolved.aliases[chord]);
-		assert.ok(resolved.aliases[`${chord}/context`]);
-	} finally {
-		fs.rmSync(root, { recursive: true, force: true });
-	}
-});
-
 test("chord is omitted before 0.85, but required host-first on chord-era and unknown hosts (#2026)", () => {
 	const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-chord-alias-"));
 	const host = path.join(root, "host");
@@ -274,6 +235,28 @@ test("chord is omitted before 0.85, but required host-first on chord-era and unk
 		fs.rmSync(path.join(host, "node_modules", "@earendil-works/pi-tui"), { recursive: true });
 		result = resolveHostPeerAliases(host);
 		assert.deepEqual(result.missing, ["@earendil-works/pi-tui"], "pre-chord hosts still require TUI");
+	} finally {
+		fs.rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("skips the pi-agent-core/node alias when the host package declares no ./node export", () => {
+	const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-agent-core-no-node-"));
+	const packageDir = path.join(root, "node_modules", "@earendil-works", "pi-agent-core");
+	const distDir = path.join(packageDir, "dist");
+	try {
+		fs.mkdirSync(distDir, { recursive: true });
+		fs.writeFileSync(path.join(packageDir, "package.json"), JSON.stringify({
+			name: "@earendil-works/pi-agent-core",
+			version: "1.0.0",
+			exports: { ".": { types: "./dist/index.d.ts", import: "./dist/index.js" }, "./package.json": "./package.json" },
+		}), "utf-8");
+		fs.writeFileSync(path.join(distDir, "index.js"), "export {};\n", "utf-8");
+
+		const resolved = resolveHostPeerAliases(root);
+		assert.equal(resolved.aliases["@earendil-works/pi-agent-core"], fs.realpathSync(path.join(distDir, "index.js")));
+		assert.equal(resolved.aliases["@earendil-works/pi-agent-core/node"], undefined);
+		assert.ok(!resolved.missing.includes("@earendil-works/pi-agent-core/node"));
 	} finally {
 		fs.rmSync(root, { recursive: true, force: true });
 	}

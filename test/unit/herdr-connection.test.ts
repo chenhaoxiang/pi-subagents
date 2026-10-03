@@ -1,21 +1,17 @@
 import assert from "node:assert/strict";
+import * as fs from "node:fs";
 import * as net from "node:net";
+import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
 import { HerdrRpcError, SocketRpcClient } from "../../src/runs/shared/herdr-connection.ts";
-import { withShortUnixSocketDir } from "../support/short-unix-socket-dir.ts";
 
 async function withSocketServer<T>(handler: (socket: net.Socket, request: Record<string, unknown>) => void, action: (client: SocketRpcClient) => Promise<T>, ackTimeoutMs = 100): Promise<T> {
-	return withShortUnixSocketDir("herdr-rpc-", ["server.sock"], async (dir) => {
-		const socketPath = path.join(dir, "server.sock");
-		const server = net.createServer((socket) => { let buffer = ""; socket.on("data", (chunk) => { buffer += chunk; const newline = buffer.indexOf("\n"); if (newline < 0) return; const request = JSON.parse(buffer.slice(0, newline)) as Record<string, unknown>; buffer = buffer.slice(newline + 1); handler(socket, request); }); });
-		try {
-			await new Promise<void>((resolve, reject) => { server.once("error", reject); server.listen(socketPath, resolve); });
-			return await action(new SocketRpcClient(socketPath, ackTimeoutMs));
-		} finally {
-			if (server.listening) await new Promise<void>((resolve) => server.close(() => resolve()));
-		}
-	});
+	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "herdr-rpc-")), socketPath = path.join(dir, "server.sock");
+	const server = net.createServer((socket) => { let buffer = ""; socket.on("data", (chunk) => { buffer += chunk; const newline = buffer.indexOf("\n"); if (newline < 0) return; const request = JSON.parse(buffer.slice(0, newline)) as Record<string, unknown>; buffer = buffer.slice(newline + 1); handler(socket, request); }); });
+	await new Promise<void>((resolve, reject) => { server.once("error", reject); server.listen(socketPath, resolve); });
+	try { return await action(new SocketRpcClient(socketPath, ackTimeoutMs)); }
+	finally { await new Promise<void>((resolve) => server.close(() => resolve())); fs.rmSync(dir, { recursive: true, force: true }); }
 }
 
 const line = (value: unknown) => `${JSON.stringify(value)}\n`;

@@ -326,7 +326,7 @@ export function readAsyncRecoveryDescriptor(asyncDir: string | undefined): Steer
 		"modelResponseAliases", "version", "launchContractDigest", "sourceRunId", "agentContract", "agent", "sessionFile", "cwd", "model", "modelProvider", "modelOverrideFromParent", "modelOrigin", "fast", "thinking", "thinkingCeiling", "tools", "allowNestedSubagents", "allowedAgents", "extensions",
 		"subagentOnlyExtensions", "mcpDirectTools", "excludeTools", "mutationTools", "systemPrompt", "systemPromptMode", "inheritProjectContext", "inheritGlobalContext", "inheritSkills", "skills",
 		"skillPath", "agentFilePath", "memory", "outputPath", "outputMode", "structuredOutputSchema", "acceptance", "sessionDir", "artifactConfig",
-		"artifactsDir", "maxOutput", "controlConfig", "context", "intercomBridge", "idleTimeoutMs", "absoluteDeadlineAt", "initialTurnBudget", "initialToolBudget", "maxSubagentDepth", "share", "capabilityCeiling",
+		"artifactsDir", "maxOutput", "controlConfig", "context", "intercomBridge", "absoluteDeadlineAt", "initialTurnBudget", "initialToolBudget", "maxSubagentDepth", "share", "capabilityCeiling",
 		"launchResolvedExtensions", "runFanoutBudget", "lane", "baseRef",
 		"extensionBindings",
 		"requiredExtensions",
@@ -398,7 +398,6 @@ export function readAsyncRecoveryDescriptor(asyncDir: string | undefined): Steer
 		const memory = parsed.memory as Record<string, unknown>;
 		if ((memory.scope !== "project" && memory.scope !== "user") || typeof memory.path !== "string" || !memory.path.trim()) throw new Error(`Invalid async recovery descriptor '${descriptorPath}': memory is invalid.`);
 	}
-	if (parsed.idleTimeoutMs !== undefined && (!Number.isInteger(parsed.idleTimeoutMs) || (parsed.idleTimeoutMs as number) <= 0 || (parsed.idleTimeoutMs as number) > 2_147_483_647)) throw new Error(`Invalid async recovery descriptor '${descriptorPath}': idleTimeoutMs must be a positive integer no larger than 2147483647.`);
 	if (parsed.absoluteDeadlineAt !== undefined && (!Number.isFinite(parsed.absoluteDeadlineAt) || (parsed.absoluteDeadlineAt as number) <= 0)) throw new Error(`Invalid async recovery descriptor '${descriptorPath}': absoluteDeadlineAt must be a positive timestamp.`);
 	if (parsed.initialTurnBudget !== undefined) {
 		// Older descriptors may contain the removed turn-budget setting. Accept it

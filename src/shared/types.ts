@@ -267,19 +267,6 @@ export interface Usage {
 	turns: number;
 }
 
-export interface ModelAttempt {
-	model: string;
-	success: boolean;
-	exitCode?: number | null;
-	error?: string;
-	usage?: Usage;
-}
-
-export interface SkippedModel {
-	model: string;
-	reason: string;
-}
-
 export interface ToolBudgetConfig {
 	soft?: number;
 	hard: number;
@@ -884,7 +871,6 @@ export interface SteeringRecoveryDescriptor {
 	/** Raw per-run bridge override. Omitted descriptors continue to use global config. */
 	intercomBridge?: IntercomBridgeConfig;
 	lane?: WorkflowLaneMetadata;
-	idleTimeoutMs?: number;
 	absoluteDeadlineAt?: number;
 	initialToolBudget?: ResolvedToolBudget;
 	maxSubagentDepth: number;
@@ -1289,6 +1275,8 @@ export interface SingleResult {
 	index: number;
 	/** Workflow child key that owns this result when returned from workflow details. */
 	workflowKey?: string;
+	/** Workflow child run id that produced this result; resumed rounds share a session file but not a run id. */
+	runId?: string;
 	agent: string;
 	task: string;
 	/** Human-readable display name for the child's own session (agent + task
@@ -1317,12 +1305,6 @@ export interface SingleResult {
 	/** Effective thinking level used by this foreground child, when known. */
 	thinking?: string;
 	requestedModel?: string;
-	/** Models skipped before launch because they were unavailable or out of scope. */
-	skippedModels?: SkippedModel[];
-	/** Models actually attempted for this logical child, in order. */
-	attemptedModels?: string[];
-	/** Per-attempt provider/model result evidence. */
-	modelAttempts?: ModelAttempt[];
 	controlEvents?: ControlEvent[];
 	error?: string;
 	/**
@@ -1403,12 +1385,6 @@ export interface WaitCompletionChild {
 	structuredOutputPath?: string;
 	error?: string;
 	model?: string;
-	/** Models skipped before launch because they were unavailable or out of scope. */
-	skippedModels?: SkippedModel[];
-	/** Models actually attempted for this logical child, in order. */
-	attemptedModels?: string[];
-	/** Per-attempt provider/model result evidence. */
-	modelAttempts?: ModelAttempt[];
 	contextOverflow?: boolean;
 	artifactPaths?: Partial<ArtifactPaths>;
 	timeoutRecovery?: TimeoutRecoveryProjection;
@@ -1446,7 +1422,7 @@ export interface AgentCapabilityRow {
 	aliases?: string[];
 	runner: { type: "pi" } | { type: "external-cli"; adapter?: string; command: string; machine?: string; available: boolean; unavailableReason?: string; capabilities: ExternalCliCapabilities } | { type: "external-job"; provider: string; available?: boolean; capabilities: ExternalJobRunnerStatus["capabilities"] };
 	tools: { ambient: boolean; names: string[]; excludeTools?: string[]; mcpDirectTools: string[]; mutationTools?: string[] };
-	model?: { value?: string; fallbackModels?: string[]; thinking?: string | false };
+	model?: { value?: string; thinking?: string | false };
 	execution?: { defaultAsync?: boolean; timeoutMs?: number };
 	acceptance?: { policy?: AcceptanceInput; role?: AcceptanceRole };
 	output?: { path?: string; mode?: OutputMode };
@@ -1489,7 +1465,6 @@ export interface Details {
 	background?: boolean;
 	asyncDir?: string;
 	timeoutMs?: number;
-	idleTimeoutMs?: number;
 	deadlineAt?: number;
 	timedOut?: boolean;
 	stopped?: boolean;
@@ -1718,7 +1693,6 @@ export interface NestedRunSummary extends NestedRunAddress {
 	endedAt?: number;
 	lastUpdate?: number;
 	timeoutMs?: number;
-	idleTimeoutMs?: number;
 	deadlineAt?: number;
 	timedOut?: boolean;
 	stopped?: boolean;
@@ -1934,7 +1908,6 @@ export interface AsyncStatus {
 	endedAt?: number;
 	lastUpdate?: number;
 	timeoutMs?: number;
-	idleTimeoutMs?: number;
 	deadlineAt?: number;
 	timedOut?: boolean;
 	stopped?: boolean;
@@ -2043,12 +2016,6 @@ export interface AsyncStatus {
 		contextLimit?: number;
 		thinkingCeiling?: ThinkingLevel;
 		requestedModel?: string;
-		/** Models skipped before launch because they were unavailable or out of scope. */
-		skippedModels?: SkippedModel[];
-		/** Models actually attempted for this logical child, in order. */
-		attemptedModels?: string[];
-		/** Per-attempt provider/model result evidence. */
-		modelAttempts?: ModelAttempt[];
 		/** True when the child input exceeded the model context window. */
 		contextOverflow?: boolean;
 		totalCost?: CostSummary;
@@ -2129,7 +2096,6 @@ export interface AsyncJobState {
 	startedAt?: number;
 	updatedAt?: number;
 	timeoutMs?: number;
-	idleTimeoutMs?: number;
 	deadlineAt?: number;
 	timedOut?: boolean;
 	stopped?: boolean;
@@ -2487,6 +2453,8 @@ export interface RunSyncOptions {
 	childSessionFactory?: import("../runs/shared/child-session.ts").ChildSessionFactory;
 	/** Invoking parent registry inherited only by its local foreground launch. */
 	parentProviderRegistry?: import("../runs/shared/child-session.ts").ParentProviderRegistry;
+	/** The invoking session's project trust; undefined when the host has no trust concept. */
+	projectTrusted?: boolean;
 	/** The launching executor's own child runtime when it is itself an in-process child. */
 	childRuntime?: import("../runs/shared/child-runtime-config.ts").ChildRuntimeConfig;
 	/** Fires once the child session exists and can be steered. */
@@ -2505,10 +2473,10 @@ export interface RunSyncOptions {
 	/** Original cwd input retained for launch diagnostics. */
 	requestedCwd?: string;
 	signal?: AbortSignal;
+	/** Report a child ended by `signal` as stopped; set for workflow children, whose signal is the workflow's. */
+	abortedAsStopped?: boolean;
 	interruptSignal?: AbortSignal;
 	timeoutMs?: number;
-	/** Inactivity timeout (ms); child stream/tool activity resets the timer and disables the wall-clock deadline. */
-	idleTimeoutMs?: number;
 	deadlineAt?: number;
 	/** Per-call per-tool timeout (ms), resolved with the agent/config/environment ladder at execution. */
 	toolTimeoutMs?: number;
@@ -2626,6 +2594,7 @@ export interface ProactiveSkillSubagentsConfig {
 }
 
 export type ToolDescriptionMode = "full" | "compact" | "custom";
+export type ToolActivationMode = "auto" | "dynamic" | "eager";
 export type InlineToolDisplay = "rich" | "summary";
 
 export interface ScheduledRunsConfig {
@@ -2697,10 +2666,14 @@ export interface ExtensionConfig {
 	fleetKeybindings?: FleetKeybindingsConfig;
 	/** Show the under-editor async runs widget. Defaults to true, including when FleetView is enabled. */
 	asyncWidget?: boolean;
+	/** Start the under-editor async runs widget folded. Defaults to false. */
+	asyncWidgetCollapsed?: boolean;
 	/** Exact provider/model candidates mapped to operator-declared equivalent response IDs. Empty arrays add no accepted IDs. */
 	modelResponseAliases?: Record<string, string[]>;
 	/** Tool description variant registered for the parent-facing subagent tool. Defaults to split metadata. */
 	toolDescriptionMode?: ToolDescriptionMode;
+	/** How a new parent session offers the subagent tool. Defaults to auto. */
+	toolActivation?: ToolActivationMode;
 	/** Opt-in feature groups removed from the subagent tool schema and rejected at every execution boundary. */
 	disabledFeatures?: SubagentFeature[];
 	/** Inline chat rendering for the subagent tool. Defaults to rich. */
@@ -2724,10 +2697,16 @@ export interface ExtensionConfig {
 	capacity?: ActiveAsyncCapacityConfig;
 	/** Global cap on simultaneously-running subagent tasks within a single run. Defaults to 20. */
 	globalConcurrencyLimit?: number;
-	/** Global default runtime deadline in milliseconds. Explicit call values and agent defaults win. */
+	/**
+	 * Global default runtime deadline in milliseconds. It replaces the built-in
+	 * 30-minute backstop for single, parallel, and chain launches (foreground, plus
+	 * plain single-agent async runs) when neither the call (`timeoutMs`/`maxRuntimeMs`)
+	 * nor the selected agent provides a timeout. Explicit call values and agent
+	 * frontmatter defaults still win. Composite async runs (chain/parallel/workflow)
+	 * stay unbounded at the top level by design — their children are bounded individually.
+	 * Must be a positive integer; invalid values are ignored.
+	 */
 	timeoutMs?: number;
-	/** Global default inactivity window in milliseconds. Child stream/tool activity resets it; no wall-clock cap is imposed. */
-	idleTimeoutMs?: number;
 	/**
 	 * Optional hard per-tool-call timeout in milliseconds. Bounds a single
 	 * subagent tool call inside the child; the run-level timeout remains

@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { resultFilePath, resultPayloadPathForSessionRun } from "./result-files.ts";
-import type { AcceptanceLedger, ArtifactPaths, AsyncStatus, CostSummary, EffectsProjection, ExecutionProjection, ModelAttempt, SkippedModel, Usage } from "../../shared/types.ts";
+import type { AcceptanceLedger, ArtifactPaths, AsyncStatus, CostSummary, EffectsProjection, ExecutionProjection, Usage } from "../../shared/types.ts";
 import { readStatus } from "../../shared/utils.ts";
 
 export interface ImportedAsyncRoot {
@@ -24,9 +24,6 @@ export interface ImportedAsyncRootResult {
 	intercomTarget?: string;
 	model?: string;
 	requestedModel?: string;
-	skippedModels?: SkippedModel[];
-	attemptedModels?: string[];
-	modelAttempts?: ModelAttempt[];
 	contextOverflow?: boolean;
 	totalCost?: CostSummary;
 	usage?: Usage;
@@ -68,9 +65,6 @@ interface AsyncResultFile {
 		intercomTarget?: string;
 		model?: string;
 		requestedModel?: string;
-		skippedModels?: SkippedModel[];
-		attemptedModels?: string[];
-		modelAttempts?: ModelAttempt[];
 		contextOverflow?: boolean;
 		totalCost?: CostSummary;
 		usage?: Usage;
@@ -155,9 +149,6 @@ function outputFromTerminalStatus(root: ImportedAsyncRoot, status: AsyncStatus, 
 		...(step?.sessionFile ?? status.sessionFile ? { sessionFile: step?.sessionFile ?? status.sessionFile } : {}),
 		...(step?.model ? { model: step.model } : {}),
 		...(step?.requestedModel ? { requestedModel: step.requestedModel } : {}),
-		...(step?.skippedModels?.length ? { skippedModels: step.skippedModels } : {}),
-		...(step?.attemptedModels?.length ? { attemptedModels: step.attemptedModels } : {}),
-		...(step?.modelAttempts?.length ? { modelAttempts: step.modelAttempts } : {}),
 		...(step?.contextOverflow ? { contextOverflow: true } : {}),
 		...(step?.totalCost ? { totalCost: step.totalCost } : {}),
 		...(step?.structuredOutput !== undefined ? { structuredOutput: step.structuredOutput } : {}),
@@ -170,7 +161,7 @@ function outputFromTerminalStatus(root: ImportedAsyncRoot, status: AsyncStatus, 
 	};
 }
 
-function outputFromTimeout(root: ImportedAsyncRoot, status: AsyncStatus | null, message: string): ImportedAsyncRootResult {
+function outputFromTimeout(root: ImportedAsyncRoot, status: AsyncStatus | null, message: string, stopped = false): ImportedAsyncRootResult {
 	const step = selectedStatusStep(status, root.index);
 	return {
 		agent: step?.agent ?? status?.steps?.[root.index]?.agent ?? "subagent",
@@ -178,14 +169,11 @@ function outputFromTimeout(root: ImportedAsyncRoot, status: AsyncStatus | null, 
 		success: false,
 		exitCode: 1,
 		error: message,
-		timedOut: true,
+		...(stopped ? { stopped: true } : { timedOut: true }),
 		...(step?.sessionName ? { sessionName: step.sessionName } : {}),
 		...(step?.sessionFile ?? status?.sessionFile ? { sessionFile: step?.sessionFile ?? status?.sessionFile } : {}),
 		...(step?.model ? { model: step.model } : {}),
 		...(step?.requestedModel ? { requestedModel: step.requestedModel } : {}),
-		...(step?.skippedModels?.length ? { skippedModels: step.skippedModels } : {}),
-		...(step?.attemptedModels?.length ? { attemptedModels: step.attemptedModels } : {}),
-		...(step?.modelAttempts?.length ? { modelAttempts: step.modelAttempts } : {}),
 		...(step?.contextOverflow ? { contextOverflow: true } : {}),
 		...(step?.totalCost ? { totalCost: step.totalCost } : {}),
 		...(step?.transcriptPath ? { transcriptPath: step.transcriptPath } : {}),
@@ -221,9 +209,6 @@ function buildImportedResult(root: ImportedAsyncRoot, status: AsyncStatus | null
 		...(child?.intercomTarget ? { intercomTarget: child.intercomTarget } : {}),
 		...(child?.model ?? step?.model ? { model: child?.model ?? step?.model } : {}),
 		...(child?.requestedModel ?? step?.requestedModel ? { requestedModel: child?.requestedModel ?? step?.requestedModel } : {}),
-		...(child?.skippedModels ?? step?.skippedModels ? { skippedModels: child?.skippedModels ?? step?.skippedModels } : {}),
-		...(child?.attemptedModels ?? step?.attemptedModels ? { attemptedModels: child?.attemptedModels ?? step?.attemptedModels } : {}),
-		...(child?.modelAttempts ?? step?.modelAttempts ? { modelAttempts: child?.modelAttempts ?? step?.modelAttempts } : {}),
 		...(child?.contextOverflow || step?.contextOverflow ? { contextOverflow: true } : {}),
 		...(child?.totalCost ?? step?.totalCost ? { totalCost: child?.totalCost ?? step?.totalCost } : {}),
 		...(usage ? { usage } : {}),
@@ -243,7 +228,7 @@ function buildImportedResult(root: ImportedAsyncRoot, status: AsyncStatus | null
 
 export async function waitForImportedAsyncRoot(
 	root: ImportedAsyncRoot,
-	options: { pollIntervalMs?: number; terminalResultGraceMs?: number; now?: () => number; shouldAbort?: () => boolean; timeoutMessage?: string } = {},
+	options: { pollIntervalMs?: number; terminalResultGraceMs?: number; now?: () => number; shouldAbort?: () => boolean; timeoutMessage?: string; abortedAsStopped?: boolean } = {},
 ): Promise<ImportedAsyncRootResult> {
 	const pollIntervalMs = options.pollIntervalMs ?? 500;
 	const terminalResultGraceMs = options.terminalResultGraceMs ?? 1_000;
@@ -251,7 +236,7 @@ export async function waitForImportedAsyncRoot(
 	let terminalSince: number | undefined;
 	for (;;) {
 		const status = readStatus(root.asyncDir);
-		if (options.shouldAbort?.()) return outputFromTimeout(root, status, options.timeoutMessage ?? "Subagent timed out.");
+		if (options.shouldAbort?.()) return outputFromTimeout(root, status, options.timeoutMessage ?? "Subagent timed out.", options.abortedAsStopped === true);
 		const result = readImportedResultFile(root, status);
 		if (result) return buildImportedResult(root, status, result);
 		if (isTerminalStatus(status, root.index)) {

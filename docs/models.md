@@ -13,9 +13,9 @@ Builtin agents inherit your current Pi default model. This keeps new installs fr
 
 Precedence, strongest first: per-run override → provider-scoped role override → `agentOverrides.<name>.model` → agent frontmatter `model` → `subagents.defaultModel` → the parent session model. A provider preference does not replace this order; it only resolves bare model ids when the active registry has more than one match. Fully qualified `provider/model` strings still win exactly.
 
-Fallback precedence is independent: an agent's `fallbackModels` frontmatter or `agentOverrides.<name>.fallbackModels` wins; otherwise `subagents.fallbackModels` from project settings, then user settings, supplies the explicit chain; when none is configured, the built-in heterogeneous priority pool is used. Set `fallbackModels: []` to explicitly disable automatic fallback for a role.
+On the two Claude Code adapters a model is Claude Code's own alias or id rather than a Pi child model, so a value set for one of them resolves nothing against the registry. `subagents.defaultModel` is ignored there, because it is a default for Pi children. An explicit `agentOverrides.<name>.model` or agent frontmatter `model` is passed on as given, and Claude Code reports it when it does not recognize the value. See [agents](agents.md).
 
-Each launch resolves an ordered model chain. An agent's explicit `fallbackModels` list wins; when it is absent, the child uses the built-in heterogeneous priority pool and filters it against the active model registry. Provider/model failures before any child tool activity advance to the next candidate. Tool failures, context overflow, user interruption, run deadlines, and failures after tool activity remain terminal so the task is never blindly replayed after side effects. Every attempted model and skipped candidate is retained in the result evidence. Separately, a verified compaction abort after useful progress may continue the retained child session once on the same resolved model; this lifecycle recovery is distinct from model fallback.
+Each launch resolves one model. Provider errors, including HTTP 429 responses, are returned from that model rather than selecting another one. Separately, a verified compaction abort after useful progress may continue the retained child session once on the same resolved model; this lifecycle recovery preserves work and is not model fallback.
 
 Use `model: "inherit"` in agent frontmatter or `agentOverrides.<name>.model` to select the current parent session model explicitly.
 
@@ -31,8 +31,7 @@ In `~/.pi/agent/settings.json` (user) or the project config settings file (`.pi/
     "defaultProvider": "gpu-a",
     "agentOverrides": {
       "oracle": {
-        "model": "deepseek-v4-pro",
-        "fallbackModels": ["openai-codex/gpt-5.6-luna:low", "zai-coding-cn/glm-5.3"]
+        "model": "deepseek-v4-pro"
       },
       "worker": {
         "defaultProvider": "gpu-b"
@@ -70,7 +69,7 @@ For one run, put the override in the command:
 /run reviewer[model=anthropic/claude-sonnet-4:high] "Review this diff"
 ```
 
-For a persistent role override with an explicit fallback chain:
+For a persistent role override:
 
 ```json
 {
@@ -104,15 +103,7 @@ A setup that works well in practice: route agents by task shape instead of runni
 
 The routing rule: use the capability tiers (1–3) when the task is well-scoped, and the intent tier (4) when scoping or judging is the task itself.
 
-Fallback behavior is ordered and observable:
-
-- A custom agent's `fallbackModels` list is used exactly in the declared order.
-- If the list is omitted, the runtime uses the heterogeneous priority pool aligned with the local probe ladder: `codex-local/kimi-k3:max`, `codex-local/gpt-6-astra:high`, `codex-local/gpt-5.6-sol:max`, `zai-coding-cn/glm-5.3`, `codex-local/deepseek-flash`, then the Qoder entries when they are present in the active registry.
-- Candidates unavailable in the active registry are skipped before launch and recorded as `skippedModels`.
-- A provider/model failure before tool activity advances to the next candidate. The result records `attemptedModels`, `modelAttempts`, and the final model.
-- Tool failures, context overflow, user cancellation, run deadlines, and failures after child tool activity do not replay the task on another model.
-
-This keeps automatic availability fallback while preserving the safety boundary that prevents replaying a task after it may have changed files or external state.
+Each launch resolves one model and starts the child once. Provider, authentication, quota, rate-limit, stream, empty-response, context-overflow, and provisioning failures are returned from that attempt. To try another model, the parent or operator must issue a later explicit launch.
 
 ## Thinking level defaults
 
@@ -133,7 +124,7 @@ If your provider rejects model IDs with thinking suffixes, set `subagents.disabl
 
 ### Thinking ceiling
 
-Set `subagents.maxThinking` to enforce a hard maximum for every native Pi child. The supported levels, from least to most thinking, are `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max`:
+Set `subagents.maxThinking` to enforce a hard maximum for every child that can ask for a thinking level: native Pi children and the two Claude Code adapters. The supported levels, from least to most thinking, are `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max`:
 
 ```json
 {
@@ -144,7 +135,7 @@ Set `subagents.maxThinking` to enforce a hard maximum for every native Pi child.
 }
 ```
 
-Requests above the ceiling fail before child startup; the setting covers frontmatter, `agentOverrides`, per-run overrides, parallel/chain children, nested launches, and resumed children. Project settings take precedence over user settings. External runners retain their existing behavior.
+Requests above the ceiling fail before child startup; the setting covers frontmatter, `agentOverrides`, per-run overrides, parallel/chain children, nested launches, and resumed children. Project settings take precedence over user settings. External runners keep their existing behavior, except the two Claude Code adapters, which translate the requested level into `--effort` and enforce the same ceiling. An enforced `subagents.modelScope` also covers them: the model id that will reach the CLI is checked, and a launch that pins no model fails closed.
 
 ## Extension defaults
 
@@ -258,3 +249,5 @@ The workflow:
 - `/subagents-refresh-provider-models` writes a serialized provider model catalog with observed registry data, simple role-oriented classification, and live probe results from tiny one-shot `pi -p --model ... --no-tools` checks. The cache refreshes when missing or stale; use `--force` to ignore freshness and probe again immediately.
 - `/subagents-generate-profiles` uses the provider catalog to produce quota and quality profiles.
 - `/subagents-check-profile` re-checks each assigned model in a saved profile against the current registry and a live probe, so you can detect model removals, auth problems, or stale assignments.
+
+Hand-authored profile entries can also set `machine` to a non-empty string or `false`. Loading and checking validate the whole saved profile, including machine syntax; malformed values are rejected before loading writes settings or checking probes models. Valid machine strings are trimmed and use the same limits as agent settings. `false` clears a machine pin, while an omitted field preserves an existing string pin when loading. Validation does not query the live machine catalog.

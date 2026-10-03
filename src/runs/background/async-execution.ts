@@ -17,6 +17,7 @@ import { currentCompletionOwnerId } from "../../shared/completion-owner.ts";
 import { planChildLaunch, projectChainOutputSchemas, resolveStepBehavior, suppressProgressForReadOnlyTask, type ResolvedStepBehavior } from "../shared/child-launch-plan.ts";
 import { formatHerdrMachineRunnerUnsupported, resolveHerdrMachinePlacement } from "../shared/herdr-machine.ts";
 import { applyThinkingSuffix, projectLaunchResolvedChildExtensions, resolvePiLaunchToolPlan } from "../shared/child-tool-plan.ts";
+import { assertClaudeCodeModelScope, isClaudeCodeAdapterId, resolveClaudeCodeOverride, type ClaudeCodeOverride } from "../shared/claude-code-adapter.ts";
 import { injectSingleOutputInstruction, normalizeSingleOutputOverride, resolveSingleOutputPath, validateFileOnlyOutputMode } from "../shared/single-output.ts";
 import { applyWatchdogLaunchRules, sendRuleViolationWarning } from "../../watchdog/rules.ts";
 import { buildChainInstructions, isDynamicParallelStep, isParallelStep, resolveExistingReadInstructionPaths, resolveExistingReadPaths, writeInitialProgressFile, type ChainStep, type SequentialStep, type StepOverrides } from "../../shared/settings.ts";
@@ -30,7 +31,6 @@ import { backgroundProcessOptions } from "../shared/background-process-options.t
 import { normalizeSkillInput, resolveSkillsWithFallback } from "../../agents/skills.ts";
 import { PI_CODING_AGENT_PACKAGE_ROOT_ENV, PROMPT_REDACTED, resolveChildCwd } from "../../shared/utils.ts";
 import { resolveEffectiveSubagentModel, resolveModelOrigin, resolveModelSelection, resolveSubagentModelOverride, type AvailableModelInfo, type ModelOrigin, type ParentModel } from "../shared/model-resolution.ts";
-import { buildModelCandidates } from "../shared/model-fallback.ts";
 import { resolveToolTimeoutMs, toolTimeoutFromEnv } from "../shared/tool-timeout.ts";
 import { resolveModelScopesForAgent, type ModelScopeConfig } from "../shared/model-scope.ts";
 import { findModelInfo, resolveEffectiveThinking } from "../../shared/model-info.ts";
@@ -90,7 +90,7 @@ import { resolvePermissionRules, type PermissionConfig } from "../shared/permiss
 import { normalizeExtensionBindings, omitExtensionBindingsEnv, type ExtensionBindings } from "../shared/extension-bindings.ts";
 import { omitGitRoutingEnv } from "../shared/git-environment.ts";
 import { assertWorkflowLaneKey, normalizeWorkflowLaneMetadata } from "../shared/lane-metadata.ts";
-import { resolveRequiredChildExtensions, type RequiredChildExtensionSnapshot } from "../../shared/required-child-extensions.ts";
+import { assertRequiredChildExtensionsAdmitted, resolveRequiredChildExtensions, writeRetainedRequiredChildExtensions, type RequiredChildExtensionSnapshot } from "../../shared/required-child-extensions.ts";
 
 const require = nodeModule.createRequire(import.meta.url);
 const piPackageRoot = resolveAsyncPiPackageRoot();
@@ -185,6 +185,8 @@ interface AsyncExecutionContext {
 	interactive?: boolean;
 	/** The executor's own child runtime when the launch comes from an in-process child. */
 	childRuntime?: ChildRuntimeConfig;
+	/** The launching session's project trust; undefined when the host has no trust concept. */
+	projectTrusted?: boolean;
 }
 
 export const DEFAULT_ASYNC_TIMEOUT_MS = 30 * 60 * 1000;
@@ -233,7 +235,6 @@ interface AsyncChainParams {
 	acceptance?: AcceptanceInput;
 	fast?: boolean;
 	timeoutMs?: number;
-	idleTimeoutMs?: number;
 	toolBudget?: ResolvedToolBudget;
 	usageBudget?: UsageBudgetConfig;
 	configToolBudget?: ResolvedToolBudget;
@@ -246,6 +247,7 @@ interface AsyncChainParams {
 	/** Global cap on simultaneously-running subagent tasks within the async run. */
 	globalConcurrencyLimit?: number;
 	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
+	requiredExtensions?: RequiredChildExtensionSnapshot;
 	thinkingCeiling?: ThinkingLevel;
 	runFanoutBudget?: RunFanoutBudgetDescriptor;
 	parentWorkflowRunId?: string;
@@ -309,7 +311,6 @@ interface AsyncSingleParams {
 	nestedRoute?: NestedRouteInfo;
 	acceptance?: AcceptanceInput;
 	timeoutMs?: number;
-	idleTimeoutMs?: number;
 	absoluteDeadlineAt?: number;
 	/** Optional per-call hard toolTimeoutMs override (highest precedence). */
 	toolTimeoutMs?: number;
@@ -386,6 +387,8 @@ export interface AsyncRunnerStepBuildParams {
 	/** PI_SUBAGENT_TOOL_TIMEOUT_MS override (lowest precedence). */
 	toolTimeoutMsEnv?: string | undefined;
 	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
+	/** Retained snapshot from the launch being continued; takes precedence over the live registry, as in single launches. */
+	requiredExtensions?: RequiredChildExtensionSnapshot;
 	thinkingCeiling?: ThinkingLevel;
 }
 
@@ -875,6 +878,28 @@ function spawnRunner(cfg: object, suffix: string, cwd: string, initialStatus: Om
 	}
 }
 
+/** `model: false` / `thinking: false` clear a value; only real strings reach a launch. */
+function requestString(value: unknown): string | undefined {
+	return typeof value === "string" ? value : undefined;
+}
+
+/**
+ * An explicit `thinking: false` clears the level, so only `undefined` falls
+ * through to the agent's own value. Treating `false` as absent would silently
+ * apply the agent default the caller just cleared.
+ */
+export function resolveClaudeCodeThinking(source: string | false | undefined, fallback: string | false | undefined): string | undefined {
+	const value = source === undefined ? fallback : source;
+	return typeof value === "string" ? value : undefined;
+}
+
+/** A pinned Claude Code model cannot survive pane-native saved-machine placement, which
+ * owns the remote model registry, so the combination fails instead of losing both flags. */
+export function assertClaudeCodeOverrideIsLocal(agent: string, machine: string | undefined, override: ClaudeCodeOverride | undefined): void {
+	if (!machine || !override) return;
+	throw new Error(`Agent '${agent}' requested machine '${machine}', but a Claude Code model or thinking level cannot be honored on a saved machine. Remove the model or thinking request, or run the agent locally.`);
+}
+
 function formatAsyncStartError(mode: SubagentRunMode, message: string): AsyncExecutionResult {
 	return {
 		content: [{ type: "text", text: message }],
@@ -980,6 +1005,12 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 		const externalRunnerType = a.runner?.type;
 		const machineUnsupported = formatHerdrMachineRunnerUnsupported({ machine: requestedMachine, agentName: a.name, runnerType: a.runner?.type, adapter: a.runner?.type === "external-cli" ? a.runner.adapter : undefined, worktree: s.worktree });
 		if (machineUnsupported) throw new AsyncStartValidationError(machineUnsupported);
+		const registeredExtensions = resolveRequiredChildExtensions(ctx.parentSessionId ?? ctx.currentSessionId ?? undefined);
+		try {
+			assertRequiredChildExtensionsAdmitted([params.requiredExtensions, ctx.childRuntime?.requiredExtensions, registeredExtensions], { agent: a.name, runnerType: a.runner?.type, machine: requestedMachine });
+		} catch (error) {
+			throw new AsyncStartValidationError(error instanceof Error ? error.message : String(error));
+		}
 		let machine: HerdrMachineReference | undefined;
 		let machineEnv: Record<string, string> | undefined;
 		if (requestedMachine) {
@@ -991,9 +1022,12 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 				throw new AsyncStartValidationError(error instanceof Error ? error.message : String(error));
 			}
 		}
+		// A code-owned Claude Code adapter owns its argv, but it does accept an explicit
+		// model/thinking request; those become --model/--effort on the launch below.
+		const claudeCodeAdapter = a.runner?.type === "external-cli" && isClaudeCodeAdapterId(a.runner.adapter);
 		if (externalRunner) {
 			const unsupported: string[] = [];
-			if (s.model !== undefined) unsupported.push("model override");
+			if (s.model !== undefined && !claudeCodeAdapter) unsupported.push("model override");
 			if (effectiveBehavior.outputSchema !== undefined) unsupported.push("structured output");
 			if (s.acceptance !== undefined || params.agentContract !== undefined || s.agentContract !== undefined) unsupported.push("acceptance/agent contract");
 			if (s.toolBudget !== undefined || params.toolBudget !== undefined || a.toolBudget !== undefined || params.configToolBudget !== undefined) unsupported.push("tool budget");
@@ -1059,38 +1093,34 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 		const modelScopes = resolveModelScopesForAgent(ctx.modelScope, a.name, ctx.currentModel, ctx.scopedModelIds);
 		const modelOrigin = resolveModelOrigin({ explicitModel: s.model, agentModel: a.model, parentModel: ctx.currentModel });
 		const primaryModelFromParent = modelOrigin === "inherited";
-		let primaryModel: string | undefined;
-		let unresolvedPrimaryModelError: string | undefined;
-		if (!externalRunner) {
-			try {
-				primaryModel = resolveEffectiveSubagentModel(
-					s.model,
-					a.model,
-					ctx.currentModel,
-					availableModels,
-					a.modelProvider ?? ctx.currentModelProvider,
-					{ scope: modelScopes, source: modelOrigin === "explicit" ? "explicit" : "inherited" },
-				);
-			} catch (error) {
-				const message = error instanceof Error ? error.message : String(error);
-				const rawPrimary = s.model ?? a.model;
-				if (!rawPrimary || (!a.fallbackModels?.length && !availableModels?.length) || !/Unknown subagent model/i.test(message)) throw error;
-				unresolvedPrimaryModelError = message;
-				primaryModel = rawPrimary;
-			}
-		}
-		const thinkingOverride = flatIndex === undefined ? undefined : thinkingOverridesByFlatIndex?.[flatIndex];
-		const effectiveThinking = externalRunner ? undefined : thinkingOverride ?? a.thinking;
-		const fallbackEvidence = externalRunner ? { candidates: [] } : buildModelCandidates(
-			primaryModel,
-			a.fallbackModels,
+		const primaryModel = externalRunner ? undefined : resolveEffectiveSubagentModel(
+			s.model,
+			a.model,
+			ctx.currentModel,
 			availableModels,
 			a.modelProvider ?? ctx.currentModelProvider,
-			{ scope: modelScopes, primaryModelFromParent, origin: modelOrigin },
+			{ scope: modelScopes, source: modelOrigin === "explicit" ? "explicit" : "inherited" },
 		);
-		const modelCandidates = fallbackEvidence.candidates.map((candidate) => applyThinkingSuffix(candidate, effectiveThinking, thinkingOverride !== undefined));
-		if (unresolvedPrimaryModelError && modelCandidates.length <= 1) throw new AsyncStartValidationError(unresolvedPrimaryModelError);
-		const model = externalRunner ? undefined : modelCandidates[0] ?? applyThinkingSuffix(primaryModel, effectiveThinking, thinkingOverride !== undefined);
+		const thinkingOverride = flatIndex === undefined ? undefined : thinkingOverridesByFlatIndex?.[flatIndex];
+		let claudeCodeOverride: ClaudeCodeOverride | undefined;
+		if (claudeCodeAdapter) {
+			try {
+				claudeCodeOverride = resolveClaudeCodeOverride({
+					model: requestString(s.model),
+					agent: a,
+					thinking: resolveClaudeCodeThinking(thinkingOverride, a.thinking),
+					thinkingCeiling: intersectThinkingCeilings(params.thinkingCeiling, a.maxThinking, ctx.childRuntime?.thinkingCeiling),
+					agentName: a.name,
+					runId: id,
+				});
+				assertClaudeCodeModelScope({ scopes: modelScopes, model: claudeCodeOverride?.model, agent: a.name, runId: id });
+				assertClaudeCodeOverrideIsLocal(a.name, machine ? requestedMachine : undefined, claudeCodeOverride);
+			} catch (error) {
+				throw new AsyncStartValidationError(error instanceof Error ? error.message : String(error));
+			}
+		}
+		const effectiveThinking = externalRunner ? undefined : thinkingOverride ?? a.thinking;
+		const model = externalRunner ? undefined : applyThinkingSuffix(primaryModel, effectiveThinking, thinkingOverride !== undefined);
 		const contextLimit = model ? findModelInfo(model, availableModels, a.modelProvider ?? ctx.currentModelProvider)?.contextWindow : undefined;
 		const thinkingCeiling = externalRunner ? undefined : intersectThinkingCeilings(
 			params.thinkingCeiling,
@@ -1109,12 +1139,15 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 		let selectedModel = model;
 		let requestedModel: string | undefined;
 		if (!externalRunner) {
-			requestedModel = modelOrigin === "inherited" ? undefined : primaryModel;
 			try {
-				for (const candidate of modelCandidates) {
-					assertThinkingWithinCeiling({ model: candidate, configThinking: effectiveThinking, ceiling: thinkingCeiling, agent: a.name, runId: id });
-				}
-				selectedModel = modelCandidates[0] ?? model;
+				const modelEvidence = resolveModelSelection(primaryModel, availableModels, a.modelProvider ?? ctx.currentModelProvider, {
+					scope: modelScopes,
+					primaryModelFromParent,
+					origin: modelOrigin,
+				});
+				requestedModel = modelEvidence.requestedModel;
+				selectedModel = applyThinkingSuffix(modelEvidence.model, effectiveThinking, thinkingOverride !== undefined);
+				assertThinkingWithinCeiling({ model: selectedModel, configThinking: effectiveThinking, ceiling: thinkingCeiling, agent: a.name, runId: id });
 			} catch (error) {
 				throw new AsyncStartValidationError(error instanceof Error ? error.message : String(error));
 			}
@@ -1122,7 +1155,7 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 		const launchRuleError = applyWatchdogLaunchRules({ cwd: machine ? runnerCwd : stepCwd, agent: a.name, model: selectedModel, warn: (violation) => sendRuleViolationWarning(ctx.pi, violation) });
 		if (launchRuleError) throw new AsyncStartValidationError(launchRuleError);
 		const fast = s.fast ?? params.fast ?? a.fast;
-		const requiredExtensions = externalRunner ? [] : ctx.childRuntime?.requiredExtensions ?? resolveRequiredChildExtensions(ctx.parentSessionId ?? ctx.currentSessionId ?? undefined);
+		const requiredExtensions = externalRunner ? [] : params.requiredExtensions ?? ctx.childRuntime?.requiredExtensions ?? registeredExtensions;
 		const toolPlan = resolvePiLaunchToolPlan({
 			tools: a.tools,
 			excludeTools: a.excludeTools,
@@ -1154,6 +1187,7 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 			agent: s.agent,
 			task,
 			...(a.runner ? { runner: a.runner } : {}),
+			...(claudeCodeOverride ? { claudeCodeOverrideArgs: claudeCodeOverride.args } : {}),
 			...(machine ? { machine } : {}),
 			...(machineEnv ? { machineEnv } : {}),
 			...(params.contextForAgent ? { context: params.contextForAgent(s.agent) } : {}),
@@ -1165,8 +1199,6 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 			cwd: stepCwd,
 			requestedCwd: machine ? machine.cwd : s.cwd ?? stepCwd,
 			model: selectedModel,
-			...(modelCandidates.length > 0 ? { modelCandidates } : {}),
-			...(fallbackEvidence.skippedModels?.length ? { skippedModels: fallbackEvidence.skippedModels } : {}),
 			...(contextLimit !== undefined ? { contextLimit } : {}),
 			...(fast !== undefined ? { fast } : {}),
 			thinking: resolveEffectiveThinking(selectedModel, effectiveThinking),
@@ -1184,6 +1216,7 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 			subagentOnlyExtensions: a.subagentOnlyExtensions,
 			...(!externalRunner ? { requiredExtensions } : {}),
 			mcpDirectTools: a.mcpDirectTools,
+			...(toolPlan.builtinMcpTools ? { builtinMcpTools: toolPlan.builtinMcpTools } : {}),
 			mutationTools: a.mutationTools,
 			systemPrompt,
 			systemPromptMode: a.systemPromptMode,
@@ -1196,9 +1229,7 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 			outputMode: behavior.outputMode,
 			sessionFile,
 			maxSubagentDepth: resolveChildMaxSubagentDepth(maxSubagentDepth, a.maxSubagentDepth),
-			...(a.defaultIdleTimeoutMs !== undefined
-				? { idleTimeoutMs: a.defaultIdleTimeoutMs }
-				: { timeoutMs: a.defaultTimeoutMs ?? DEFAULT_ASYNC_TIMEOUT_MS }),
+			timeoutMs: a.defaultTimeoutMs ?? DEFAULT_ASYNC_TIMEOUT_MS,
 			toolTimeoutMs: resolvedToolTimeout.toolTimeoutMs,
 			waitToolEnabled: params.waitToolEnabled,
 			waitToolDefaultTimeoutMs: params.waitToolDefaultTimeoutMs,
@@ -1450,6 +1481,7 @@ export function executeAsyncChain(
 		toolTimeoutMsEnv: params.toolTimeoutMsEnv ?? toolTimeoutFromEnv(),
 		capabilityCeiling,
 		thinkingCeiling: params.thinkingCeiling,
+		requiredExtensions: params.requiredExtensions,
 	});
 	if ("error" in built) {
 		try {
@@ -1493,6 +1525,12 @@ export function executeAsyncChain(
 	const initialStatusAt = Date.now();
 	const initialCompletionOwnerId = ctx.completionOwnerId ?? currentCompletionOwnerId();
 	const launchParentSessionId = ctx.parentSessionId ?? ctx.currentSessionId;
+	try {
+		writeRetainedRequiredChildExtensions(asyncDir, params.requiredExtensions ?? ctx.childRuntime?.requiredExtensions ?? resolveRequiredChildExtensions(launchParentSessionId ?? undefined));
+	} catch (error) {
+		fs.rmSync(asyncDir, { recursive: true, force: true });
+		return formatAsyncStartError(resultMode, `Failed to record required child extensions: ${error instanceof Error ? error.message : String(error)}`);
+	}
 
 	let spawnResult: SpawnRunnerResult = {};
 	try {
@@ -1515,6 +1553,7 @@ export function executeAsyncChain(
 				piPackageRoot,
 				childSessionFactoryModule: childSessionFactoryModule(),
 				inheritedChildRuntime: inheritedChildRuntime(ctx.childRuntime),
+				projectTrusted: ctx.projectTrusted,
 				worktreeSetupHook,
 				worktreeSetupHookTimeoutMs,
 				worktreeBaseDir,
@@ -1746,11 +1785,14 @@ export function executeAsyncSingle(
 	const externalRunner = agentConfig.runner?.type === "external-cli" || agentConfig.runner?.type === "external-job";
 	const externalRunnerType = agentConfig.runner?.type;
 	const permissionRules = resolvePermissionRules(ctx.permissions, agentConfig.permissions);
+	// See the chain path: the Claude Code adapter accepts an explicit model/thinking
+	// request even though no other external runner does.
+	const claudeCodeAdapter = agentConfig.runner?.type === "external-cli" && isClaudeCodeAdapterId(agentConfig.runner.adapter);
 	if (externalRunner) {
 		const unsupported: string[] = [];
-		if (params.modelOverride !== undefined) unsupported.push("model override");
+		if (params.modelOverride !== undefined && !claudeCodeAdapter) unsupported.push("model override");
 		if ((params.fast ?? agentConfig.fast) === true) unsupported.push("fast mode");
-		if (params.thinkingOverride !== undefined) unsupported.push("thinking override");
+		if (params.thinkingOverride !== undefined && !claudeCodeAdapter) unsupported.push("thinking override");
 		if (params.structuredOutputSchema !== undefined) unsupported.push("structured output");
 		if (params.acceptance !== undefined || params.agentContract !== undefined) unsupported.push("acceptance/agent contract");
 		if (params.toolBudget !== undefined || agentConfig.toolBudget !== undefined || params.configToolBudget !== undefined) unsupported.push("tool budget");
@@ -1770,6 +1812,12 @@ export function executeAsyncSingle(
 	const requestedMachine = params.machine ?? agentConfig.machine;
 	const machineUnsupported = formatHerdrMachineRunnerUnsupported({ machine: requestedMachine, agentName: agentConfig.name, runnerType: agentConfig.runner?.type, adapter: agentConfig.runner?.type === "external-cli" ? agentConfig.runner.adapter : undefined, worktree: params.worktree });
 	if (machineUnsupported) return formatAsyncStartError("single", machineUnsupported);
+	const registeredExtensions = resolveRequiredChildExtensions(ctx.parentSessionId ?? ctx.currentSessionId ?? undefined);
+	try {
+		assertRequiredChildExtensionsAdmitted([params.requiredExtensions, ctx.childRuntime?.requiredExtensions, registeredExtensions], { agent: agentConfig.name, runnerType: agentConfig.runner?.type, machine: requestedMachine });
+	} catch (error) {
+		return formatAsyncStartError("single", error instanceof Error ? error.message : String(error));
+	}
 	let machine: HerdrMachineReference | undefined;
 	let machineEnv: Record<string, string> | undefined;
 	if (requestedMachine) {
@@ -1858,7 +1906,6 @@ export function executeAsyncSingle(
 		parentModel: ctx.currentModel,
 	});
 	let primaryModel: string | undefined;
-	let unresolvedPrimaryModelError: string | undefined;
 	try {
 		primaryModel = externalRunner ? undefined : modelOrigin === "inherited"
 			? params.modelOverride ?? (ctx.currentModel ? `${ctx.currentModel.provider}/${ctx.currentModel.id}` : undefined)
@@ -1870,23 +1917,27 @@ export function executeAsyncSingle(
 				{ scope: modelScopes, source: modelOrigin === "explicit" ? "explicit" : "inherited" },
 			);
 	} catch (error) {
-		const message = error instanceof Error ? error.message : String(error);
-		const rawPrimary = params.modelOverride ?? agentConfig.model;
-		if (!rawPrimary || (!agentConfig.fallbackModels?.length && !availableModels?.length) || !/Unknown subagent model/i.test(message)) return formatAsyncStartError("single", message);
-		unresolvedPrimaryModelError = message;
-		primaryModel = rawPrimary;
+		return formatAsyncStartError("single", error instanceof Error ? error.message : String(error));
+	}
+	let singleClaudeCodeOverride: ClaudeCodeOverride | undefined;
+	if (claudeCodeAdapter) {
+		try {
+			singleClaudeCodeOverride = resolveClaudeCodeOverride({
+				model: requestString(params.modelOverride),
+				agent: agentConfig,
+				thinking: resolveClaudeCodeThinking(params.thinkingOverride, agentConfig.thinking),
+				thinkingCeiling: intersectThinkingCeilings(params.thinkingCeiling, agentConfig.maxThinking, ctx.childRuntime?.thinkingCeiling),
+				agentName: agentConfig.name,
+				runId: id,
+			});
+			assertClaudeCodeModelScope({ scopes: modelScopes, model: singleClaudeCodeOverride?.model, agent: agentConfig.name, runId: id });
+			assertClaudeCodeOverrideIsLocal(agentConfig.name, machine ? requestedMachine : undefined, singleClaudeCodeOverride);
+		} catch (error) {
+			return formatAsyncStartError("single", error instanceof Error ? error.message : String(error));
+		}
 	}
 	const effectiveThinking = externalRunner ? undefined : params.thinkingOverride ?? agentConfig.thinking;
-	const fallbackEvidence = externalRunner ? { candidates: [] } : buildModelCandidates(
-		primaryModel,
-		agentConfig.fallbackModels,
-		availableModels,
-		agentConfig.modelProvider ?? ctx.currentModelProvider,
-		{ scope: modelScopes, primaryModelFromParent: modelOrigin === "inherited", origin: modelOrigin },
-	);
-	const modelCandidates = fallbackEvidence.candidates.map((candidate) => applyThinkingSuffix(candidate, effectiveThinking, params.thinkingOverride !== undefined));
-	if (unresolvedPrimaryModelError && modelCandidates.length <= 1) return formatAsyncStartError("single", unresolvedPrimaryModelError);
-	const model = externalRunner ? undefined : modelCandidates[0] ?? applyThinkingSuffix(primaryModel, effectiveThinking, params.thinkingOverride !== undefined);
+	const model = externalRunner ? undefined : applyThinkingSuffix(primaryModel, effectiveThinking, params.thinkingOverride !== undefined);
 	const contextLimit = model ? findModelInfo(model, availableModels, agentConfig.modelProvider ?? ctx.currentModelProvider)?.contextWindow : undefined;
 	const thinkingCeiling = externalRunner ? undefined : intersectThinkingCeilings(
 		params.thinkingCeiling,
@@ -1924,17 +1975,20 @@ export function executeAsyncSingle(
 	let selectedModel = model;
 	let requestedModel: string | undefined;
 	if (!externalRunner) {
-		requestedModel = modelOrigin === "inherited" ? undefined : primaryModel;
 		try {
-			for (const candidate of modelCandidates) {
-				assertThinkingWithinCeiling({ model: candidate, configThinking: effectiveThinking, ceiling: thinkingCeiling, agent: agentConfig.name, runId: id });
-			}
-			selectedModel = modelCandidates[0] ?? model;
+			const modelEvidence = resolveModelSelection(primaryModel, availableModels, agentConfig.modelProvider ?? ctx.currentModelProvider, {
+				scope: modelScopes,
+				primaryModelFromParent: modelOrigin === "inherited",
+				origin: modelOrigin,
+			});
+			requestedModel = modelEvidence.requestedModel;
+			selectedModel = applyThinkingSuffix(modelEvidence.model, effectiveThinking, params.thinkingOverride !== undefined);
+			assertThinkingWithinCeiling({ model: selectedModel, configThinking: effectiveThinking, ceiling: thinkingCeiling, agent: agentConfig.name, runId: id });
 		} catch (error) {
 			return formatAsyncStartError("single", error instanceof Error ? error.message : String(error));
 		}
 	}
-	const requiredExtensions = externalRunner ? [] : params.requiredExtensions ?? ctx.childRuntime?.requiredExtensions ?? resolveRequiredChildExtensions(ctx.parentSessionId ?? ctx.currentSessionId ?? undefined);
+	const requiredExtensions = externalRunner ? [] : params.requiredExtensions ?? ctx.childRuntime?.requiredExtensions ?? registeredExtensions;
 	const toolPlan = resolvePiLaunchToolPlan({
 		tools: agentConfig.tools,
 		excludeTools: agentConfig.excludeTools,
@@ -2027,7 +2081,6 @@ export function executeAsyncSingle(
 		...(params.context ? { context: params.context } : {}),
 		...(params.intercomBridge !== undefined ? { intercomBridge: params.intercomBridge } : {}),
 		...(params.baseRef !== undefined ? { baseRef: params.baseRef } : {}),
-		...(params.idleTimeoutMs !== undefined ? { idleTimeoutMs: params.idleTimeoutMs } : {}),
 		...(deadlineAt !== undefined ? { absoluteDeadlineAt: deadlineAt } : {}),
 		...(resolvedToolBudget.budget ? { initialToolBudget: resolvedToolBudget.budget } : {}),
 		maxSubagentDepth: resolveChildMaxSubagentDepth(maxSubagentDepth, recoveryAgentConfig.maxSubagentDepth),
@@ -2061,6 +2114,7 @@ export function executeAsyncSingle(
 						agent,
 						task: taskText,
 						...(agentConfig.runner ? { runner: agentConfig.runner } : {}),
+						...(singleClaudeCodeOverride ? { claudeCodeOverrideArgs: singleClaudeCodeOverride.args } : {}),
 						...(machine ? { machine } : {}),
 						...(!externalRunner && machine && params.reads !== undefined ? { remoteReads: params.reads } : {}),
 						...(machineEnv ? { machineEnv } : {}),
@@ -2069,8 +2123,6 @@ export function executeAsyncSingle(
 						cwd: machine?.cwd ?? runnerCwd,
 						requestedCwd: machine?.cwd ?? params.requestedCwd ?? runnerCwd,
 						model: selectedModel,
-						...(modelCandidates.length > 0 ? { modelCandidates } : {}),
-						...(fallbackEvidence.skippedModels?.length ? { skippedModels: fallbackEvidence.skippedModels } : {}),
 						...(contextLimit !== undefined ? { contextLimit } : {}),
 						...(params.fast ?? agentConfig.fast ? { fast: params.fast ?? agentConfig.fast } : {}),
 						thinking: resolveEffectiveThinking(selectedModel, effectiveThinking),
@@ -2087,6 +2139,7 @@ export function executeAsyncSingle(
 						subagentOnlyExtensions: agentConfig.subagentOnlyExtensions,
 						...(!externalRunner ? { requiredExtensions } : {}),
 						mcpDirectTools: agentConfig.mcpDirectTools,
+						...(toolPlan.builtinMcpTools ? { builtinMcpTools: toolPlan.builtinMcpTools } : {}),
 						mutationTools: agentConfig.mutationTools,
 						systemPrompt,
 						systemPromptMode: agentConfig.systemPromptMode,
@@ -2132,6 +2185,7 @@ export function executeAsyncSingle(
 				...(capabilityCeiling ? { capabilityCeiling } : {}),
 				piPackageRoot,
 				childSessionFactoryModule: childSessionFactoryModule(),
+				projectTrusted: ctx.projectTrusted,
 				inheritedChildRuntime: inheritedChildRuntime(ctx.childRuntime),
 				worktreeSetupHook,
 				worktreeSetupHookTimeoutMs,
@@ -2141,7 +2195,6 @@ export function executeAsyncSingle(
 				worktreeBranchPrefix,
 				controlConfig,
 				timeoutMs,
-				idleTimeoutMs: params.idleTimeoutMs,
 				deadlineAt,
 				toolTimeoutMs,
 				checkpointBeforeDeadlineMs: params.checkpointBeforeDeadlineMs,
@@ -2232,7 +2285,6 @@ export function executeAsyncSingle(
 						agents: [agent],
 						chainStepCount: 1,
 						...(timeoutMs !== undefined ? { timeoutMs, deadlineAt } : {}),
-						...(params.idleTimeoutMs !== undefined ? { idleTimeoutMs: params.idleTimeoutMs } : {}),
 						startedAt: now,
 						lastUpdate: now,
 						...(capabilityCeiling ? { capabilityCeiling } : {}),
@@ -2260,7 +2312,6 @@ export function executeAsyncSingle(
 			...(params.parentWorkflowRunId ? { parentWorkflowRunId: params.parentWorkflowRunId } : {}),
 			...(params.workflowKey ? { workflowKey: params.workflowKey } : {}),
 			...(timeoutMs !== undefined ? { timeoutMs, deadlineAt } : {}),
-			...(params.idleTimeoutMs !== undefined ? { idleTimeoutMs: params.idleTimeoutMs } : {}),
 			...(initialUsageBudget ? { usageBudget: initialUsageBudget } : {}),
 			...(capabilityCeiling ? { capabilityCeiling } : {}),
 			nestedRoute,
@@ -2269,7 +2320,7 @@ export function executeAsyncSingle(
 
 	return {
 		content: [{ type: "text", text: formatAsyncStartedMessage(`Async: ${agent} [${id}]`, ctx.interactive === true) }],
-		details: { mode: "single", runId: id, results: [], asyncId: id, asyncDir, launchContractDigest, launchResolvedExtensions, ...(capabilityCeiling ? { capabilityCeiling } : {}), ...(params.context ? { context: params.context } : {}), ...(timeoutMs !== undefined ? { timeoutMs, deadlineAt } : {}), ...(params.idleTimeoutMs !== undefined ? { idleTimeoutMs: params.idleTimeoutMs } : {}), ...(params.toolBudget ? { toolBudget: resolvedToolBudget.budget ?? params.toolBudget } : {}), ...(initialUsageBudget ? { usageBudget: initialUsageBudget } : {}) } as Details,
+		details: { mode: "single", runId: id, results: [], asyncId: id, asyncDir, launchContractDigest, launchResolvedExtensions, ...(capabilityCeiling ? { capabilityCeiling } : {}), ...(params.context ? { context: params.context } : {}), ...(timeoutMs !== undefined ? { timeoutMs, deadlineAt } : {}), ...(params.toolBudget ? { toolBudget: resolvedToolBudget.budget ?? params.toolBudget } : {}), ...(initialUsageBudget ? { usageBudget: initialUsageBudget } : {}) } as Details,
 	};
 	};
 	return spawnResultOrPromise instanceof Promise ? spawnResultOrPromise.then(finishSpawnResult) : finishSpawnResult(spawnResultOrPromise);

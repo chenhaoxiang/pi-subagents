@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { pathToFileURL } from "node:url";
 
 const loaderUrl = new URL("../../runner-peer-loader.mjs", import.meta.url);
 const packageRootUrl = new URL("../../", import.meta.url).href;
@@ -19,28 +19,23 @@ test("native preload leaves the SDK extension loader's require.resolve intact", 
 		const sdkLoader = path.join(root, "host", "dist", "core", "extensions", "loader.js");
 		const typeboxRoot = path.join(root, "host", "node_modules", "typebox");
 		const target = path.join(typeboxRoot, "index.mjs");
-		const decoy = path.join(root, "decoy", "index.mjs");
 		fs.mkdirSync(path.dirname(sdkLoader), { recursive: true });
 		fs.mkdirSync(typeboxRoot, { recursive: true });
-		fs.mkdirSync(path.dirname(decoy), { recursive: true });
 		fs.writeFileSync(sdkLoader, "");
 		fs.writeFileSync(target, "export const Type = {};\n");
-		fs.writeFileSync(decoy, "export const Type = { decoy: true };\n");
 		fs.writeFileSync(path.join(typeboxRoot, "package.json"), JSON.stringify({ name: "typebox", type: "module", exports: "./index.mjs" }));
 		const child = spawnSync(process.execPath, [
 			"--import", new URL("../../runner-peer-preload.mjs", import.meta.url).href,
 			"--input-type=module", "-e",
-			"import { createRequire } from 'node:module'; console.log(JSON.stringify({ required: createRequire(process.argv[1]).resolve('typebox'), imported: import.meta.resolve('typebox') }));",
+			"import { createRequire } from 'node:module'; console.log(createRequire(process.argv[1]).resolve('typebox'));",
 			sdkLoader,
 		], {
 			encoding: "utf8",
-			env: { ...process.env, JITI_ALIAS: JSON.stringify({ typebox: decoy }), PI_ASYNC_NATIVE_RUNNER: "1" },
+			env: { ...process.env, JITI_ALIAS: JSON.stringify({ typebox: target }), PI_ASYNC_NATIVE_RUNNER: "1" },
 			timeout: 10_000,
 		});
 		assert.equal(child.status, 0, child.stderr);
-		const resolved = JSON.parse(child.stdout) as { required: string; imported: string };
-		assert.equal(fs.realpathSync(fileURLToPath(resolved.imported)), fs.realpathSync(decoy));
-		assert.equal(fs.realpathSync(resolved.required), fs.realpathSync(target));
+		assert.equal(child.stdout.trim(), fs.realpathSync(target));
 	} finally {
 		fs.rmSync(root, { recursive: true, force: true });
 	}

@@ -2659,37 +2659,6 @@ if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
 		assert.equal(mockPi.callCount(), 0);
 	});
 
-	it("falls back from an explicitly overridden unknown primary model", async () => {
-		mockPi.onCall({
-			jsonl: [{
-				type: "message_end",
-				message: {
-					role: "assistant",
-					content: [{ type: "text", text: "temporary provider failure" }],
-					model: "missing/primary",
-					errorMessage: "model unavailable",
-					usage: { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, cost: { total: 0.01 } },
-				},
-			}],
-			exitCode: 1,
-		});
-		mockPi.onCall({ output: "fallback output" });
-		const agents = [makeAgent("echo", { model: "openai/gpt-5-mini", fallbackModels: ["anthropic/claude-sonnet-4"] })];
-
-		const result = await runSync(tempDir, agents, "echo", "Task", {
-			modelOverride: "missing/primary",
-			availableModels: [
-				{ provider: "openai", id: "gpt-5-mini", fullId: "openai/gpt-5-mini" },
-				{ provider: "anthropic", id: "claude-sonnet-4", fullId: "anthropic/claude-sonnet-4" },
-			],
-		});
-
-		assert.equal(result.exitCode, 0);
-		assert.equal(result.model, "anthropic/claude-sonnet-4");
-		assert.deepEqual(result.attemptedModels, ["missing/primary", "anthropic/claude-sonnet-4"]);
-		assert.equal(mockPi.callCount(), 2);
-	});
-
 	it("prefers the parent session provider for ambiguous bare model ids", async () => {
 		mockPi.onCall({ output: "Done" });
 		const agents = [makeAgent("echo", { model: "gpt-5-mini" })];
@@ -2778,37 +2747,6 @@ if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
 		assert.equal(result.model, "openai/gpt-5-mini");
 		assert.equal("modelAttempts" in result, false);
 		assert.equal(mockPi.callCount(), 1);
-	});
-
-	it("falls back to the next explicit model before any tool activity", async () => {
-		mockPi.onCall({
-			jsonl: [{
-				type: "message_end",
-				message: {
-					role: "assistant",
-					content: [{ type: "text", text: "temporary provider failure" }],
-					model: "openai/gpt-5-mini",
-					errorMessage: "rate limit exceeded",
-					usage: { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, cost: { total: 0.01 } },
-				},
-			}],
-			exitCode: 1,
-		});
-		mockPi.onCall({ output: "fallback output" });
-		const agents = [makeAgent("echo", {
-			model: "openai/gpt-5-mini",
-			fallbackModels: ["anthropic/claude-sonnet-4"],
-		})];
-
-		const result = await runSync(tempDir, agents, "echo", "Task", {
-			runId: "explicit-model-fallback",
-		});
-
-		assert.equal(result.exitCode, 0);
-		assert.equal(result.model, "anthropic/claude-sonnet-4");
-		assert.deepEqual(result.attemptedModels, ["openai/gpt-5-mini", "anthropic/claude-sonnet-4"]);
-		assert.equal(result.modelAttempts?.length, 2);
-		assert.equal(mockPi.callCount(), 2);
 	});
 
 	it("fails zero-exit provider errors after one launch", async () => {
@@ -3091,44 +3029,6 @@ if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
 			assert.equal(args[args.indexOf("--session") + 1], sessionFile);
 		}
 		assert.match(readAllCallArgs(true)[1]?.at(-1) ?? "", /Continue from the current files and transcript/);
-	});
-
-	it("does not fallback after tool activity followed by compaction recovery and a provider failure", async () => {
-		const sessionFile = path.join(tempDir, "fallback-after-compaction-session.jsonl");
-		mockPi.onCall({
-			jsonl: [
-				events.toolStart("write", { path: "side-effect.txt", content: "done" }),
-				events.toolEnd("write"),
-				events.toolResult("write", "Wrote side-effect.txt"),
-				{ type: "message_end", message: { role: "assistant", content: [], model: "openai/gpt-5-mini", stopReason: "error", errorMessage: "This operation was aborted", usage: { input: 10, output: 0, cacheRead: 0, cacheWrite: 0, cost: { total: 0.01 } } } },
-				{ type: "agent_settled" },
-				{ type: "compaction_start" },
-			],
-			omitImplicitFinalEvents: true,
-			writeFiles: [{ path: "side-effect.txt", content: "done" }, { path: sessionFile, content: "{}\n" }],
-			keepAliveAfterFinalMessageMs: 5_000,
-			exitCode: 0,
-		});
-		mockPi.onCall({
-			jsonl: [{
-				type: "message_end",
-				message: { role: "assistant", content: [{ type: "text", text: "provider failed during recovery" }], model: "openai/gpt-5-mini", stopReason: "error", errorMessage: "429 rate limit exceeded", usage: { input: 5, output: 0, cacheRead: 0, cacheWrite: 0, cost: { total: 0.01 } } },
-			}],
-			exitCode: 1,
-		});
-		mockPi.onCall({ output: "unexpected fallback" });
-
-		const result = await runSync(tempDir, [makeAgent("echo", { model: "openai/gpt-5-mini", fallbackModels: ["anthropic/claude-sonnet-4"] })], "echo", "Task", {
-			runId: "no-fallback-after-compaction-side-effect",
-			sessionFile,
-		});
-
-		assert.equal(result.exitCode, 1);
-		assert.match(result.error ?? "", /429 rate limit exceeded/);
-		assert.equal(result.model, "openai/gpt-5-mini");
-		assert.equal(result.progressSummary?.toolCount, 1);
-		assert.equal(mockPi.callCount(), 2, "the fallback model must not launch after earlier tool activity");
-		for (const args of readAllCallArgs()) assert.equal(args[args.indexOf("--model") + 1], "openai/gpt-5-mini");
 	});
 
 	it("does not recover a compaction abort without a retained session", async () => {

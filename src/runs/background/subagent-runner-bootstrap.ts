@@ -241,7 +241,8 @@ function monitorTestParent(): void {
 	setInterval(check, 250).unref();
 }
 
-export function startConfiguredSubagentEntrypoint(): void {
+const isRunnerEntrypoint = Boolean(process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href);
+if (isRunnerEntrypoint) {
 	monitorTestParent();
 	const configArg = process.argv[2];
 	if (configArg) {
@@ -273,6 +274,3 @@ export function startConfiguredSubagentEntrypoint(): void {
 		});
 	}
 }
-
-const isRunnerEntrypoint = Boolean(process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href);
-if (isRunnerEntrypoint) startConfiguredSubagentEntrypoint();

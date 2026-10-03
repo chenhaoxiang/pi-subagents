@@ -26,20 +26,6 @@ describe("single-agent launch timeout wiring", () => {
 		});
 	});
 
-	it("idleTimeoutMs replaces the wall-clock default", () => {
-		assert.deepEqual(resolveSingleAgentLaunchTimeout({ idleTimeoutMs: 1_800_000 }, true), {
-			idleTimeoutMs: 1_800_000,
-		});
-		assert.deepEqual(resolveSingleAgentLaunchTimeout({}, true, undefined, 1_800_000), {
-			idleTimeoutMs: 1_800_000,
-		});
-	});
-
-	it("rejects combining idleTimeoutMs with a hard timeout", () => {
-		const result = resolveSingleAgentLaunchTimeout({ idleTimeoutMs: 1_800_000, timeoutMs: 5_000 }, true);
-		assert.match(result.error ?? "", /cannot be combined/);
-	});
-
 	it("maxRuntimeMs alias wins over the async default", () => {
 		assert.deepEqual(resolveSingleAgentLaunchTimeout({ maxRuntimeMs: 7_000 }, true), {
 			timeoutMs: 7_000,
