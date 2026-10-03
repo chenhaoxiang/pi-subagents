@@ -15,10 +15,11 @@ import * as path from "node:path";
 export const JITI_ALIAS_ENV = "JITI_ALIAS";
 
 /** Specifiers the runner's import graph may use, with the package and export subpath each resolves to. */
-export const HOST_PEER_ALIASES: ReadonlyArray<{ specifier: string; pkg: string; subpath: string }> = [
+export const HOST_PEER_ALIASES: ReadonlyArray<{ specifier: string; pkg: string; subpath: string; optional?: boolean }> = [
 	{ specifier: "@earendil-works/pi-coding-agent", pkg: "@earendil-works/pi-coding-agent", subpath: "." },
 	{ specifier: "@earendil-works/pi-agent-core", pkg: "@earendil-works/pi-agent-core", subpath: "." },
-	{ specifier: "@earendil-works/pi-agent-core/node", pkg: "@earendil-works/pi-agent-core", subpath: "./node" },
+	// Optional: hosts whose pi-agent-core declares no "./node" export cannot import it, so no alias is needed.
+	{ specifier: "@earendil-works/pi-agent-core/node", pkg: "@earendil-works/pi-agent-core", subpath: "./node", optional: true },
 	{ specifier: "@earendil-works/pi-tui", pkg: "@earendil-works/pi-tui", subpath: "." },
 	{ specifier: "@earendil-works/pi-ai", pkg: "@earendil-works/pi-ai", subpath: "./compat" },
 	{ specifier: "@earendil-works/pi-ai/compat", pkg: "@earendil-works/pi-ai", subpath: "./compat" },
@@ -56,7 +57,7 @@ function readManifest(packageDir: string): PackageManifest | undefined {
 
 function isPiOneOrNewer(version: unknown): boolean {
 	if (typeof version !== "string") return false;
-	const match = /^(\d+)\.\d+\.\d+(?:[-+].*)?$/.exec(version);
+	const match = /^(\d+)\.\d+\.\d+$/.exec(version);
 	return match !== null && Number(match[1]) >= 1;
 }
 
@@ -156,10 +157,13 @@ export function resolveHostPeerAliases(piPackageRoot: string): { aliases: Record
 	// hosts retain the required aliases, rather than hiding a broken install.
 	const stableVersion = typeof hostManifest?.version === "string" ? /^0\.(\d+)\.\d+$/.exec(hostManifest.version) : null;
 	const isPreChord = stableVersion !== null && Number(stableVersion[1]) < 85;
-	const required = [...HOST_PEER_ALIASES, ...(isPreChord ? [] : CHORD_PEER_ALIASES)];
-	for (const { specifier, pkg, subpath } of required) {
+	const required: ReadonlyArray<(typeof HOST_PEER_ALIASES)[number]> = [...HOST_PEER_ALIASES, ...(isPreChord ? [] : CHORD_PEER_ALIASES)];
+	for (const { specifier, pkg, subpath, optional } of required) {
 		const packageDir = findPeerPackageDir(piPackageRoot, pkg, hostManifest?.name);
 		const target = packageDir ? resolvePackageSubpath(packageDir, subpath) : undefined;
+		// Only a positively identified Pi 1.x host may omit the removed export; unknown
+		// and pre-1.0 hosts remain fail-closed even when the subpath is absent.
+		if (optional && packageDir && target === undefined && mayOmitAlias(hostManifest, specifier)) continue;
 		// Native loaders short-circuit resolution, so aliases must retain the real package's dependency scope.
 		if (target && fs.existsSync(target)) aliases[specifier] = fs.realpathSync(target);
 		else if (!mayOmitAlias(hostManifest, specifier)) missing.push(specifier);

@@ -95,12 +95,13 @@ import { collectDynamicResults, DynamicFanoutError, materializeDynamicParallelSt
 import { claimRunFanoutBatch, getRunFanoutBudgetSnapshot } from "../shared/run-fanout-budget.ts";
 import { nestedSummaryFromAsyncStatus, projectNestedEvents, resolveNestedAsyncDir, writeNestedEvent } from "../shared/nested-events.ts";
 import { formatSubagentModelVerificationError, isContextOverflow } from "../shared/model-resolution.ts";
-import { formatModelAttemptNote, isRetryableModelFailureAttempt } from "../shared/model-fallback.ts";
+import { isRetryableModelFailureAttempt } from "../shared/model-fallback.ts";
 import { processTerminalPath, writeProcessTerminalCandidate, type ProcessTerminalCandidate } from "./process-terminal.ts";
 import { persistRunnerStartupFailure } from "./runner-startup-failure.ts";
 import { currentPidNamespaceScope } from "./pid-namespace.ts";
 import { createSteeringStatus, recordSteeringRequest, steeringStatus, terminalSteeringNoticeState, unconsumedSteerReason, updateSteeringTarget } from "./steering.ts";
 import { PROMPT_REDACTED, detectSubagentError, extractTextFromContent, extractToolArgsPreview, formatEmptyTerminalAssistantResponseError, getAgentDir, getFinalOutput, hasEmptyTerminalAssistantResponse, readStatus } from "../../shared/utils.ts";
+import { planBackgroundRunHistory, recordRun } from "../shared/run-history.ts";
 import { planAbortRecovery } from "../shared/abort-recovery.ts";
 import {
 	createMutatingFailureState,
@@ -190,6 +191,8 @@ export interface SubagentRunConfig {
 	childSessionFactoryModule?: string;
 	/** The launching executor's own child runtime when it was itself an in-process child. */
 	inheritedChildRuntime?: InheritedChildRuntime;
+	/** The launching session's project trust; undefined keeps Pi's default for hosts without trust. */
+	projectTrusted?: boolean;
 	worktreeSetupHook?: string;
 	worktreeSetupHookTimeoutMs?: number;
 	worktreeBaseDir?: string;
@@ -676,6 +679,7 @@ interface SingleStepContext {
 	childSessions: ChildSessionFactory;
 	/** The launching executor's own child runtime; nested route, depth, and ceilings come from here. */
 	inheritedChildRuntime?: InheritedChildRuntime;
+	projectTrusted?: boolean;
 	registerInterrupt?: (interrupt: (() => void) | undefined) => void;
 	registerTimeout?: (interrupt: (() => void) | undefined) => void;
 	registerStop?: (stop: (() => void) | undefined) => void;
@@ -825,6 +829,7 @@ export async function runSingleStepInner(
 			fast: step.fast,
 			model: step.model,
 			mcpDirectTools: step.mcpDirectTools,
+			builtinMcpTools: step.builtinMcpTools,
 			cwd: step.cwd ?? ctx.cwd,
 			requireReadTool: Boolean(step.skills?.length),
 			structuredOutput: Boolean(effectiveStructuredOutput),
@@ -917,7 +922,7 @@ export async function runSingleStepInner(
 		const adapterLaunch = step.runner.adapter === "codex-exec" || step.runner.adapter === "codex-exec-writer"
 			? resolveCodexExecLaunch({ adapter: step.runner.adapter, command: step.runner.command, asyncDir: path.dirname(ctx.outputFile), stepIndex: ctx.flatIndex })
 			: step.runner.adapter === "claude-code" || step.runner.adapter === "claude-code-writer"
-				? resolveClaudeCodeLaunch({ adapter: step.runner.adapter, command: step.runner.command })
+				? resolveClaudeCodeLaunch({ adapter: step.runner.adapter, command: step.runner.command, overrideArgs: step.claudeCodeOverrideArgs })
 				: step.runner.adapter === "cursor-agent" || step.runner.adapter === "cursor-agent-writer"
 					? resolveCursorAgentLaunch({ adapter: step.runner.adapter, command: step.runner.command, cwd: externalCwd, asyncDir: path.dirname(ctx.outputFile), stepIndex: ctx.flatIndex })
 				: undefined;
@@ -1170,6 +1175,7 @@ export async function runSingleStepInner(
 				fast: step.fast,
 				model: step.model,
 				mcpDirectTools: step.mcpDirectTools,
+				builtinMcpTools: step.builtinMcpTools,
 				cwd: step.cwd ?? ctx.cwd,
 				requireReadTool: Boolean(step.skills?.length),
 				structuredOutput: Boolean(effectiveStructuredOutput),
@@ -1688,7 +1694,12 @@ function markParallelGroupSetupFailure(input: {
 		if (!task) throw new Error(`Missing parallel task at index ${taskIndex}`);
 		const stopped = statusStep.stopped || statusStep.stopRequested || input.statusPayload.stopped;
 		const paused = !stopped && input.statusPayload.state === "paused";
+		const timedOut = !stopped && !paused && input.statusPayload.timedOut === true;
 		statusStep.status = stopped ? "stopped" : paused ? "paused" : "failed";
+		// Mirror the run-level timeout onto the step so consumers (status readers,
+		// run-history recording) see timed_out rather than a bare failure — the
+		// StepResult below already carries it, the status step must too.
+		if (timedOut) statusStep.timedOut = true;
 		statusStep.startedAt = input.failedAt;
 		statusStep.endedAt = input.failedAt;
 		statusStep.durationMs = 0;
@@ -1855,19 +1866,25 @@ async function runSingleStepWithTimeout(
 	ctx: SingleStepContext,
 	parentDeadlineAt?: number,
 ): Promise<SingleStepResult> {
-	if (step.timeoutMs === undefined) return runSingleStep(step, parentDeadlineAt === undefined ? ctx : {
+	const idleTimeoutMs = step.idleTimeoutMs;
+	const parentRemainingMs = parentDeadlineAt === undefined ? undefined : Math.max(0, parentDeadlineAt - Date.now());
+	if (step.timeoutMs === undefined && idleTimeoutMs === undefined) return runSingleStep(step, parentDeadlineAt === undefined ? ctx : {
 		...ctx,
 		deadlineAt: ctx.deadlineAt === undefined ? parentDeadlineAt : Math.min(ctx.deadlineAt, parentDeadlineAt),
 	});
 
-	const parentRemainingMs = parentDeadlineAt === undefined ? undefined : Math.max(0, parentDeadlineAt - Date.now());
-	const timeoutMs = parentRemainingMs === undefined ? step.timeoutMs : Math.min(step.timeoutMs, parentRemainingMs);
-	const timeoutMessage = parentRemainingMs !== undefined && parentRemainingMs <= step.timeoutMs
+	const timeoutMs = step.timeoutMs === undefined || parentRemainingMs === undefined
+		? step.timeoutMs
+		: Math.min(step.timeoutMs, parentRemainingMs);
+	const timeoutMessage = parentRemainingMs !== undefined && step.timeoutMs !== undefined && parentRemainingMs <= step.timeoutMs
 		? ctx.timeoutMessage
-		: `Subagent timed out after ${step.timeoutMs}ms.`;
+		: step.timeoutMs === undefined
+			? `Subagent idle timed out after ${idleTimeoutMs}ms.`
+			: `Subagent timed out after ${step.timeoutMs}ms.`;
 	const timeoutController = new AbortController();
 	let timeoutAction: (() => void) | undefined;
 	let timeoutTriggered = false;
+	let idleTimer: NodeJS.Timeout | undefined;
 	const triggerTimeout = (): void => {
 		if (timeoutTriggered) return;
 		timeoutTriggered = true;
@@ -1879,18 +1896,43 @@ async function runSingleStepWithTimeout(
 		ctx.registerTimeout?.(action ? triggerTimeout : undefined);
 		if (action && timeoutTriggered) action();
 	};
-	const timer = setTimeout(triggerTimeout, timeoutMs);
-	timer.unref?.();
+	const resetIdleTimeout = (): void => {
+		if (idleTimeoutMs === undefined || timeoutTriggered) return;
+		if (idleTimer) clearTimeout(idleTimer);
+		idleTimer = setTimeout(triggerTimeout, idleTimeoutMs);
+		idleTimer.unref?.();
+	};
+	const onChildEvent = (event: ChildEvent): void => {
+		if (!isChildWatchdogStatusEvent(event)) resetIdleTimeout();
+		ctx.onChildEvent?.(event);
+	};
+	const onExternalStreamActivity = (): void => {
+		resetIdleTimeout();
+		ctx.onExternalStreamActivity?.();
+	};
+	const onExternalJob = (status: ExternalJobStatus): void => {
+		resetIdleTimeout();
+		ctx.onExternalJob?.(status);
+	};
+	if (idleTimeoutMs !== undefined) resetIdleTimeout();
+	const timer = timeoutMs === undefined ? undefined : setTimeout(triggerTimeout, timeoutMs);
+	timer?.unref?.();
 	try {
 		return await runSingleStep(step, {
 			...ctx,
 			registerTimeout,
-			deadlineAt: Date.now() + timeoutMs,
+			deadlineAt: timeoutMs === undefined
+				? (ctx.deadlineAt === undefined ? parentDeadlineAt : parentDeadlineAt === undefined ? ctx.deadlineAt : Math.min(ctx.deadlineAt, parentDeadlineAt))
+				: Date.now() + timeoutMs,
 			timeoutSignal: combinedAbortSignal([ctx.timeoutSignal, timeoutController.signal]),
 			timeoutMessage,
+			onChildEvent,
+			onExternalStreamActivity,
+			onExternalJob,
 		});
 	} finally {
-		clearTimeout(timer);
+		if (timer) clearTimeout(timer);
+		if (idleTimer) clearTimeout(idleTimer);
 		ctx.registerTimeout?.(undefined);
 	}
 }
@@ -1905,6 +1947,11 @@ export async function runSubagent(
 	let previousOutput = "";
 	const outputs: ChainOutputMap = {};
 	const results: StepResult[] = [];
+	// Flat indices of steps a child session was actually dispatched for — the
+	// ground truth for run-history: stopRunner/timeoutRunner/fail-fast/budget
+	// skips relabel never-launched steps to terminal statuses, so status alone
+	// cannot distinguish them from steps that really ran.
+	const launchedFlatIndices = new Set<number>();
 	const overallStartTime = Date.now();
 	const shareEnabled = config.share === true;
 	const asyncDir = config.asyncDir;
@@ -2677,7 +2724,7 @@ export async function runSubagent(
 	const activeLongRunningSteps = new Set<number>();
 	const mutatingFailureStates = initialStatusSteps.map(() => createMutatingFailureState());
 	const pendingToolResults: Array<{ tool: string; path?: string; mutates: boolean; startedAt?: number } | undefined> = initialStatusSteps.map(() => undefined);
-	type ActiveToolCall = { key: string; tool: string; args: string; startedAt: number; path?: string; blocksSupervisor: boolean };
+	type ActiveToolCall = { attentionEmitted?: boolean; key: string; tool: string; args: string; startedAt: number; path?: string; blocksSupervisor: boolean };
 	const activeToolCalls = initialStatusSteps.map(() => new Map<string, ActiveToolCall>());
 	const activeToolKeysByName = initialStatusSteps.map(() => new Map<string, string[]>());
 	const activeToolSequences = initialStatusSteps.map(() => 0);
@@ -2741,7 +2788,7 @@ export async function runSubagent(
 		return key ? removeActiveToolCallKey(flatIndex, key) : undefined;
 	};
 	const openToolAttentionTarget = (flatIndex: number, now: number): ActiveToolCall | undefined => [...(activeToolCalls[flatIndex]?.values() ?? [])]
-		.filter((active) => shouldEmitOpenToolAttention({ config: controlConfig, currentTool: active.tool, currentToolStartedAt: active.startedAt, now }))
+		.filter((active) => !active.attentionEmitted && shouldEmitOpenToolAttention({ config: controlConfig, currentTool: active.tool, currentToolStartedAt: active.startedAt, now }))
 		.sort((left, right) => left.startedAt - right.startedAt)[0];
 	const supervisorAttentionSteps = new Map<number, ActivityState | undefined>();
 	const mutatingFailureWindowMs = 5 * 60_000;
@@ -2793,9 +2840,12 @@ export async function runSubagent(
 	};
 	const maybeEmitOpenToolAttention = (flatIndex: number, now: number): boolean => {
 		const step = statusPayload.steps[flatIndex];
-		if (!step || step.status !== "running" || step.activityState === "needs_attention") return false;
+		if (!step || step.status !== "running") return false;
 		const target = openToolAttentionTarget(flatIndex, now);
 		if (!target) return false;
+		target.attentionEmitted = true;
+		// Keep this attention when a concurrent supervisor request ends and restores its saved state.
+		if (supervisorAttentionSteps.has(flatIndex)) supervisorAttentionSteps.set(flatIndex, "needs_attention");
 		const previous = step.activityState;
 		step.activityState = "needs_attention";
 		statusPayload.activityState = "needs_attention";
@@ -2814,6 +2864,7 @@ export async function runSubagent(
 			tokens: step.tokens?.total,
 			toolCount: step.toolCount,
 			currentTool: target.tool,
+			toolCallId: target.key.startsWith("id:") ? target.key.slice(3) : undefined,
 			currentToolDurationMs: toolDurationMs,
 			currentPath: target.path,
 		})));
@@ -3655,6 +3706,7 @@ export async function runSubagent(
 				return omitUndefinedProperties({
 					agent: task.agent,
 					...(task.sessionName ? { sessionName: task.sessionName } : {}),
+					...(externalRunnerStatus(task.runner) ? { runner: externalRunnerStatus(task.runner) } : {}),
 					...(statusStepDescription(task.task) ? { description: statusStepDescription(task.task) } : {}),
 					...(task.context ? { context: task.context } : {}),
 					...(task.phase ?? step.phase ? { phase: task.phase ?? step.phase } : {}),
@@ -3758,6 +3810,7 @@ export async function runSubagent(
 					return omitUndefinedProperties({ agent: task.agent, ...(task.sessionName ? { sessionName: task.sessionName } : {}), context: task.context, output: "(skipped — fail-fast)", exitCode: -1 as number | null, skipped: true });
 				}
 				const taskStartTime = Date.now();
+				launchedFlatIndices.add(fi);
 				statusPayload.currentStep = fi;
 				requiredStatusStep(statusPayload, fi).status = "running";
 				delete requiredStatusStep(statusPayload, fi).error;
@@ -3778,6 +3831,7 @@ export async function runSubagent(
 					artifactsDir, artifactConfig, id,
 					flatIndex: fi, flatStepCount: Math.max(statusPayload.steps.length, 1),
 					outputFile: path.join(asyncDir, `output-${fi}.log`),
+					projectTrusted: config.projectTrusted,
 					piPackageRoot: config.piPackageRoot,
 					childSessions,
 					inheritedChildRuntime: config.inheritedChildRuntime,
@@ -4166,6 +4220,7 @@ export async function runSubagent(
 						}
 
 						const taskStartTime = Date.now();
+						launchedFlatIndices.add(fi);
 						statusPayload.currentStep = fi;
 						requiredStatusStep(statusPayload, fi).status = "running";
 						delete requiredStatusStep(statusPayload, fi).error;
@@ -4196,6 +4251,7 @@ export async function runSubagent(
 							sessionDir: taskSessionDir,
 							artifactsDir, artifactConfig, id,
 							flatIndex: fi, flatStepCount: Math.max(statusPayload.steps.length, 1),
+							projectTrusted: config.projectTrusted,
 							outputFile: path.join(asyncDir, `output-${fi}.log`),
 							piPackageRoot: config.piPackageRoot,
 							childSessions,
@@ -4558,6 +4614,7 @@ export async function runSubagent(
 			}
 			const singleCwd = singleWorktreeSetup?.worktrees[0]?.agentCwd ?? cwd;
 			const stepStartTime = Date.now();
+			launchedFlatIndices.add(flatIndex);
 			statusPayload.currentStep = flatIndex;
 			requiredStatusStep(statusPayload, flatIndex).status = "running";
 			delete requiredStatusStep(statusPayload, flatIndex).activityState;
@@ -4590,6 +4647,7 @@ export async function runSubagent(
 				outputs: statusPayload.mode === "single" ? undefined : outputs,
 				sessionDir: config.sessionDir,
 				artifactsDir, artifactConfig, id,
+				projectTrusted: config.projectTrusted,
 				flatIndex, flatStepCount: Math.max(statusPayload.steps.length, 1),
 				outputFile: path.join(asyncDir, `output-${flatIndex}.log`),
 				piPackageRoot: config.piPackageRoot,
@@ -5151,6 +5209,31 @@ export async function runSubagent(
 			usageBudget: statusPayload.usageBudget,
 		}),
 	);
+	// run-history parity with the foreground executor (subagent-executor.ts): without
+	// this, every async launch is invisible to the per-agent run census, because
+	// asyncByDefault routes all subagent tool calls through this runner. Multi-step
+	// runs record one row per child step so loadRunsForAgent(agent) sees each child;
+	// paused runs record here too (outcome "interrupted", matching foreground), and
+	// a later resume that settles records again — one entry per attempt.
+	for (const historyEntry of planBackgroundRunHistory({
+		steps,
+		resultMode,
+		statusSteps: statusPayload.steps.map((step, index) => ({
+			agent: step.agent,
+			status: step.status,
+			durationMs: step.durationMs,
+			timedOut: step.timedOut,
+			stopped: step.stopped,
+			launched: launchedFlatIndices.has(index),
+		})),
+		stepResults: results,
+		runDurationMs: runEndedAt - overallStartTime,
+		stopped,
+		interrupted,
+		timedOut,
+	})) {
+		recordRun(historyEntry.agent, historyEntry.task, historyEntry.exitCode, historyEntry.durationMs, historyEntry.terminal);
+	}
 	writeRunLog(logPath, omitUndefinedProperties({
 		id,
 		mode: statusPayload.mode,

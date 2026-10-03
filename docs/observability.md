@@ -53,9 +53,11 @@ or keyboard shortcuts is needed. The summary counts the widget's tracked runs,
 including workflow parents and children, rather than unique agents.
 
 Folding stays in effect across progress updates and does not change Pi's global
-expand setting, run execution, or completion notifications. Task rows, drag and
-wheel events, and modifier clicks are left unhandled. The state resets when the
-widget is removed or Pi reloads. Regular mode keeps the existing keyboard controls.
+expand setting, run execution, or completion notifications. Set
+`asyncWidgetCollapsed: true` in the extension configuration to start each newly
+mounted widget folded. Task rows, drag and wheel events, and modifier clicks are left
+unhandled. The state resets when the widget is removed or Pi reloads. Regular mode
+keeps the existing keyboard controls.
 
 ### Reducing status display noise
 
@@ -74,6 +76,7 @@ For compact chat results with FleetView as the only live editor surface, merge t
 - `inlineToolDisplay: "summary"` keeps one static result row per call, alongside its call heading. A completed status query is not proof that the queried child has finished.
 - `fleetView: true` retains live progress. Open `/subagents-fleet` for details instead of repeatedly requesting status just to watch progress. Pi's expand key does not expand summary results; keep `"rich"` if you want expandable inline output.
 - `asyncWidget: false` hides only the additional under-editor async widget, leaving FleetView available. This configuration reduces visible surfaces; it does not guarantee ordering relative to other extensions.
+- `asyncWidgetCollapsed: true` starts each newly mounted async widget as a one-line live status summary; click its header to expand it.
 
 Thanks to [DraconDev](https://github.com/DraconDev) for reporting the display noise and suggesting summary mode in [#1931](https://github.com/nicobailon/pi-subagents/issues/1931).
 
@@ -212,7 +215,7 @@ subscribe to the `subagent:child-status` event advertised by RPC `ping` as
 `version: 1`, `runId`, `childId`, `status` (`"started"`, `"stopping"`, or
 `"stopped"`), `ts`, and optional child metadata such as `asyncDir`, `stepIndex`,
 `agent`, `childRunId`, `workflowKey`, `phase`, and `label`. Async
-`workflowScript` roots emit `"started"` once the keyed child has a concrete
+Workflow script roots emit `"started"` once the keyed child has a concrete
 launch identity; `childId` and `workflowKey` are the stable workflow key, while
 `stepIndex` is only a convenience projection for the current status snapshot.
 These events are observer hints only. They can duplicate across the live event
@@ -311,7 +314,7 @@ Async events:
 - `subagent:async-started`
 - `subagent:async-complete`
 
-For regular async starts, the `subagent:async-started` payload includes redacted `task` and `goal` prompt fields. Async `workflowScript` roots emit the same event with `mode: "workflow"` after their initial `status.json` is durable; workflow roots can omit `task`, and any included prompt fields are redacted. Their keyed children are then announced dynamically through `subagent:child-status`. Companion UI extensions can combine those hints with the authoritative live lifecycle artifacts under `asyncDir` without scraping terminal output.
+For regular async starts, the `subagent:async-started` payload includes redacted `task` and `goal` prompt fields. Async workflow script roots emit the same event with `mode: "workflow"` after their initial `status.json` is durable; workflow roots can omit `task`, and any included prompt fields are redacted. Their keyed children are then announced dynamically through `subagent:child-status`. Companion UI extensions can combine those hints with the authoritative live lifecycle artifacts under `asyncDir` without scraping terminal output.
 
 Intercom delivery events:
 

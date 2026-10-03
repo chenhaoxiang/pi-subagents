@@ -11,15 +11,10 @@ import type { Usage } from "../../shared/types.ts";
  * model-probe ladder; runtime attempts are the authoritative availability check.
  */
 export const DEFAULT_HETERO_MODEL_POOL = [
-	"codex-local/kimi-k3:max",
-	"codex-local/gpt-6-astra:high",
-	"codex-local/gpt-5.6-sol:max",
-	"zai-coding-cn/glm-5.3",
-	"codex-local/deepseek-flash",
-	"qoder-cli/sonus",
-	"qoder-cli/cantus",
-	"qoder-cli/kimi-k3:max",
-	"qoder-cli/qwen3.8-max:max",
+	"codex-local/kimi-k3:high",
+	"codex-local/gpt-6.1-sol:max",
+	"zai-coding-cn/glm-5.3:max",
+	"codex-local/deepseek-flash:high",
 ] as const;
 
 export interface SkippedModel {
@@ -92,9 +87,9 @@ function canonicalFallbackModel(
 
 /**
  * Build the ordered launch chain. Explicit fallbackModels win. Without them,
- * use the parent-aware heterogeneous pool and omit candidates sharing the
- * primary model identity. Registry presence is only a preflight filter; a real
- * launch failure is still handled by the execution loop.
+ * use the parent-aware heterogeneous pool first, then append candidates sharing
+ * the primary model identity as same-model fallbacks. Registry presence is only
+ * a preflight filter; a real launch failure is still handled by the execution loop.
  */
 export function buildModelCandidates(
 	primaryModel: string | undefined,
@@ -109,7 +104,12 @@ export function buildModelCandidates(
 	const rawFallbacks = explicitChain
 		? fallbackModels
 		: availableModels && availableModels.length > 0
-			? DEFAULT_HETERO_MODEL_POOL.filter((candidate) => !primaryModel || modelKey(candidate) !== modelKey(primaryModel))
+			? [
+					...DEFAULT_HETERO_MODEL_POOL.filter((candidate) => !primaryModel || modelKey(candidate) !== modelKey(primaryModel)),
+					...(primaryModel
+						? DEFAULT_HETERO_MODEL_POOL.filter((candidate) => modelKey(candidate) === modelKey(primaryModel))
+						: []),
+				]
 			: [];
 	const candidates: string[] = [];
 	const skippedModels: SkippedModel[] = [];
@@ -123,7 +123,8 @@ export function buildModelCandidates(
 			if (index > 0) skippedModels.push({ model: raw.trim(), reason: "unavailable in the active model registry" });
 			return;
 		}
-		const identity = `${splitThinkingSuffix(normalized).baseModel.toLowerCase()}`;
+		const parsed = splitThinkingSuffix(normalized);
+		const identity = `${modelKey(normalized)}${parsed.thinkingSuffix.toLowerCase()}`;
 		if (seen.has(identity)) return;
 		if (index > 0) enforceFallbackScope(normalized, options?.scope, options?.onWarn);
 		seen.add(identity);

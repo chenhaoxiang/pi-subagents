@@ -40,6 +40,11 @@ describe("single-agent launch timeout wiring", () => {
 		assert.match(result.error ?? "", /cannot be combined/);
 	});
 
+	it("rejects a composite async idle timeout instead of silently dropping it", () => {
+		const result = resolveSingleAgentLaunchTimeout({ chain: [{ agent: "worker", task: "x" }], idleTimeoutMs: 1_800_000 }, true);
+		assert.match(result.error ?? "", /only supported for single-agent launches/);
+	});
+
 	it("maxRuntimeMs alias wins over the async default", () => {
 		assert.deepEqual(resolveSingleAgentLaunchTimeout({ maxRuntimeMs: 7_000 }, true), {
 			timeoutMs: 7_000,

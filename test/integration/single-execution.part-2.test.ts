@@ -3912,6 +3912,21 @@ if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
 		assert.equal(agentResult.details?.timeoutMs, 4_000);
 	});
 
+	it("keeps an explicit hard timeout when the agent has an idle-timeout default", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({ output: "explicit hard timeout" });
+		const result = await makeExecutor([
+			makeAgent("echo", { defaultIdleTimeoutMs: 4_000 }),
+		]).execute(
+			"foreground-timeout-overrides-agent-idle",
+			{ agent: "echo", task: "Task", async: false, timeoutMs: 2_000 },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+		assert.equal(result.details?.timeoutMs, 2_000);
+		assert.equal(result.details?.idleTimeoutMs, undefined);
+	});
+
 	it("threads the global config timeout default from deps.config, without overriding explicit or agent values", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		const NINETY_MIN = 90 * 60 * 1000;
 		mockPi.onCall({ output: "config default" });
