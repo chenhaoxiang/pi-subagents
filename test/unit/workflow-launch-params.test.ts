@@ -389,6 +389,47 @@ describe("workflow launch params", () => {
 		);
 	});
 
+	it("preserves explicit retained idle and per-tool timeouts without inventing a hard run deadline", () => {
+		assert.deepEqual(
+			prepareWorkflowLaunchParams(
+				{ idleTimeoutMs: 86_400_000, toolTimeoutMs: 86_400_000 },
+				{ resume: "retained-run", task: "Continue" },
+				"workflow-run",
+				"continue",
+			),
+			{
+				action: "resume",
+				id: "retained-run",
+				message: "Continue",
+				workflowParentRunId: "workflow-run",
+				workflowKey: "continue",
+				idleTimeoutMs: 86_400_000,
+				toolTimeoutMs: 86_400_000,
+			},
+		);
+	});
+
+	it("rejects retained idle and hard timeout combinations", () => {
+		assert.throws(
+			() => prepareWorkflowLaunchParams(
+				{ idleTimeoutMs: 86_400_000 },
+				{ resume: "retained-run", task: "Continue", timeoutMs: 1_800_000 },
+				"workflow-run",
+				"continue",
+			),
+			/idleTimeoutMs cannot be combined with timeoutMs or maxRuntimeMs/,
+		);
+		assert.throws(
+			() => prepareWorkflowLaunchParams(
+				{},
+				{ resume: "retained-run", task: "Continue", idleTimeoutMs: 86_400_000, maxRuntimeMs: 1_800_000 },
+				"workflow-run",
+				"continue",
+			),
+			/idleTimeoutMs cannot be combined with timeoutMs or maxRuntimeMs/,
+		);
+	});
+
 	it("preserves worktree isolation for retained workflow children", () => {
 		assert.deepEqual(
 			prepareWorkflowLaunchParams(

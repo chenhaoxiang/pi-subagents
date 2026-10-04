@@ -758,6 +758,38 @@ syncBuiltinESMExports();
 		}
 	});
 
+	it("keeps the per-tool hard deadline despite ongoing stream activity", { skip: !isAsyncAvailable() ? "jiti not available" : process.platform === "win32" ? "timeout signal delivery intermittent on Windows CI" : undefined }, async () => {
+		mockPi.onCall({
+			steps: [
+				{ jsonl: [events.toolStart("bash")] },
+				{ delay: 300, jsonl: [{ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "progress-1" } }] },
+				{ delay: 300, jsonl: [{ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "progress-2" } }] },
+				{ delay: 300, jsonl: [{ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "progress-3" } }] },
+				{ delay: 30_000 },
+			],
+		});
+		const id = `async-tool-timeout-streaming-${Date.now().toString(36)}`;
+		process.env.PI_SUBAGENT_TOOL_TIMEOUT_MS = "1000";
+		try {
+			executeAsyncChain(id, {
+				chain: [{ agent: "one", task: "Keep streaming while the tool is open" }],
+				agents: [makeAgent("one")],
+				ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+				artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+				shareEnabled: false,
+				maxSubagentDepth: 2,
+				timeoutMs: 8_000,
+			});
+
+			const payload = await readAsyncPayload(id);
+			assert.equal(payload.state, "failed");
+			assert.equal(payload.results[0]?.timedOut, true);
+			assert.match(payload.results[0]?.error ?? "", /Tool 'bash' exceeded its timeout of 1000ms\./);
+		} finally {
+			delete process.env.PI_SUBAGENT_TOOL_TIMEOUT_MS;
+		}
+	});
+
 	it("background keeps a terminal answer authoritative over an earlier tool timeout", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
 		mockPi.onCall({
 			steps: [

@@ -30,8 +30,14 @@ describe("single-agent launch timeout wiring", () => {
 		assert.deepEqual(resolveSingleAgentLaunchTimeout({ idleTimeoutMs: 1_800_000 }, true), {
 			idleTimeoutMs: 1_800_000,
 		});
-		assert.deepEqual(resolveSingleAgentLaunchTimeout({}, true, undefined, 1_800_000), {
-			idleTimeoutMs: 1_800_000,
+		assert.deepEqual(resolveSingleAgentLaunchTimeout({}, true, undefined, 86_400_000), {
+			idleTimeoutMs: 86_400_000,
+		});
+	});
+
+	it("keeps an explicit legacy hard timeout as a wall-clock deadline", () => {
+		assert.deepEqual(resolveSingleAgentLaunchTimeout({ timeoutMs: 1_800_000 }, true, undefined, 86_400_000), {
+			timeoutMs: 1_800_000,
 		});
 	});
 

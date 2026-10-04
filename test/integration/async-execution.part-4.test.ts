@@ -1774,6 +1774,9 @@ setTimeout(() => process.exit(90), 15000).unref();
 		const payload = await readAsyncPayload(id);
 		assert.equal(payload.success, true, payload.results[0]?.error);
 		assert.equal(payload.results[0]?.output, "second activity");
+		const status = await waitForAsyncState(id, (candidate) => candidate.state !== "running");
+		assert.equal(status.idleTimeoutMs, 60);
+		assert.equal(status.deadlineAt, undefined);
 	});
 
 	it("background idle timeout fails a silent child without a total deadline", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
