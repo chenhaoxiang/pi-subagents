@@ -174,8 +174,15 @@ supervisor/contact requests still stop it. In a long-lived interactive parent
 session, use `bg_wait({ id: "...", nonBlocking: true })` only for a known
 detached or otherwise non-notifying run to resolve the prefix to one exact run,
 persist an armed subscription, return immediately, and wake later on
-completion, failure, attention, reconciliation failure, or timeout. Ordinary
-status lists armed subscriptions separately from active children. This differs
+completion, failure, attention, reconciliation failure, or subscription expiry.
+Do not pass `timeoutMs` with `nonBlocking: true`: the runtime rejects that
+combination before arming anything. `nonBlocking` already returns immediately;
+a short timeout is not needed. Subscription lifetime uses
+`waitTool.defaultTimeoutMs` (or its environment override), then 60 minutes when
+unconfigured. Blocking waits also default to 60 minutes but may override it
+with call-level `timeoutMs`. Subscription expiry does not stop the run or prove
+it failed; inspect status rather than repeatedly arming short subscriptions.
+Ordinary status lists armed subscriptions separately from active children. This differs
 from disabling `waitTool`, which returns immediately without arming a future
 wake. If a foreground child detaches for supervisor coordination, reply first,
 then wait on its id; do not resume or launch a replacement while it remains

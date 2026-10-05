@@ -380,7 +380,7 @@ export interface CompletionBatchConfig {
 
 export interface WaitToolConfigObject {
 	enabled?: boolean;
-	/** Default blocking window for bg_wait calls that omit timeoutMs. */
+	/** Default blocking window and non-blocking subscription lifetime for bg_wait; unconfigured fallback is 60 minutes. */
 	defaultTimeoutMs?: number;
 }
 
