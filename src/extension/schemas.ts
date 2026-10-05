@@ -317,14 +317,14 @@ const SubagentWaitParamsSchema = Type.Object({
 		description: "Async run or remembered detached foreground run id/prefix to wait for one specific run. Ordinary async subagent runs already notify this session natively; use bg_wait for provider, detached, or other background work without native notification, or when same-turn blocking results are truly needed. Omit to wait across every active async run started in this session only when a same-turn wait is truly needed.",
 	})),
 	nonBlocking: Type.Optional(Type.Boolean({
-		description: "When true, resolve id to one exact run, persist a wake subscription, and return immediately. Use this only for provider, detached, or other background work without a native completion notification; ordinary async subagent runs already notify this session natively and do not need a subscription. The originating session is woken on completion, failure, attention, reconciliation failure, or timeout. Requires id and cannot be combined with all.",
+		description: "Bind id to one exact run, arm a subscription, and return immediately. Only for provider, detached, or other background work without a native completion notification; ordinary async runs do not need a subscription. Requires id; cannot be combined with all or timeoutMs. Lifetime: waitTool.defaultTimeoutMs, else 60 minutes. Wakes on completion, failure, attention, reconciliation failure, or expiry.",
 	})),
 	all: Type.Optional(Type.Boolean({
 		description: "Wait for ALL active runs to finish. Ordinary async subagent runs already notify this session natively; use all only when a same-turn result from tracked background work is truly needed. Default false: return when the first tracked run or provider item finishes or needs attention. Ignored when id targets a single run.",
 	})),
 	timeoutMs: Type.Optional(Type.Integer({
 		minimum: 1,
-		description: "Give up waiting after this many milliseconds (the runs keep going regardless). Ordinary async subagent runs already notify this session natively; use a wait timeout only when same-turn results are truly needed for provider, detached, or other background work without native notification. Defaults to config waitTool.defaultTimeoutMs, then 1800000 (30 minutes). Window expiry is a non-error active-work result.",
+		description: "For blocking waits only; cannot combine with nonBlocking: true. Cap the wait in milliseconds, not the run. Defaults to waitTool.defaultTimeoutMs, then 3600000 (60 minutes). Window expiry is a non-error active-work result; work keeps running.",
 	})),
 	stopOnAttention: Type.Optional(Type.Boolean({
 		description: "For a blocking wait that is truly needed, stop when a run needs attention by default. Set false to keep waiting through idle or long-thinking attention; supervisor/contact requests still stop the wait.",

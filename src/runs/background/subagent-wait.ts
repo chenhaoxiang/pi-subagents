@@ -73,14 +73,14 @@ export { WAIT_TOOL_DEFAULT_TIMEOUT_MS_ENV, WAIT_TOOL_ENABLED_ENV, resolveWaitToo
 /** States that mean a run is still in flight (not yet resolved). */
 const ACTIVE_STATES: ReadonlyArray<AsyncRunSummary["state"]> = ["queued", "running"];
 
-const DEFAULT_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
+const DEFAULT_TIMEOUT_MS = 60 * 60 * 1000; // 60 minutes
 const MIN_POLL_INTERVAL_MS = 250;
 const DEFAULT_POLL_INTERVAL_MS = 1000;
 
 export interface SubagentWaitParams {
 	/** Optional run id/prefix to wait for. When omitted, waits across every active run in this session. */
 	id?: string;
-	/** Arm a durable exact-run wake subscription and return immediately. Requires id. */
+	/** Arm a durable exact-run wake subscription and return immediately. Requires id; cannot be combined with timeoutMs. */
 	nonBlocking?: boolean;
 	/**
 	 * When true, block until EVERY active run in this session (or matching `id`)
@@ -88,7 +88,7 @@ export interface SubagentWaitParams {
 	 * item finishes or needs attention. Ignored when `id` targets a single run.
 	 */
 	all?: boolean;
-	/** Give up after this many milliseconds. Defaults to waitTool.defaultTimeoutMs, then 30 minutes. */
+	/** Blocking waits only. Defaults to waitTool.defaultTimeoutMs, then 60 minutes; subscriptions use that configured/default window directly. */
 	timeoutMs?: number;
 	/** False keeps a blocking wait open through idle attention; supervisor/contact requests still stop the wait. */
 	stopOnAttention?: boolean;
@@ -112,7 +112,7 @@ export interface SubagentWaitDeps {
 	pollIntervalMs?: number;
 	/** False makes the tool return immediately without blocking active async runs. */
 	enabled?: boolean;
-	/** Configured blocking window used when the call omits timeoutMs. */
+	/** Configured blocking window and non-blocking subscription lifetime. */
 	defaultTimeoutMs?: number;
 	/** Injectable sleep for tests. */
 	sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
@@ -662,6 +662,9 @@ export async function waitForSubagents(
 	if (params.nonBlocking && params.all) {
 		return result("nonBlocking cannot be combined with all; subscribe to one exact run id.", true);
 	}
+	if (params.nonBlocking && params.timeoutMs !== undefined) {
+		return result("timeoutMs is only supported for blocking waits; nonBlocking already returns immediately. Omit timeoutMs: the subscription uses waitTool.defaultTimeoutMs, or 60 minutes when unconfigured. No subscription was armed.", true);
+	}
 
 	let active: AsyncRunSummary[];
 	let foreground: ForegroundResumeRun[];
@@ -707,7 +710,7 @@ export async function waitForSubagents(
 			}
 			try {
 				const registration = deps.subscribe({ targetKind: selected.kind, runId: selected.id, requestedId: params.id, timeoutMs });
-				return result(`Armed wait subscription ${registration.token} for exact ${selected.kind} run ${selected.id}. Returning immediately; this session will be woken on completion, failure, attention, reconciliation failure, or timeout. Inspect armed subscriptions with subagent({ action: "status" }).`);
+				return result(`Armed wait subscription ${registration.token} for exact ${selected.kind} run ${selected.id}. Subscription window: ${formatDuration(timeoutMs)}. Returning immediately; this session will be woken on completion, failure, attention, reconciliation failure, or subscription expiry. Expiry does not stop the targeted run. Inspect armed subscriptions with subagent({ action: "status" }).`);
 			} catch (error) {
 				return result(error instanceof Error ? error.message : String(error), true);
 			}

@@ -7,6 +7,7 @@ This file intentionally does not duplicate user-global or tool-level instruction
 ## Documentation map
 
 - [Standalone background execution](docs/standalone-background.md) documents npm runner peer aliasing, host resolution, and startup compatibility across package updates.
+- [Background wait timeout contract](docs/configuration.md#waittool) documents the 60-minute unconfigured window, blocking-only call-level `timeoutMs`, and rejection of short non-blocking subscription/polling misuse. Regression coverage is in `test/unit/bg-wait-timeout-contract.test.ts`.
 
 ## Fork synchronization
 

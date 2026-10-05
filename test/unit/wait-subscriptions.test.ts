@@ -87,8 +87,9 @@ describe("non-blocking wait subscriptions", () => {
 			const asyncRoot = path.join(root, "runs");
 			writeStatus(asyncRoot, "run-alpha", "running", { sessionId: "session-a", pid: 999_999 });
 			let armed: { targetKind: "async" | "foreground"; runId: string; requestedId: string; timeoutMs: number } | undefined;
-			const result = await waitForSubagents({ id: "run-alph", nonBlocking: true, timeoutMs: 5_000 }, undefined, {
+			const result = await waitForSubagents({ id: "run-alph", nonBlocking: true }, undefined, {
 				state: makeState(),
+				defaultTimeoutMs: 5_000,
 				asyncDirRoot: asyncRoot,
 				resultsDir: path.join(root, "results"),
 				kill: () => true,
