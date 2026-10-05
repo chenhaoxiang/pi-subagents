@@ -225,6 +225,41 @@ describe("async runner execution", () => {
 		assert.deepEqual(parallel.parallel.map((step) => step.timeoutMs), [DEFAULT_ASYNC_TIMEOUT_MS, 7_000]);
 	});
 
+	it("uses the global idle default for composite children without overriding agent hard deadlines", () => {
+		const idleTimeoutMs = 86_400_000;
+		const result = buildAsyncRunnerSteps("idle-default-run", {
+			chain: [
+				{ agent: "default-worker", task: "default idle" },
+				{
+					parallel: [
+						{ agent: "default-worker", task: "parallel idle" },
+						{ agent: "hard-worker", task: "hard deadline" },
+						{ agent: "idle-worker", task: "agent idle" },
+					],
+				},
+			],
+			agents: [
+				agent("default-worker"),
+				{ ...agent("hard-worker"), defaultTimeoutMs: 7_000 },
+				{ ...agent("idle-worker"), defaultIdleTimeoutMs: 9_000 },
+			],
+			ctx,
+			asyncDir: path.join(process.cwd(), ".tmp-async-idle-default-test"),
+			maxSubagentDepth: 2,
+			defaultIdleTimeoutMs: idleTimeoutMs,
+		});
+
+		assert.ok("steps" in result, "expected successful step build");
+		assert.equal(result.steps[0]?.idleTimeoutMs, idleTimeoutMs);
+		const parallel = result.steps[1];
+		assert.ok(parallel && "parallel" in parallel && Array.isArray(parallel.parallel));
+		assert.deepEqual(parallel.parallel.map((step) => ({ timeoutMs: step.timeoutMs, idleTimeoutMs: step.idleTimeoutMs })), [
+			{ timeoutMs: undefined, idleTimeoutMs },
+			{ timeoutMs: 7_000, idleTimeoutMs: undefined },
+			{ timeoutMs: undefined, idleTimeoutMs: 9_000 },
+		]);
+	});
+
 	it("uses agent tool budget before config default when no run override exists", () => {
 		const result = buildAsyncRunnerSteps("run-2", {
 			chain: [{ agent: "worker", task: "agent beats config" }],

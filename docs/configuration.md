@@ -346,6 +346,8 @@ This deadline bounds the whole run. The wait for a single model response is boun
 
 Use it when foreground orchestration or plain async single-agent runs need a longer default than 30 minutes. It does not set async composite top-level deadlines, and it does not replace async fan-out child deadlines.
 
+A normal retained `action: "resume"` starts a new child attempt and does not inherit the source run's expired absolute wall-clock deadline; the retained idle window remains part of the persisted child contract. Steering recovery is different: its recovery budget intentionally carries the remaining absolute deadline so a paused child cannot reset a hard budget by being revived.
+
 Composite async runs (async chains, parallel tasks, and scripted workflows) stay unbounded at the top level by design. Their runner children are bounded individually by their own agent or runner defaults, so this value does not cap them. Must be a positive integer no greater than `2147483647` (the largest delay a Node.js timer can honor, roughly 24.8 days); invalid or out-of-range values are ignored and the built-in defaults apply.
 
 ## `idleTimeoutMs`
@@ -355,6 +357,8 @@ Composite async runs (async chains, parallel tasks, and scripted workflows) stay
 ```
 
 Global default inactivity window in milliseconds. Child stream events (`message_update`, completed messages, tool lifecycle events) and external stdout/stderr activity reset the window. When the window expires, the child is terminated with `timedOut: true`; there is no wall-clock maximum. A per-call `idleTimeoutMs` or agent frontmatter `idleTimeoutMs` overrides the global default. It cannot be combined with `timeoutMs`/`maxRuntimeMs`; `timeoutMs` remains the separate hard wall-clock deadline.
+
+For legacy async chain/tasks child steps, this global idle default is propagated to each child that has no agent-level timeout. An agent-level hard `timeoutMs` or `idleTimeoutMs` still wins. The composite parent remains unbounded when no explicit parent deadline is supplied; for workflow `runs.run` children, set `idleTimeoutMs` on each child rather than on the top-level workflow request.
 
 The bundled `reviewer` agent defaults to a 30-minute inactivity window so long model thinking is not cut off by a short caller deadline. Prefer `idleTimeoutMs: 1800000` for long reviews and omit `timeoutMs`/`maxRuntimeMs`.
 
@@ -368,7 +372,7 @@ Optional hard per-tool-call deadline in milliseconds. When configured, a child t
 
 Without a configured value, Pi still applies a five-minute hard timeout to known-fast built-in tools: `read`, `grep`, `find`, `ls`, `edit`, `write`, and `structured_output`. Long-running tools such as `bash`, custom tools, and MCP tools do not get a hard default. They get the normal open-tool attention notice after `activeNoticeAfterMs` and remain bounded by the run-level deadline.
 
-The tool timer tracks each active `toolCallId` separately and never extends the run-level deadline: when the remaining run budget is shorter, the ordinary run-level timeout wins. `contact_supervisor`, `intercom`, and `bg_wait` are exempt because their legitimate purpose can be to wait for a human, supervisor, or background run. Use hard tool timeouts only for wedge protection; an elapsed timeout is not a mutation-safe boundary. Configured values must be positive integers no greater than `2147483647`; invalid or out-of-range values are rejected with a visible error rather than silently ignored.
+The tool timer tracks each active `toolCallId` separately and never extends the run-level deadline: when the remaining run budget is shorter, the ordinary run-level timeout wins. Stream/tool progress resets the run's idle window but does not reset this per-tool hard deadline; a tool that remains open past the configured cap is still terminated. `contact_supervisor`, `intercom`, and `bg_wait` are exempt because their legitimate purpose can be to wait for a human, supervisor, or background run. Use hard tool timeouts only for wedge protection; an elapsed timeout is not a mutation-safe boundary. Configured values must be positive integers no greater than `2147483647`; invalid or out-of-range values are rejected with a visible error rather than silently ignored.
 
 ## `checkpointBeforeDeadlineMs`
 

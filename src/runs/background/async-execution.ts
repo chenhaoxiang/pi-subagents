@@ -221,6 +221,8 @@ interface AsyncChainParams {
 	progressDir?: string;
 	dynamicFanoutMaxItems?: number;
 	maxSubagentDepth: number;
+	/** Global inactivity default for composite child steps; explicit agent hard/idle defaults win. */
+	defaultIdleTimeoutMs?: number;
 	waitToolEnabled?: boolean;
 	waitToolDefaultTimeoutMs?: number;
 	worktreeSetupHook?: string;
@@ -372,6 +374,8 @@ export interface AsyncRunnerStepBuildParams {
 	agentContract?: AgentContract;
 	dynamicFanoutMaxItems?: number;
 	maxSubagentDepth: number;
+	/** Global inactivity default for composite child steps; explicit agent hard/idle defaults win. */
+	defaultIdleTimeoutMs?: number;
 	waitToolEnabled?: boolean;
 	waitToolDefaultTimeoutMs?: number;
 	worktreeBaseDir?: string;
@@ -1249,7 +1253,11 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 			maxSubagentDepth: resolveChildMaxSubagentDepth(maxSubagentDepth, a.maxSubagentDepth),
 			...(a.defaultIdleTimeoutMs !== undefined
 				? { idleTimeoutMs: a.defaultIdleTimeoutMs }
-				: { timeoutMs: a.defaultTimeoutMs ?? DEFAULT_ASYNC_TIMEOUT_MS }),
+				: a.defaultTimeoutMs !== undefined
+					? { timeoutMs: a.defaultTimeoutMs }
+				: params.defaultIdleTimeoutMs !== undefined
+					? { idleTimeoutMs: params.defaultIdleTimeoutMs }
+					: { timeoutMs: DEFAULT_ASYNC_TIMEOUT_MS }),
 			toolTimeoutMs: resolvedToolTimeout.toolTimeoutMs,
 			waitToolEnabled: params.waitToolEnabled,
 			waitToolDefaultTimeoutMs: params.waitToolDefaultTimeoutMs,
@@ -1487,6 +1495,7 @@ export function executeAsyncChain(
 		outputBaseDir: artifactsDir ? path.join(artifactsDir, "outputs", id) : undefined,
 		dynamicFanoutMaxItems: params.dynamicFanoutMaxItems,
 		maxSubagentDepth,
+		defaultIdleTimeoutMs: params.defaultIdleTimeoutMs,
 		waitToolEnabled: params.waitToolEnabled,
 		waitToolDefaultTimeoutMs: params.waitToolDefaultTimeoutMs,
 		worktreeBaseDir,

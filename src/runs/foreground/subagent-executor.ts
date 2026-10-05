@@ -1414,6 +1414,7 @@ function appendStepToAsyncChain(input: {
 		chainSkills,
 		dynamicFanoutMaxItems: input.deps.config.chain?.dynamicFanout?.maxItems,
 		maxSubagentDepth: resolveCurrentMaxSubagentDepth(input.deps.config.maxSubagentDepth, input.deps.childRuntime),
+		defaultIdleTimeoutMs: resolveConfigDefaultTimeoutMs(input.deps.config.idleTimeoutMs),
 		waitToolEnabled: input.deps.waitToolEnabled,
 		waitToolDefaultTimeoutMs: input.deps.waitToolDefaultTimeoutMs,
 		contextForAgent: contextPolicy.contextForAgent,
@@ -2118,6 +2119,7 @@ async function resumeAsyncRun(input: {
 			fast: input.params.fast,
 			dynamicFanoutMaxItems: input.deps.config.chain?.dynamicFanout?.maxItems,
 			maxSubagentDepth: resolveCurrentMaxSubagentDepth(input.deps.config.maxSubagentDepth, input.deps.childRuntime),
+			defaultIdleTimeoutMs: resolveConfigDefaultTimeoutMs(input.deps.config.idleTimeoutMs),
 			waitToolEnabled: input.deps.waitToolEnabled,
 			waitToolDefaultTimeoutMs: input.deps.waitToolDefaultTimeoutMs,
 			worktreeSetupHook: input.deps.config.worktreeSetupHook,
@@ -2288,6 +2290,7 @@ async function resumeAsyncRun(input: {
 		...(input.params.timeoutMs !== undefined ? { timeoutMs: input.params.timeoutMs } : {}),
 		...(recoveryDescriptor?.idleTimeoutMs !== undefined ? { idleTimeoutMs: recoveryDescriptor.idleTimeoutMs } : input.params.idleTimeoutMs !== undefined ? { idleTimeoutMs: input.params.idleTimeoutMs } : {}),
 		...(input.absoluteDeadlineAt !== undefined ? { absoluteDeadlineAt: input.absoluteDeadlineAt } : {}),
+		...(input.params.toolTimeoutMs !== undefined ? { toolTimeoutMs: input.params.toolTimeoutMs } : {}),
 		...(input.params.toolBudget !== undefined ? { toolBudget: input.params.toolBudget } : {}),
 		// Recovery descriptors, remembered foreground runs, and current workflow roots
 		// preserve parent authority before the selected agent's descendant ceiling.
@@ -5034,6 +5037,14 @@ export function prepareWorkflowLaunchParams(
 			throw new Error("gate is not supported with retained resume; resume uses the retained child contract.");
 		}
 		const timeoutMs = childParams.timeoutMs ?? childParams.maxRuntimeMs ?? workflowDefaults.timeoutMs ?? workflowDefaults.maxRuntimeMs;
+		const idleTimeoutMs = childParams.idleTimeoutMs ?? workflowDefaults.idleTimeoutMs;
+		if (idleTimeoutMs !== undefined && timeoutMs !== undefined) {
+			throw new Error("idleTimeoutMs cannot be combined with timeoutMs or maxRuntimeMs.");
+		}
+		if (childParams.timeoutMs !== undefined && childParams.maxRuntimeMs !== undefined && childParams.timeoutMs !== childParams.maxRuntimeMs) {
+			throw new Error("timeoutMs and maxRuntimeMs are aliases; provide only one value or use the same value for both.");
+		}
+		const toolTimeoutMs = childParams.toolTimeoutMs ?? workflowDefaults.toolTimeoutMs;
 		const toolBudget = childParams.toolBudget ?? workflowDefaults.toolBudget;
 		const intercomBridge = childParams.intercomBridge ?? workflowDefaults.intercomBridge;
 		const worktree = childParams.worktree ?? workflowDefaults.worktree;
@@ -5067,6 +5078,8 @@ export function prepareWorkflowLaunchParams(
 			...(options.runFanoutBudget ? { runFanoutBudget: { ...options.runFanoutBudget, parentPath: `${options.runFanoutBudget.parentPath ? `${options.runFanoutBudget.parentPath}/` : ""}workflow[${workflowKey}]` } } : {}),
 			...(options.missionDetached ? { mission: false } : {}),
 			...(timeoutMs !== undefined ? { timeoutMs: timeoutMs as number } : {}),
+			...(idleTimeoutMs !== undefined ? { idleTimeoutMs: idleTimeoutMs as number } : {}),
+			...(toolTimeoutMs !== undefined ? { toolTimeoutMs: toolTimeoutMs as number } : {}),
 			...(toolBudget !== undefined ? { toolBudget: toolBudget as ToolBudgetConfig } : {}),
 			...(control !== undefined ? { control } : {}),
 			...(intercomBridge !== undefined ? { intercomBridge: intercomBridge as IntercomBridgeConfig } : {}),
