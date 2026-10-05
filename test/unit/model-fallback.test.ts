@@ -10,7 +10,9 @@ import {
 const poolModels = [
 	{ provider: "codex-local", id: "kimi-k3", fullId: "codex-local/kimi-k3" },
 	{ provider: "codex-local", id: "gpt-6.1-sol", fullId: "codex-local/gpt-6.1-sol" },
+	{ provider: "codex-local", id: "gpt-6-astra", fullId: "codex-local/gpt-6-astra" },
 	{ provider: "zai-coding-cn", id: "glm-5.3", fullId: "zai-coding-cn/glm-5.3" },
+	{ provider: "codex-local-8410", id: "claude-opus-5-5", fullId: "codex-local-8410/claude-opus-5-5" },
 	{ provider: "codex-local", id: "deepseek-flash", fullId: "codex-local/deepseek-flash" },
 ];
 
@@ -35,8 +37,9 @@ describe("model fallback", () => {
 		assert.equal(evidence.candidates[0], "codex-local/gpt-6-sol");
 		assert.deepEqual(evidence.candidates.slice(1), [
 			"codex-local/kimi-k3:high",
-			"codex-local/gpt-6.1-sol:max",
-			"zai-coding-cn/glm-5.3:max",
+			"codex-local/gpt-6.1-sol:xhigh",
+			"codex-local/gpt-6-astra:high",
+			"zai-coding-cn/glm-5.3:high",
 			"codex-local/deepseek-flash:high",
 		]);
 	});
@@ -47,9 +50,10 @@ describe("model fallback", () => {
 		assert.deepEqual(evidence.candidates, [
 			"codex-local/gpt-6.1-sol",
 			"codex-local/kimi-k3:high",
-			"zai-coding-cn/glm-5.3:max",
+			"codex-local/gpt-6-astra:high",
+			"zai-coding-cn/glm-5.3:high",
 			"codex-local/deepseek-flash:high",
-			"codex-local/gpt-6.1-sol:max",
+			"codex-local/gpt-6.1-sol:xhigh",
 		]);
 	});
 
@@ -58,8 +62,9 @@ describe("model fallback", () => {
 
 		assert.deepEqual(evidence.candidates, [
 			"codex-local/kimi-k3",
-			"codex-local/gpt-6.1-sol:max",
-			"zai-coding-cn/glm-5.3:max",
+			"codex-local/gpt-6.1-sol:xhigh",
+			"codex-local/gpt-6-astra:high",
+			"zai-coding-cn/glm-5.3:high",
 			"codex-local/deepseek-flash:high",
 			"codex-local/kimi-k3:high",
 		]);
@@ -79,8 +84,9 @@ describe("model fallback", () => {
 
 		assert.deepEqual(evidence.candidates, [
 			"codex-local/kimi-k3:high",
-			"codex-local/gpt-6.1-sol:max",
-			"zai-coding-cn/glm-5.3:max",
+			"codex-local/gpt-6.1-sol:xhigh",
+			"codex-local/gpt-6-astra:high",
+			"zai-coding-cn/glm-5.3:high",
 			"codex-local/deepseek-flash:high",
 		]);
 	});
