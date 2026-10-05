@@ -10,7 +10,7 @@ This repository is the maintained fork at:
 
 <https://github.com/chenhaoxiang/pi-subagents>
 
-It tracks the community project selectively and keeps fork-specific behavior on the fork's `main` line. The current fork release is `0.76.0-fork.1`, based on community Pi Subagents `v0.76.0` plus the upstream `main` fixes through the synchronized commit.
+It tracks the community project selectively and keeps fork-specific behavior on the fork's `main` line. The current fork release is `0.76.0-fork.1`, based on community Pi Subagents `v0.76.0` plus upstream `main` through `700c91bc`.
 
 ## Install this fork
 
@@ -23,7 +23,7 @@ pi install git:github.com/chenhaoxiang/pi-subagents@main
 For reproducible environments, pin the reviewed merge commit:
 
 ```bash
-pi install git:github.com/chenhaoxiang/pi-subagents@9b91050b1ba09d0993a20cb364f33735fd124767
+pi install git:github.com/chenhaoxiang/pi-subagents@b17db64159d329d06273bb63634b58a96b932538
 ```
 
 After installation, restart Pi or run `/reload`. Existing sessions do not hot-load the new extension code.
