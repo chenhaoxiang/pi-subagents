@@ -4,6 +4,8 @@
 
 # pi-subagents — maintained fork
 
+English | [中文](README.zh-CN.md)
+
 `pi-subagents` lets one Pi session delegate focused work to child agents with bounded authority, visible progress, supervision, and durable evidence.
 
 This repository is the maintained fork at:
