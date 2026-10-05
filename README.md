@@ -10,7 +10,7 @@ This repository is the maintained fork at:
 
 <https://github.com/chenhaoxiang/pi-subagents>
 
-It tracks the community project selectively and keeps fork-specific behavior on the fork's `main` line. The current fork release is `0.75.0-fork.1`, based on community Pi Subagents `v0.75.0`.
+It tracks the community project selectively and keeps fork-specific behavior on the fork's `main` line. The current fork release is `0.76.0-fork.1`, based on community Pi Subagents `v0.76.0` plus the upstream `main` fixes through the synchronized commit.
 
 ## Install this fork
 
@@ -30,7 +30,7 @@ After installation, restart Pi or run `/reload`. Existing sessions do not hot-lo
 
 ## Fork-specific behavior
 
-The fork retains the community `0.75.0` functionality and adds or maintains:
+The fork retains the community `0.76.0` functionality and adds or maintains:
 
 - **Guarded heterogeneous model fallback** for native Pi children. Explicit fallback chains and the built-in pool advance only for provider/model failures that occur before child tool activity; each attempt remains visible as evidence.
 - **Activity-based `idleTimeoutMs`** for foreground and background children. Stream and tool lifecycle activity resets the inactivity window; this is not a wall-clock runtime cap.
