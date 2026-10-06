@@ -1,3 +1,13 @@
+---
+doc_type: reference
+project: workspace
+status: active
+truth_mode: maintained
+created: 2026-10-06
+verified: 2026-10-06
+verified_by: manual
+---
+
 # Models
 
 How subagents pick models, and how to change that.
@@ -109,7 +119,7 @@ The routing rule: use the capability tiers (1–3) when the task is well-scoped,
 Fallback behavior is ordered and observable:
 
 - A custom agent's `fallbackModels` list is used exactly in the declared order.
-- If the list is omitted, the runtime uses the heterogeneous priority pool aligned with the local probe ladder: `codex-local/kimi-k3:high`, `codex-local/gpt-6.1-sol:max`, `zai-coding-cn/glm-5.3:max`, then `codex-local/deepseek-flash:high`. The `qoder-cli` channel is not part of the default heterogeneous pool.
+- If the list is omitted, the runtime uses the heterogeneous priority pool aligned with the local probe ladder: `codex-local/kimi-k3:high`, `codex-local/gpt-6.1-sol:xhigh`, `codex-local/gpt-6-astra:high`, `zai-coding-cn/glm-5.3:high`, then `codex-local/deepseek-flash:high`. `codex-local-8410/claude-opus-5-5` is intentionally excluded from automatic fallback and is used only when the operator explicitly requests Claude Opus 5.5 for pairing or review. The `qoder-cli` channel is not part of the default heterogeneous pool.
 - A candidate with the same model identity as the parent is deferred until every heterogeneous candidate has failed; it is a same-model fallback, not heterogeneous evidence.
 - Candidates unavailable in the active registry are skipped before launch and recorded as `skippedModels`.
 - A provider/model failure before tool activity advances to the next candidate. The result records `attemptedModels`, `modelAttempts`, and the final model.

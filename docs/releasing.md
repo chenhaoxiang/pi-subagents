@@ -22,7 +22,7 @@ Applies only to chenhaoxiang/pi-subagents. The community project remains [nicoba
 
 ## Baseline for this release
 
-Version **0.76.0-fork.2** packages the existing reviewed main: community 0.76.0 through `700c91bc`, guarded fallback, activity-based idle timeout, runner/Pi compatibility and the already-merged background-wait timeout fixes. The mirror records newer community main independently; those later commits and custom unmerged/local worktree packages are not silently included. The current local experimental installation is not automatically replaced by this release.
+Version **0.76.1-fork.1** integrates community main through `7d072b91dca7e1aa915282f0159cec0175d65efa` and the previously installed model-pool repair `5a69711e` (replayed with provenance). Guarded fallback, activity-based idle timeout, runner/Pi compatibility and the fork background-wait timeout contract are retained. The old experimental source is preserved before installation; it is not silently discarded. See [upgrade evidence and installation boundaries](maintenance/2026-10-06-community-0.76.1.md).
 
 ## Publish every version
 
@@ -37,7 +37,7 @@ Version **0.76.0-fork.2** packages the existing reviewed main: community 0.76.0 
 
 ## Installation
 
-Prefer the pinned git command in README. For offline/artifact installs, download the three release assets into a temporary directory, verify the checksums, then extract the package into a permanent user-owned package directory and run `pi install /absolute/path/to/package`. Do not leave an active install under a temporary release directory. Restart Pi or use `/reload` after installation; disk changes do not hot-reload existing sessions.
+Prefer the pinned git command in README. For offline/artifact installs, download the three release assets into a temporary directory, verify the checksums, then extract the package into a permanent user-owned package directory and run `pi install /absolute/path/to/package`. Do not leave an active install under a temporary release directory. Restart Pi after this upgrade. The 0.76.1 update detector rejects reload when imported modules belong to an old in-place version; disk updates do not replace loaded code. Let active work finish before restarting.
 
 Keep the previous release/source available for rollback. Never force-stop unrelated active children or silently replace a custom experimental installed package.
 

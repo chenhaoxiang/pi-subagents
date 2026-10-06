@@ -6,6 +6,8 @@ This file intentionally does not duplicate user-global or tool-level instruction
 
 ## Documentation map
 
+- [0.76.1 maintained upgrade](docs/maintenance/2026-10-06-community-0.76.1.md): community merge, retained installed model-pool repair, validation and installation/restart boundaries.
+
 - [Standalone background execution](docs/standalone-background.md) documents npm runner peer aliasing, host resolution, and startup compatibility across package updates.
 - [Background wait timeout contract](docs/configuration.md#waittool) documents the 60-minute unconfigured window, blocking-only call-level `timeoutMs`, and rejection of short non-blocking subscription/polling misuse. Regression coverage is in `test/unit/bg-wait-timeout-contract.test.ts`.
 

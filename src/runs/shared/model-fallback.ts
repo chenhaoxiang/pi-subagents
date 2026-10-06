@@ -12,8 +12,9 @@ import type { Usage } from "../../shared/types.ts";
  */
 export const DEFAULT_HETERO_MODEL_POOL = [
 	"codex-local/kimi-k3:high",
-	"codex-local/gpt-6.1-sol:max",
-	"zai-coding-cn/glm-5.3:max",
+	"codex-local/gpt-6.1-sol:xhigh",
+	"codex-local/gpt-6-astra:high",
+	"zai-coding-cn/glm-5.3:high",
 	"codex-local/deepseek-flash:high",
 ] as const;
 

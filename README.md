@@ -12,11 +12,11 @@ This repository is the maintained fork at:
 
 <https://github.com/chenhaoxiang/pi-subagents>
 
-It tracks the community project selectively and keeps fork-specific behavior on the fork's `main` line. The current fork release is `0.76.0-fork.2`, based on community Pi Subagents `v0.76.0` plus upstream `main` through `700c91bc`.
+It tracks the community project selectively and keeps fork-specific behavior on the fork's `main` line. The current fork release is `0.76.1-fork.1`, based on community Pi Subagents `v0.76.1` plus upstream `main` through `7d072b91`.
 
 ## Releases and branch policy
 
-The maintained release is **0.76.0-fork.2**, based on community **0.76.0**. Fork releases use `<community-version>-fork.<revision>`; the fork revision increases without pretending to be a new upstream release.
+The maintained release is **0.76.1-fork.1**, based on community **0.76.1**. Fork releases use `<community-version>-fork.<revision>`; the fork revision increases without pretending to be a new upstream release.
 
 - `main`: our maintained integration and release branch, including fork fixes.
 - `upstream-main`: an exact mirror of the community's `main`, with no fork commits. Never install from this branch.
@@ -25,7 +25,7 @@ The maintained release is **0.76.0-fork.2**, based on community **0.76.0**. Fork
 Install a reproducible release:
 
 ```bash
-pi install git:github.com/chenhaoxiang/pi-subagents@v0.76.0-fork.2
+pi install git:github.com/chenhaoxiang/pi-subagents@v0.76.1-fork.1
 ```
 
 [GitHub Releases](https://github.com/chenhaoxiang/pi-subagents/releases) include the installable package tarball, a provenance manifest, and `SHA256SUMS`. These GitHub releases are not npm publications under the upstream author's namespace. See [release maintenance](docs/releasing.md) for asset installation and future releases.
@@ -40,11 +40,11 @@ pi install git:github.com/chenhaoxiang/pi-subagents@main
 
 For reproducible environments, pin the released tag shown above. Releases also provide a **compiled** package (`index.js`, API exports and runner files), not only a source-code archive. Download the tarball, manifest and checksums, verify them, extract into a permanent directory and `pi install /absolute/path/to/package`; see [release maintenance](docs/releasing.md).
 
-After installation, restart Pi or run `/reload`. Existing sessions do not hot-load the new extension code.
+After installation, **restart Pi** to load the new runtime. Version 0.76.1 detects in-place updates and may reject `/reload` when old modules are still loaded; restarting avoids a mixed old/new runtime. Active sessions and children are never force-stopped by the installer.
 
 ## Fork-specific behavior
 
-The fork retains the community `0.76.0` functionality and adds or maintains:
+The fork retains the community `0.76.1` functionality and adds or maintains:
 
 - **Guarded heterogeneous model fallback** for native Pi children. Explicit fallback chains and the built-in pool advance only for provider/model failures that occur before child tool activity; each attempt remains visible as evidence.
 - **Activity-based `idleTimeoutMs`** for foreground and background children. Stream and tool lifecycle activity resets the inactivity window; this is not a wall-clock runtime cap.
