@@ -12,11 +12,11 @@
 
 <https://github.com/chenhaoxiang/pi-subagents>
 
-当前 fork 版本为 `0.76.0-fork.2`，基于社区 Pi Subagents `v0.76.0`，并包含截至 `700c91bc` 的上游 `main` 修复。fork 专属行为继续保留在 fork 的 `main` 上。
+当前 fork 版本为 `0.76.1-fork.1`，基于社区 Pi Subagents `v0.76.1`，并包含截至 `7d072b91` 的上游 `main` 修复。fork 专属行为继续保留在 fork 的 `main` 上。
 
 ## 发布版本与分支约定
 
-当前维护版本为 **0.76.0-fork.2**，基于社区 **0.76.0**。fork 版本统一使用 `<社区版本>-fork.<修订号>`，本地修订不冒充社区新版本。
+当前维护版本为 **0.76.1-fork.1**，基于社区 **0.76.1**。fork 版本统一使用 `<社区版本>-fork.<修订号>`，本地修订不冒充社区新版本。
 
 - `main`：我们的维护、整合与发布主线，保留 fork 修复。
 - `upstream-main`：仅镜像社区 `main`，不加入 fork 提交，也不作为安装来源。
@@ -25,7 +25,7 @@
 固定版本安装：
 
 ```bash
-pi install git:github.com/chenhaoxiang/pi-subagents@v0.76.0-fork.2
+pi install git:github.com/chenhaoxiang/pi-subagents@v0.76.1-fork.1
 ```
 
 [GitHub Releases](https://github.com/chenhaoxiang/pi-subagents/releases) 提供可安装的包、来源清单和 `SHA256SUMS` 校验文件；这不是向上游作者的 npm 命名空间发布。发布及制品安装流程见[维护说明](docs/releasing.md)。
@@ -40,11 +40,11 @@ pi install git:github.com/chenhaoxiang/pi-subagents@main
 
 可复现环境使用上面的固定发布 tag。Release 额外提供**编译后的安装包**，包含 `index.js`、API 导出和 runner 文件，不仅是源码归档。下载包、来源清单及校验文件，校验后解压到永久目录，再 `pi install /absolute/path/to/package`；详见[维护说明](docs/releasing.md)。
 
-安装后重启 Pi 或执行 `/reload`。已经运行的会话不会热加载新的扩展代码。
+安装后请**重启 Pi**加载新运行时。0.76.1 会检测原地更新；旧模块尚在内存时可能拒绝 `/reload`，必须重启以免混用新旧代码。安装过程不会强制停止活跃会话或子任务。
 
 ## Fork 专属能力
 
-fork 保留社区 `0.76.0` 能力，并额外维护：
+fork 保留社区 `0.76.1` 能力，并额外维护：
 
 - **受保护的异构模型 fallback**：只有在子 Agent 尚未产生工具副作用前发生 provider/model 失败时，才推进显式 fallback 链或内置模型池；每次尝试都会保留为证据；
 - **基于活动的 `idleTimeoutMs`**：前台和后台子 Agent 的流式输出及工具生命周期活动会续期；它不是墙钟总时长上限；

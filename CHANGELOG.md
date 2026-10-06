@@ -2,16 +2,37 @@
 
 ## [Unreleased]
 
+## [0.76.1-fork.1] - 2026-10-06
+
+- Integrate community 0.76.1 and its seven commits without replacing the maintained fork tree.
+- Preserve the installed five-model heterogeneous pool repair (Kimi high, GPT-6.1-sol xhigh, GPT-6-astra high, GLM high, DeepSeek high); Opus remains explicit-only and no per-model hard limits are injected.
+- Retain safe pre-tool fallback, activity idle timeout, runner/host compatibility, and the fork-specific 60-minute bg_wait/default blocking-only timeout contract.
+- Preserve the compiled bilingual release package and pinned source/asset installation. Existing Pi processes and children are not forcibly restarted.
+
+## [0.76.1] - 2026-10-05
+
+### Highlights
+
+- When a subagent result wakes an idle parent, that run keeps the subagent list, MCP servers, and other extensions' prompt sections, and no longer churns the provider's prompt cache.
+- Updating pi-subagents while Pi is running now stops `/reload` with a clear "restart Pi" error instead of running a mix of old and new code.
+- In Herdr, a child asking its parent agent for help no longer turns the pane red.
+- `stop` works on a paused run whose result was already delivered, and `subagent doctor` now shows the same async capacity that launches use.
+- Reloading extensions while a child's result is waiting no longer lets a host such as pi-web lose that result.
+
 ### Changed
 
-- The npm package now has the `extension` keyword, so the Pi extension catalog lists pi-subagents under Extensions instead of Unlabelled.
-- Unconfigured `bg_wait` blocking windows and non-blocking subscription lifetimes now default to 60 minutes instead of 30 minutes. Config and environment overrides remain supported; call-level `timeoutMs` is now blocking-only.
+- The npm package now has the `extension` keyword, so Pi's extension catalog lists pi-subagents under Extensions instead of Unlabelled.
 
 ### Fixed
 
-- `bg_wait({ nonBlocking: true, timeoutMs: ... })` now fails before arming a subscription. `nonBlocking` already returns immediately; accepting a one-second timeout as a subscription lifetime caused repeated expiry notifications. Registration results now show the subscription window and clarify that expiry does not stop the targeted run.
-- Reloading extensions no longer makes a session look idle while a child's result is still waiting in Pi's queue. A host such as pi-web could replace the session then and lose the result. The session now stays busy until Pi starts that message, and a different session in the same process is not held busy by it. Thanks to [@brettinternet](https://github.com/brettinternet) for [#2687](https://github.com/nicobailon/pi-subagents/pull/2687).
-- A subagent result, supervisor ask, or other notice that woke an idle parent started a run without `before_agent_start`, so from its second request that run lost the subagent catalog, the MCP server list, and other extensions' prompt sections, and each loss and restore could rewrite the provider's prompt cache. An idle parent now gets the notice followed by a short `Subagent updates above.` user message, which starts the run through Pi's normal prompt path. Thanks to [@ashlineldridge](https://github.com/ashlineldridge) for [#2688](https://github.com/nicobailon/pi-subagents/issues/2688).
+- When a subagent result, supervisor question, or other notice woke an idle parent, the run it started skipped Pi's normal prompt setup. From its second request on, it lost the subagent list, the MCP server list, and other extensions' prompt sections, and the changing prompt could invalidate the provider's prompt cache. The parent now gets the notice followed by a short `Subagent updates above.` message, which starts the run the normal way. Thanks to [@ashlineldridge](https://github.com/ashlineldridge) for [#2688](https://github.com/nicobailon/pi-subagents/issues/2688).
+- Reloading extensions while a child's result was waiting in Pi's queue made the session look idle, so a host such as pi-web could replace the session and lose the result. The session now stays busy until Pi picks up the result. Thanks to [@brettinternet](https://github.com/brettinternet) for [#2687](https://github.com/nicobailon/pi-subagents/pull/2687).
+- After pi-subagents was updated while Pi was running, `/reload` ran a mix of old and new code and failed with errors such as `completionNotifier.messageStarted is not a function`. Node cannot reload a module it has already imported, so loading now stops with an error that names both versions and asks you to restart Pi. Thanks to [@TheAsda](https://github.com/TheAsda) for [#2695](https://github.com/nicobailon/pi-subagents/issues/2695).
+- Child system prompts started with pi-subagents' own instructions instead of Pi's base prompt. Providers and extensions that recognize Pi's default prompt by its first sentence then sent `systemPromptMode: append` children Pi's whole prompt unchanged. Pi's prompt now comes first. ([#2692](https://github.com/nicobailon/pi-subagents/issues/2692))
+- When a per-tool timeout stopped a foreground child, its output said `Subagent timed out after <run timeout>ms.` (or `0ms` when no run timeout was set), naming a deadline that never fired. It now names the tool timeout, for example `Tool 'find' exceeded its timeout of 300000ms.` Thanks to [@mannainsect](https://github.com/mannainsect) for [#2691](https://github.com/nicobailon/pi-subagents/issues/2691).
+- `stop` failed with `paused result is missing` on a paused run whose result had already been delivered or was never written, and a finished parent workflow kept that run's async capacity slot. When the run's process has exited, `stop` now marks it stopped and the slot is freed. Thanks to [@builtroller](https://github.com/builtroller) for reporting [#2699](https://github.com/nicobailon/pi-subagents/issues/2699).
+- `subagent doctor` could report `usage: 0/3 used` while launches were rejected with `3/3 used`, for example in a session resumed with `pi --session <id>`, because doctor counted a different capacity pool than launches do. It now reads the same pool for both active async capacity and the spawn budget. Thanks to [@builtroller](https://github.com/builtroller) for reporting [#2698](https://github.com/nicobailon/pi-subagents/issues/2698).
+- In Herdr, the pane turned red, which means a person needs to act, whenever an async child needed attention, including a child waiting for its parent agent's answer. Those requests go to the parent agent, so pi-subagents no longer marks the pane blocked; the `⚠` in the pane's subagent label still shows it. Thanks to [@nateberkopec](https://github.com/nateberkopec) for reporting [#2702](https://github.com/nicobailon/pi-subagents/issues/2702).
 
 ## [0.76.0] - 2026-10-04
 

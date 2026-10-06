@@ -1,3 +1,13 @@
+---
+doc_type: reference
+project: workspace
+status: active
+truth_mode: maintained
+created: 2026-10-06
+verified: 2026-10-06
+verified_by: manual
+---
+
 # Models
 
 How subagents pick models, and how to change that.
