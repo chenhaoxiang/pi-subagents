@@ -12,7 +12,23 @@ This repository is the maintained fork at:
 
 <https://github.com/chenhaoxiang/pi-subagents>
 
-It tracks the community project selectively and keeps fork-specific behavior on the fork's `main` line. The current fork release is `0.76.0-fork.1`, based on community Pi Subagents `v0.76.0` plus upstream `main` through `700c91bc`.
+It tracks the community project selectively and keeps fork-specific behavior on the fork's `main` line. The current fork release is `0.76.0-fork.2`, based on community Pi Subagents `v0.76.0` plus upstream `main` through `700c91bc`.
+
+## Releases and branch policy
+
+The maintained release is **0.76.0-fork.2**, based on community **0.76.0**. Fork releases use `<community-version>-fork.<revision>`; the fork revision increases without pretending to be a new upstream release.
+
+- `main`: our maintained integration and release branch, including fork fixes.
+- `upstream-main`: an exact mirror of the community's `main`, with no fork commits. Never install from this branch.
+- Changes enter `main` through reviewed pull requests; existing branches and history are retained.
+
+Install a reproducible release:
+
+```bash
+pi install git:github.com/chenhaoxiang/pi-subagents@v0.76.0-fork.2
+```
+
+[GitHub Releases](https://github.com/chenhaoxiang/pi-subagents/releases) include the installable package tarball, a provenance manifest, and `SHA256SUMS`. These GitHub releases are not npm publications under the upstream author's namespace. See [release maintenance](docs/releasing.md) for asset installation and future releases.
 
 ## Install this fork
 
@@ -22,11 +38,7 @@ Do not use the community npm package when you need the fork behavior. Install th
 pi install git:github.com/chenhaoxiang/pi-subagents@main
 ```
 
-For reproducible environments, pin the reviewed merge commit:
-
-```bash
-pi install git:github.com/chenhaoxiang/pi-subagents@b17db64159d329d06273bb63634b58a96b932538
-```
+For reproducible environments, pin the released tag shown above. Releases also provide a **compiled** package (`index.js`, API exports and runner files), not only a source-code archive. Download the tarball, manifest and checksums, verify them, extract into a permanent directory and `pi install /absolute/path/to/package`; see [release maintenance](docs/releasing.md).
 
 After installation, restart Pi or run `/reload`. Existing sessions do not hot-load the new extension code.
 

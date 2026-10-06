@@ -9,12 +9,12 @@ This file intentionally does not duplicate user-global or tool-level instruction
 - [Standalone background execution](docs/standalone-background.md) documents npm runner peer aliasing, host resolution, and startup compatibility across package updates.
 - [Background wait timeout contract](docs/configuration.md#waittool) documents the 60-minute unconfigured window, blocking-only call-level `timeoutMs`, and rejection of short non-blocking subscription/polling misuse. Regression coverage is in `test/unit/bg-wait-timeout-contract.test.ts`.
 
-## Fork synchronization
+## Fork synchronization and releases
 
-This repository is a fork of `nicobailon/pi-subagents`.
+This repository is the maintained fork of `nicobailon/pi-subagents`.
 
-- `main` is the community-sync line. It tracks `upstream/main`; do not develop fork-specific behavior directly on it.
-- `origin/main` is updated from `upstream/main` only after the sync result is reviewed. The local branch is configured with `remote=upstream` and `pushRemote=origin`, so pulling and publishing the fork mirror are separate explicit actions.
-- Fork-specific changes live on new branches based on the synchronized `main`, using names such as `feat/<topic>-YYYYMMDD` or `fix/<topic>-YYYYMMDD`.
-- Before rebasing or replaying fork work, preserve the pre-sync fork tip in a `preserve/` branch and keep the original worktree intact until the new branch passes its checks.
-- When upstream and fork work overlap, resolve the conflict on the new branch; do not force local fork commits back into the synchronization line.
+- `main` is our integration/release branch and retains fork-specific behavior. Never replace it with the pure community tree. Use isolated topic branches, tested PRs and regular merges.
+- `upstream-main` exactly mirrors community `main`, with no fork commits, docs or version bumps. The read-only upstream remote fetches only main and has push URL DISABLED.
+- Retain existing repair branches, custom worktrees and old tips. Local experimental packages are not release/main evidence.
+- Fork package versions are `<community-base>-fork.<revision>`; every release gets an immutable v-prefixed tag, compiled installable tarball, exact-source provenance and SHA-256 checksums. Never publish the source/private package or the upstream npm identity.
+- `docs/releasing.md`: per-version publishing, packaging/README parity, required CI, provider-free loading, current community baseline and installation limitations.
