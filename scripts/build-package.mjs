@@ -14,6 +14,7 @@ const expectedRootModules = [
 ];
 const staticFiles = [
 	"README.md",
+	"README.zh-CN.md",
 	"CHANGELOG.md",
 	"LICENSE",
 ];

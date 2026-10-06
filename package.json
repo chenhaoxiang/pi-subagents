@@ -1,6 +1,6 @@
 {
   "name": "pi-subagents",
-  "version": "0.76.0-fork.1",
+  "version": "0.76.0-fork.2",
   "private": true,
   "description": "Pi extension for single-agent delegation and scripted multi-agent workflows",
   "author": "Nico Bailon",
@@ -26,11 +26,11 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/nicobailon/pi-subagents.git"
+    "url": "git+https://github.com/chenhaoxiang/pi-subagents.git"
   },
-  "homepage": "https://github.com/nicobailon/pi-subagents#readme",
+  "homepage": "https://github.com/chenhaoxiang/pi-subagents#readme",
   "bugs": {
-    "url": "https://github.com/nicobailon/pi-subagents/issues"
+    "url": "https://github.com/chenhaoxiang/pi-subagents/issues"
   },
   "keywords": [
     "pi-package",
@@ -54,6 +54,7 @@
     "prompts/**/*",
     "docs/**/*",
     "README.md",
+    "README.zh-CN.md",
     "CHANGELOG.md"
   ],
   "scripts": {
