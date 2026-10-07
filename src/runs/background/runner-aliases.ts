@@ -57,7 +57,10 @@ function readManifest(packageDir: string): PackageManifest | undefined {
 
 function isPiOneOrNewer(version: unknown): boolean {
 	if (typeof version !== "string") return false;
-	const match = /^(\d+)\.\d+\.\d+$/.exec(version);
+	// Maintained fork revisions retain the stable community host API. Do not
+	// generalize this exception to beta, build metadata or arbitrary prereleases.
+	const match = /^(\d+)\.\d+\.\d+$/.exec(version)
+		?? /^(0|[1-9]\d{0,5})\.(?:0|[1-9]\d{0,5})\.(?:0|[1-9]\d{0,5})-fork\.[1-9]\d{0,5}$/.exec(version);
 	return match !== null && Number(match[1]) >= 1;
 }
 
