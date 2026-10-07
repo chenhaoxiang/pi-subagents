@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.76.1-fork.2] - 2026-10-07
+
+- Recognize canonical stable-base Pi `X.Y.Z-fork.N` hosts for the removed legacy node export, retaining beta/unknown/pre-1.0 fail-closed checks.
+- Keep a declared-but-missing legacy export a startup error for stable and fork hosts; other required peers and runtime policies are unchanged.
+- Preserve the 0.76.1 integration baseline, compiled release/provenance and prior-install rollback path.
+
 ## [0.76.1-fork.1] - 2026-10-06
 
 - Integrate community 0.76.1 and its seven commits without replacing the maintained fork tree.

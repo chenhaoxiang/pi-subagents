@@ -20,7 +20,7 @@ function hostFixture(version: string) {
 		const directory = name === "@earendil-works/pi-coding-agent" ? host : path.join(host, "node_modules", name);
 		fs.mkdirSync(directory, { recursive: true });
 		fs.writeFileSync(path.join(directory, "index.js"), "export const fixture = true;\n");
-		fs.writeFileSync(path.join(directory, "package.json"), JSON.stringify({ name, version, type: "module", exports }));
+		fs.writeFileSync(path.join(directory, "package.json"), JSON.stringify({ name, version: directory === host ? version : "0.0.0-peer", type: "module", exports }));
 	}
 	return { root, host };
 }
@@ -42,6 +42,19 @@ for (const version of ["1.0.4-beta.1", "1.0.4+build.1", "1.0.4-fork.0", "1.0.4-f
 		const f = hostFixture(version);
 		try { assert.deepEqual(resolveHostPeerAliases(f.host).missing, ["@earendil-works/pi-agent-core/node"]); }
 		finally { fs.rmSync(f.root, { recursive: true, force: true }); }
+	});
+}
+
+for (const version of ["1.0.4", "1.0.4-fork.1"]) {
+	test(`declared legacy node export with a missing file remains fail-closed: ${version}`, () => {
+		const f = hostFixture(version);
+		try {
+			const file = path.join(f.host, "node_modules", "@earendil-works", "pi-agent-core", "package.json");
+			const manifest = JSON.parse(fs.readFileSync(file, "utf8"));
+			manifest.exports["./node"] = "./missing.js";
+			fs.writeFileSync(file, JSON.stringify(manifest));
+			assert.deepEqual(resolveHostPeerAliases(f.host).missing, ["@earendil-works/pi-agent-core/node"]);
+		} finally { fs.rmSync(f.root, { recursive: true, force: true }); }
 	});
 }
 

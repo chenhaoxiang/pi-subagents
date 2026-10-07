@@ -169,7 +169,7 @@ export function resolveHostPeerAliases(piPackageRoot: string): { aliases: Record
 		if (optional && packageDir && target === undefined && mayOmitAlias(hostManifest, specifier)) continue;
 		// Native loaders short-circuit resolution, so aliases must retain the real package's dependency scope.
 		if (target && fs.existsSync(target)) aliases[specifier] = fs.realpathSync(target);
-		else if (!mayOmitAlias(hostManifest, specifier)) missing.push(specifier);
+		else if (target !== undefined || !mayOmitAlias(hostManifest, specifier)) missing.push(specifier);
 	}
 	return { aliases, missing };
 }
