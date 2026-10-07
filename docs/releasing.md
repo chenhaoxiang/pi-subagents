@@ -22,7 +22,7 @@ Applies only to chenhaoxiang/pi-subagents. The community project remains [nicoba
 
 ## Baseline for this release
 
-Version **0.76.1-fork.1** integrates community main through `7d072b91dca7e1aa915282f0159cec0175d65efa` and the previously installed model-pool repair `5a69711e` (replayed with provenance). Guarded fallback, activity-based idle timeout, runner/Pi compatibility and the fork background-wait timeout contract are retained. The old experimental source is preserved before installation; it is not silently discarded. See [upgrade evidence and installation boundaries](maintenance/2026-10-06-community-0.76.1.md).
+Version **0.76.1-fork.2** integrates community main through `7d072b91dca7e1aa915282f0159cec0175d65efa` and the previously installed model-pool repair `5a69711e` (replayed with provenance). Guarded fallback, activity-based idle timeout, runner/Pi compatibility and the fork background-wait timeout contract are retained. The old experimental source is preserved before installation; it is not silently discarded. See [upgrade evidence and installation boundaries](maintenance/2026-10-06-community-0.76.1.md).
 
 ## Publish every version
 

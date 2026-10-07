@@ -12,11 +12,11 @@ This repository is the maintained fork at:
 
 <https://github.com/chenhaoxiang/pi-subagents>
 
-It tracks the community project selectively and keeps fork-specific behavior on the fork's `main` line. The current fork release is `0.76.1-fork.1`, based on community Pi Subagents `v0.76.1` plus upstream `main` through `7d072b91`.
+It tracks the community project selectively and keeps fork-specific behavior on the fork's `main` line. The current fork release is `0.76.1-fork.2`, based on community Pi Subagents `v0.76.1` plus upstream `main` through `7d072b91`.
 
 ## Releases and branch policy
 
-The maintained release is **0.76.1-fork.1**, based on community **0.76.1**. Fork releases use `<community-version>-fork.<revision>`; the fork revision increases without pretending to be a new upstream release.
+The maintained release is **0.76.1-fork.2**, based on community **0.76.1**. Fork releases use `<community-version>-fork.<revision>`; the fork revision increases without pretending to be a new upstream release.
 
 - `main`: our maintained integration and release branch, including fork fixes.
 - `upstream-main`: an exact mirror of the community's `main`, with no fork commits. Never install from this branch.
@@ -25,7 +25,7 @@ The maintained release is **0.76.1-fork.1**, based on community **0.76.1**. Fork
 Install a reproducible release:
 
 ```bash
-pi install git:github.com/chenhaoxiang/pi-subagents@v0.76.1-fork.1
+pi install git:github.com/chenhaoxiang/pi-subagents@v0.76.1-fork.2
 ```
 
 [GitHub Releases](https://github.com/chenhaoxiang/pi-subagents/releases) include the installable package tarball, a provenance manifest, and `SHA256SUMS`. These GitHub releases are not npm publications under the upstream author's namespace. See [release maintenance](docs/releasing.md) for asset installation and future releases.
