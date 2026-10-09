@@ -126,6 +126,7 @@ describe("bg_wait timeout contract", () => {
 		let arms = 0;
 		// SAFETY: registration only reads events.on and registerTool from this injected API.
 		const api = {
+			on() { return () => {}; },
 			events: { on() { return () => {}; } },
 			registerTool(tool: ToolDefinition<typeof WaitSchema, Details>) { registered = tool; },
 		} as ExtensionAPI;

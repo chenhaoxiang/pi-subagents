@@ -2452,7 +2452,7 @@ if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
 
 		assert.equal(result.exitCode, 1);
 		assert.match(result.error ?? "", /^Unknown agent: nonexistent\nEffective cwd: /);
-		assert.match(result.error ?? "", /Consulted agent-definition directories:[\s\S]*Discovered agents:/);
+		assert.match(result.error ?? "", /Consulted agent-definition directories:[\s\S]*Available agents:/);
 		assert.doesNotMatch(result.error ?? "", /echo \(project\)/);
 		assert.equal(result.task, "[prompt redacted]");
 		assert.doesNotMatch(JSON.stringify(result), new RegExp(sentinel));
@@ -2635,6 +2635,28 @@ if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
 		// overwritten by the first message_end event only if result.model is unset.
 		// Since agent has model config, it stays as the configured value.
 		assert.equal(result.model, "anthropic/claude-sonnet-4");
+	});
+
+	it("qualifies a foreground child's reported model with its provider", async () => {
+		mockPi.onCall({
+			jsonl: [{
+				type: "message_end",
+				message: {
+					role: "assistant",
+					content: [{ type: "text", text: "Done" }],
+					provider: "anthropic",
+					model: "claude-haiku-4-5",
+					stopReason: "stop",
+					usage: { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, cost: { total: 0.001 } },
+				},
+			}],
+		});
+		// No agent model is configured, so result.model starts unset and is taken
+		// from the first assistant message, which reports the model id alone.
+		const result = await runSync(tempDir, makeAgentConfigs(["echo"]), "echo", "Task", { acceptance: false });
+
+		assert.equal(result.exitCode, 0);
+		assert.equal(result.model, "anthropic/claude-haiku-4-5");
 	});
 
 	it("fails when a configured provider-qualified model starts on a different child model", async () => {

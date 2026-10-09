@@ -10,7 +10,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createAtomicJsonWriter } from "../shared/atomic-json.ts";
 import { resolveSettingsWriteTarget, withSettingsFileLease } from "../shared/settings-file-lease.ts";
-import type { AcceptanceInput, AcceptanceRole, AgentRunnerConfig, JsonSchemaObject, OutputMode, ToolBudgetConfig } from "../shared/types.ts";
+import { RUNNER_LAUNCHER_NAME_PATTERN, RUNNER_LAUNCHER_NAME_RULE, type AcceptanceInput, type AcceptanceRole, type AgentRunnerConfig, type JsonSchemaObject, type OutputMode, type ToolBudgetConfig } from "../shared/types.ts";
 import { CODE_OWNED_EXTERNAL_CLI_ADAPTER_LABEL, isCodeOwnedExternalCliAdapterId, parseExternalCliCapabilityNarrowing, validateCodeOwnedProfileRunner } from "../runs/shared/external-cli-contract.ts";
 import { isClaudeCodeAdapterId } from "../runs/shared/claude-code-adapter.ts";
 import { getAgentDir, getProjectConfigDir } from "../shared/utils.ts";
@@ -18,6 +18,7 @@ import { expandHomePath } from "../shared/settings.ts";
 import { KNOWN_FIELDS } from "./agent-serializer.ts";
 import { parseChain, parseJsonChain } from "./chain-serializer.ts";
 import { mergeAgentsForScope } from "./agent-selection.ts";
+import { closestMatch } from "../shared/edit-distance.ts";
 import { parseFrontmatter, parseFrontmatterList } from "./frontmatter.ts";
 import { buildRuntimeName, parsePackageName } from "./identity.ts";
 import { parseModelScopeConfig, type ModelScopeConfig } from "../runs/shared/model-scope.ts";
@@ -187,6 +188,8 @@ export interface AgentConfig {
 	permissions?: PermissionRules;
 	memory?: AgentMemoryConfig;
 	machine?: string;
+	/** Name of a user-configured `runnerLaunchers` entry that wraps this agent's background runner. */
+	launcher?: string;
 	disabled?: boolean;
 	extraFields?: Record<string, string>;
 	override?: BuiltinAgentOverrideInfo;
@@ -320,10 +323,13 @@ export interface UnknownAgentDiagnosticContext {
 	scope: AgentScope;
 	directories: readonly AgentDefinitionDirectoryReport[];
 	agents: readonly AgentConfig[];
+	disabledAgents?: readonly string[];
 }
 
 export interface AgentDiscoveryResult {
 	agents: AgentConfig[];
+	/** Names that resolved to a disabled definition, which discovery leaves out of `agents`. */
+	disabledAgents?: string[];
 	agentDiagnostics?: AgentDiscoveryDiagnostic[];
 	projectAgentsDir: string | null;
 	cwd: string;
@@ -334,13 +340,34 @@ export interface AgentDiscoveryResult {
 }
 
 /** Create formatter input from the exact discovery operation used for resolution. */
-export function unknownAgentDiagnosticContext(discovered: Pick<AgentDiscoveryResult, "cwd" | "scope" | "directories" | "agents">): UnknownAgentDiagnosticContext {
+export function unknownAgentDiagnosticContext(discovered: Pick<AgentDiscoveryResult, "cwd" | "scope" | "directories" | "agents" | "disabledAgents">): UnknownAgentDiagnosticContext {
 	return {
 		cwd: discovered.cwd,
 		scope: discovered.scope,
 		directories: discovered.directories,
 		agents: discovered.agents,
+		...(discovered.disabledAgents?.length ? { disabledAgents: discovered.disabledAgents } : {}),
 	};
+}
+
+const MAX_LISTED_AGENTS = 30;
+const MAX_LISTED_DESCRIPTION_CHARS = 80;
+
+/** One line per agent the caller can launch instead, so a wrong name needs no separate list call. */
+export function formatAvailableAgentLines(agents: readonly AgentConfig[]): string[] {
+	const sorted = [...agents].sort((left, right) => left.name.localeCompare(right.name) || left.source.localeCompare(right.source));
+	const lines = sorted.slice(0, MAX_LISTED_AGENTS).map((agent) => {
+		const description = agent.description.replace(/\s+/gu, " ").trim();
+		const short = description.length > MAX_LISTED_DESCRIPTION_CHARS ? `${description.slice(0, MAX_LISTED_DESCRIPTION_CHARS - 1).trimEnd()}…` : description;
+		return `- ${agent.name} (${agent.source})${short ? ` — ${short}` : ""}`;
+	});
+	if (sorted.length > MAX_LISTED_AGENTS) lines.push(`+${sorted.length - MAX_LISTED_AGENTS} more; {action:"list"}`);
+	return lines.length ? lines : ["- (none)"];
+}
+
+/** The closest agent name or alias when `name` looks like a typo of one. */
+export function suggestAgentName(name: string, agents: readonly AgentConfig[]): string | undefined {
+	return closestMatch(name.trim(), new Set(agents.flatMap((agent) => [agent.name, ...(agent.localName ? [agent.localName] : []), ...(agent.aliases ?? [])])));
 }
 
 /** Render local discovery evidence without exposing filesystem error details. */
@@ -353,16 +380,15 @@ export function formatUnknownAgentError(name: string, context: UnknownAgentDiagn
 					: directory.state;
 		return `- ${directory.source}: ${directory.path} (${state})`;
 	});
-	const agents = [...context.agents]
-		.sort((left, right) => left.name.localeCompare(right.name) || left.source.localeCompare(right.source))
-		.map((agent) => `- ${agent.name} (${agent.source})`);
+	const disabled = context.disabledAgents?.includes(name.trim()) === true;
+	const suggestion = disabled ? undefined : suggestAgentName(name, context.agents);
 	return [
-		`${prefix}: ${name}`,
+		disabled ? `${prefix}: ${name} is disabled by a settings override.` : `${prefix}: ${name}${suggestion ? `. Did you mean '${suggestion}'?` : ""}`,
 		`Effective cwd: ${path.resolve(context.cwd)}`,
 		"Consulted agent-definition directories:",
 		...(directories.length ? directories : ["- (none)"]),
-		"Discovered agents:",
-		...(agents.length ? agents : ["- (none)"]),
+		"Available agents:",
+		...formatAvailableAgentLines(context.agents),
 	].join("\n");
 }
 
@@ -1035,6 +1061,9 @@ function parseBuiltinOverrideEntry(
 	}
 
 	const input = value as Record<string, unknown>;
+	if (Object.hasOwn(input, "launcher")) {
+		throw new Error(`Builtin override '${name}' in '${filePath}' sets 'launcher', which settings overrides do not support; set 'launcher' in a user agent file instead.`);
+	}
 	const override: BuiltinAgentOverrideConfig = {};
 
 	if ("description" in input) {
@@ -2332,6 +2361,13 @@ function loadAgentsFromDefinitionFiles(files: AgentDefinitionFile[], source: Age
 			: undefined;
 		const memory = parseMemoryFrontmatter(frontmatter.memory);
 		const machine = validateOptionalMachine(frontmatter.machine, `Agent '${runtimeName}' frontmatter 'machine'`);
+		const launcher = frontmatter.launcher;
+		if (launcher !== undefined && !RUNNER_LAUNCHER_NAME_PATTERN.test(launcher)) {
+			throw new Error(`Agent '${runtimeName}' frontmatter 'launcher' ${JSON.stringify(launcher)} is invalid; launcher names ${RUNNER_LAUNCHER_NAME_RULE}.`);
+		}
+		if (launcher !== undefined && (runner?.type === "external-cli" || runner?.type === "external-job" || machine !== undefined)) {
+			throw new Error(`Agent '${runtimeName}' sets 'launcher', which wraps the local Pi background runner, so it cannot be combined with ${machine !== undefined ? "'machine'" : `runner.type='${runner!.type}'`}.`);
+		}
 		const agent: AgentConfig = {
 			name: runtimeName,
 			...(runner !== undefined ? { runner } : {}),
@@ -2373,6 +2409,7 @@ function loadAgentsFromDefinitionFiles(files: AgentDefinitionFile[], source: Age
 			...(subagentOnlyExtensions !== undefined ? { subagentOnlyExtensions } : {}),
 			...(mutationTools?.length ? { mutationTools } : {}),
 			...(machine !== undefined ? { machine } : {}),
+			...(launcher !== undefined ? { launcher } : {}),
 			...(frontmatter.output !== undefined ? { output: frontmatter.output } : {}),
 			...(outputMode !== undefined ? { outputMode } : {}),
 			...(outputSchema !== undefined ? { outputSchema } : {}),
@@ -2964,12 +3001,12 @@ function discoveryDiagnostics(sources: AgentDiscoverySources, scope: AgentScope)
 
 function buildEffectiveDiscovery(sources: AgentDiscoverySources, scope: AgentScope): AgentDiscoveryResult {
 	const configured = configuredAgentsForScope(sources, scope);
-	const agents = applySubagentMaxThinking(
-		mergeAgentsForScope(scope, configured.user, configured.project, configured.builtin, configured.package).filter((agent) => agent.disabled !== true),
-		configured.maxThinking,
-	);
+	const merged = mergeAgentsForScope(scope, configured.user, configured.project, configured.builtin, configured.package);
+	const agents = applySubagentMaxThinking(merged.filter((agent) => agent.disabled !== true), configured.maxThinking);
+	const disabledAgents = merged.filter((agent) => agent.disabled === true).map((agent) => agent.name);
 	return {
 		agents,
+		...(disabledAgents.length ? { disabledAgents } : {}),
 		agentDiagnostics: discoveryDiagnostics(sources, scope),
 		projectAgentsDir: sources.projectAgentsDir,
 		cwd: sources.cwd,
@@ -3082,9 +3119,11 @@ function discoverAgentsUncached(cwd: string, scope: AgentScope, preferredModelPr
 	const packageMap = new Map<string, AgentConfig>();
 	for (const loaded of packageLoaded) for (const agent of loaded.agents) if (!packageMap.has(agent.name)) packageMap.set(agent.name, agent);
 	const packageAgents = applyCustomAgentOverrides(applyDefaults(Array.from(packageMap.values())), userSettings, projectSettings, userSettingsPath, projectSettingsPath);
-	const agents = applySubagentMaxThinking(mergeAgentsForScope(scope, userAgents, projectAgents, builtinAgents, packageAgents).filter((agent) => agent.disabled !== true), maxThinking);
+	const merged = mergeAgentsForScope(scope, userAgents, projectAgents, builtinAgents, packageAgents);
+	const agents = applySubagentMaxThinking(merged.filter((agent) => agent.disabled !== true), maxThinking);
+	const disabledAgents = merged.filter((agent) => agent.disabled === true).map((agent) => agent.name);
 	const agentDiagnostics = [...builtinLoaded.diagnostics, ...userLoaded.flatMap((loaded) => loaded.diagnostics), ...projectLoaded.flatMap((loaded) => loaded.diagnostics), ...packageLoaded.flatMap((loaded) => loaded.diagnostics)];
-	return { agents, agentDiagnostics, projectAgentsDir, cwd: effectiveCwd, scope, directories, ...(modelScope !== undefined ? { modelScope } : {}), ...(maxThinking !== undefined ? { maxThinking } : {}) };
+	return { agents, ...(disabledAgents.length ? { disabledAgents } : {}), agentDiagnostics, projectAgentsDir, cwd: effectiveCwd, scope, directories, ...(modelScope !== undefined ? { modelScope } : {}), ...(maxThinking !== undefined ? { maxThinking } : {}) };
 }
 
 export function discoverAgents(cwd: string, scope: AgentScope, preferredModelProvider?: string, options: AgentDiscoveryOptions = {}): AgentDiscoveryResult {
