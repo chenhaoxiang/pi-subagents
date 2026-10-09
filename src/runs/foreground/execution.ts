@@ -115,6 +115,8 @@ import { reconcileAttemptUsage } from "../shared/usage-reconciliation.ts";
 
 const artifactOutputByResult = new WeakMap<SingleResult, string>();
 const acceptanceOutputByResult = new WeakMap<SingleResult, string>();
+// Human-facing inherited-provider advice must not replace the exact failure used for safe replay.
+const modelFailureErrorByResult = new WeakMap<SingleResult, { original: string; displayed: string }>();
 
 function emptyUsage(): Usage {
 	return { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 };
@@ -1371,7 +1373,9 @@ async function runSingleAttempt(
 				&& (closeError === promptErrorMessage || closeError === assistantError)
 				&& progress.toolCount === 0
 				&& (result.messages ?? []).every((message) => message.role !== "assistant" || (message as { stopReason?: string }).stopReason === "error")) {
+				const original = closeError;
 				closeError = `${closeError}\n\n${formatInheritedProviderDiagnostic({ agent: agent.name, model: launch.session.model, provider: session.inheritedProvider, capabilityCeiling: launch.toolPlan.capabilityCeiling })}`;
+				modelFailureErrorByResult.set(result, { original, displayed: closeError });
 			}
 			const forcedDrainAfterFinalSuccess = (forced || forcedTermination) && (cleanTerminalAssistantStopReceived || agentSettledReceived) && !closeError;
 			const forcedDrainAfterEmptyTerminal = forcedDrainAfterFinalSuccess && hasEmptyTerminalAssistantResponse(result.messages ?? []);
@@ -2029,7 +2033,8 @@ async function runSyncCompletionInner(
 				break modelLoop;
 			}
 			if (attemptResult.timedOut || attemptResult.stopped || attemptResult.detached || attemptResult.interrupted || detachedReason || options.signal?.aborted || options.interruptSignal?.aborted) break modelLoop;
-			const retryable = isRetryableModelFailureAttempt({ error: attemptResult.error, messages: attemptResult.messages, toolCount: totalToolCount });
+			const providerFailure = modelFailureErrorByResult.get(attemptResult);
+			const retryable = isRetryableModelFailureAttempt({ error: providerFailure && providerFailure.displayed === attemptResult.error ? providerFailure.original : attemptResult.error, messages: attemptResult.messages, toolCount: totalToolCount });
 			if (!retryable || totalToolCount > 0 || modelIndex >= modelEvidence.candidates.length - 1) break modelLoop;
 			attemptNotes.push(formatModelAttemptNote(aggregateAttempts[aggregateAttempts.length - 1]!, modelEvidence.candidates[modelIndex + 1]));
 			break;

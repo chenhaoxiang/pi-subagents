@@ -24,8 +24,8 @@ const scriptCalls = "One child: {agent,task}. Independent parallel children: {wo
 const structuredCalls = "One child: {agent,task}. Parallel: tasks:[{agent,task},...]. In order: chain:[{agent,task?,as?} or {parallel:[{agent,task},...]}]; step tasks can use {task}, {previous} and {outputs.name}. Use exactly one top-level subagent chain or tasks call with async:true.";
 
 const essentials = (on: FeatureText) => `${on("workflow-scripts", scriptCalls, structuredCalls)}
-Management: {action,id?,options:{...}}. Other fields go in options.
-Use agent names and exact provider/id. Unknown agents/models return valid choices.
+Management: {action,id?,options:{...}}; fields not in this schema go in options.
+Launch agents by name and pass models as exact provider/id; an unknown agent or model returns the valid choices.
 Details: guide workflows/recommended-orchestration-pattern (async, review, failure recovery), ${on("workflow-scripts", "guide workflows/scripted-workflows, ")}guide tool-reference/retained-children, guide tool-reference/external-cli-agent-profiles.
 
 ${SUBAGENT_SAFETY_GUIDANCE}`;

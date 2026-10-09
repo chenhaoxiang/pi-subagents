@@ -23,9 +23,13 @@ The owner authorized the staged local extension maintenance after Pi core 1.1.0-
 
 ## Local validation
 
-Typecheck and compiled package build pass. The initial focused 17-file unit run passed 460 tests; final targeted regressions passed 311 tests, and idle/launcher integration passed 15 tests. Native activation smoke passed both cases with cold package tool text 2186 characters and activated text 5500, within unchanged budgets.
+Typecheck and compiled package build pass. The initial focused 17-file unit run passed 460 tests; final targeted regressions passed 311 tests, and idle/launcher integration passed 15 tests. Native activation smoke initially passed both cases with cold package tool text 2186 characters and activated text 5500. A CI string-contract mismatch was then repaired without weakening assertions: the final compact wait prose preserves the upstream discovery/safety literals and uses cold 2106 / activated 5463 characters, within unchanged budgets.
 
 The full local macOS suite is not green. Initial full unit execution used a Git-ancestry-polluted tmp root; a retry in an independent user tmp root passed 3920/4036 tests with 59 failures, 40 cancellations and 17 skips. Failures include OS-denied process-tree reads (`ps EPERM`), external CLI fixtures, event-loop/process timing and instrumented cleanup. The previous fork.2 part-4 baseline also failed stop/pause/process-tree setup (39/42 passed). The first candidate part-4 attempt hit its 300-second local wrapper deadline; its original log remains. No assertions or process-proof behavior were weakened. Exact remote required CI, independent review and published-install acceptance remain required and are not inferred from these local results.
+
+## Independent review repair
+
+The first fresh-context same-model review found one P1: inherited-provider diagnostic advice changed the error string consumed by the exact pre-tool fallback classifier. The repair stores the original/displayed pair in a private WeakMap, reusing the original only while the attempt error is still that exact diagnostic-bearing value. Later errors and tool activity retain the existing fail-closed checks. Nine synthetic model-diagnostic tests pass, including inherited provider plus first 429 plus fallback success and no replay after tool execution. The 21 wait/description regressions and both native activation cases pass; typecheck and compiled rebuild pass. The earlier CI failed only the discovery-description string contract; those strings are restored. Exact updated-head CI and independent recheck are still required.
 
 ## Delivery boundary
 

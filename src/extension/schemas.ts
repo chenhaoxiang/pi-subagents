@@ -329,9 +329,9 @@ export function createSubagentParamsSchema(disabled?: DisabledFeatureSurface): t
 
 const SubagentWaitParamsSchema = Type.Object({
 	id: Type.Optional(Type.String({ description: "Run id or prefix." })),
-	nonBlocking: Type.Optional(Type.Boolean({ description: "Subscribe and return immediately; requires id, cannot be combined with all or timeoutMs." })),
+	nonBlocking: Type.Optional(Type.Boolean({ description: "Return now and subscribe to id; cannot be combined with all or timeoutMs." })),
 	all: Type.Optional(Type.Boolean({ description: "Wait for all work active at call time." })),
-	timeoutMs: Type.Optional(Type.Integer({ minimum: 1, description: "For blocking waits only; default waitTool.defaultTimeoutMs, then 3600000 (60 min). Not with nonBlocking." })),
+	timeoutMs: Type.Optional(Type.Integer({ minimum: 1, description: "Blocking waits only; default waitTool.defaultTimeoutMs, then 3600000. Not with nonBlocking." })),
 	stopOnAttention: Type.Optional(Type.Boolean({ description: "false: keep waiting through idle or long-thinking attention." })),
 });
 
