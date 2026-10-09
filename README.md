@@ -12,11 +12,11 @@ This repository is the maintained fork at:
 
 <https://github.com/chenhaoxiang/pi-subagents>
 
-It tracks the community project selectively and keeps fork-specific behavior on the fork's `main` line. The current fork release is `0.76.1-fork.2`, based on community Pi Subagents `v0.76.1` plus upstream `main` through `7d072b91`.
+It tracks the community project selectively and keeps fork-specific behavior on the fork's `main` line. The current fork release is `0.76.1-fork.3`, based on community Pi Subagents `v0.76.1` plus reviewed upstream `main` through `d7ac44bd`.
 
 ## Releases and branch policy
 
-The maintained release is **0.76.1-fork.2**, based on community **0.76.1**. Fork releases use `<community-version>-fork.<revision>`; the fork revision increases without pretending to be a new upstream release.
+The maintained release is **0.76.1-fork.3**, based on community **0.76.1**. Fork releases use `<community-version>-fork.<revision>`; the fork revision increases without pretending to be a new upstream release.
 
 - `main`: our maintained integration and release branch, including fork fixes.
 - `upstream-main`: an exact mirror of the community's `main`, with no fork commits. Never install from this branch.
@@ -25,7 +25,7 @@ The maintained release is **0.76.1-fork.2**, based on community **0.76.1**. Fork
 Install a reproducible release:
 
 ```bash
-pi install git:github.com/chenhaoxiang/pi-subagents@v0.76.1-fork.2
+pi install git:github.com/chenhaoxiang/pi-subagents@v0.76.1-fork.3
 ```
 
 [GitHub Releases](https://github.com/chenhaoxiang/pi-subagents/releases) include the installable package tarball, a provenance manifest, and `SHA256SUMS`. These GitHub releases are not npm publications under the upstream author's namespace. See [release maintenance](docs/releasing.md) for asset installation and future releases.
@@ -114,6 +114,10 @@ Use natural language or the slash commands:
 The Fleet view exposes active children, nested work, artifacts, attention requests, and controls. A background run should never become invisible: inspect its status, reply to its supervisor request, steer it, or stop it explicitly.
 
 Important boundaries:
+
+- Installed-version help is available through `/subagents-guide [topic]` or `subagent({ action: "guide", options: { topic: "workflows" } })`. The default topic is `overview`; available topics are `overview`, `workflows`, `agents`, `missions`, `observability`, `tool-reference`, `configuration`, `models`, `watchdog`, `extension-api`, and `council`.
+
+
 
 - `timeoutMs` / `maxRuntimeMs` are hard runtime limits;
 - `idleTimeoutMs` is inactivity-based and resets on meaningful stream/tool activity;
