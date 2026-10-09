@@ -15,7 +15,7 @@ export function registerWaitTool(
 	child?: { nestedRootRunId?: string },
 	hasPendingSupervisorRequest?: () => boolean,
 ): void {
-	const description = `Collect background results. ${child ? "This child runtime has no native completion notifier: use blocking bg_wait to collect your owned descendants this turn and read their result references; agent_end draining does not synthesize results." : "Ordinary async runs wake this session natively; use bg_wait for provider/detached work without native notification when needed this turn."}
+	const description = `Collect background results. ${child ? "This child runtime has no native completion notifier: use blocking bg_wait to collect your owned descendants this turn and read their result references; agent_end draining does not synthesize results." : "Async subagent runs already wake this session natively; use bg_wait for provider/detached work without native notification when needed this turn."}
 {} — first active run or provider item to finish or need attention.
 {all:true} — all work active at call time.
 {id} — one run; a finished async run returns its result references.
