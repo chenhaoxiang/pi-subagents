@@ -18,7 +18,7 @@ import {
 } from "./foreground-control.ts";
 import { getLivePromptAudit, rewritePromptWithGuidance, updateLiveEffectivePrompt } from "./prompt-audit.ts";
 import { persistForegroundRunHistory, MAX_REMEMBERED_FOREGROUND_RUNS } from "./foreground-history.ts";
-import { resolveExecutionAgentScope } from "../../agents/agent-scope.ts";
+import { projectScopeRequiresTrustMessage, resolveExecutionAgentScope } from "../../agents/agent-scope.ts";
 import { handleManagementAction } from "../../agents/agent-management.ts";
 import { handleRefinementAction } from "../../agents/agent-refinements.ts";
 import { buildDoctorReport } from "../../extension/doctor.ts";
@@ -104,7 +104,7 @@ import { reconcileAsyncRun } from "../background/stale-run-reconciler.ts";
 import { resolveAsyncRootResultPath, waitForImportedAsyncRoot } from "../background/chain-root-attachment.ts";
 import { awaitExistingAsyncRun, claimWorkflowAwaitedResult } from "../background/await-async-run.ts";
 import { fallbackResultPayloadPathForSessionRun, resultFilePath, retireResultSnapshot, writeAsyncResultFile } from "../background/result-files.ts";
-import { attachRootChildrenToSteps, createNestedRoute, findNestedControlResult, inheritedNestedParentAddressOf, inheritedNestedRouteOf, nestedRunScope, resolveNestedAsyncDir, retainNestedLookupRoute, snapshotNestedEventFiles, updateForegroundNestedProjection, writeNestedControlRequest, writeNestedEvent, type NestedParentAddress, type NestedRoute, type NestedRunResolutionScope } from "../shared/nested-events.ts";
+import { attachRootChildrenToSteps, createNestedRoute, findNestedControlResult, inheritedNestedParentAddressOf, inheritedNestedRouteOf, nestedRunNotActiveMessage, nestedRunScope, resolveNestedAsyncDir, retainNestedLookupRoute, snapshotNestedEventFiles, updateForegroundNestedProjection, writeNestedControlRequest, writeNestedEvent, type NestedParentAddress, type NestedRoute, type NestedRunResolutionScope } from "../shared/nested-events.ts";
 import type { ChildRuntimeConfig } from "../shared/child-runtime-config.ts";
 import { resolveSubagentRunId, type ResolvedSubagentRunId } from "../background/run-id-resolver.ts";
 import { formatNestedRunStatusLines } from "../shared/nested-render.ts";
@@ -450,7 +450,7 @@ interface ExecutorDeps {
 	tempArtifactsDir: string;
 	getSubagentSessionRoot: (parentSessionFile: string | null) => string;
 	expandTilde: (p: string) => string;
-	discoverAgents: (cwd: string, scope: AgentScope, preferredModelProvider?: string) => { agents: AgentConfig[]; disabledAgents?: string[]; agentDiagnostics?: AgentDiscoveryDiagnostic[]; modelScope?: ModelScopeConfig; maxThinking?: AgentConfig["maxThinking"]; cwd?: string; scope?: AgentScope; directories?: UnknownAgentDiagnosticContext["directories"] };
+	discoverAgents: (cwd: string, scope: AgentScope, preferredModelProvider?: string, options?: { projectTrusted?: boolean }) => { agents: AgentConfig[]; disabledAgents?: string[]; agentDiagnostics?: AgentDiscoveryDiagnostic[]; modelScope?: ModelScopeConfig; maxThinking?: AgentConfig["maxThinking"]; cwd?: string; scope?: AgentScope; directories?: UnknownAgentDiagnosticContext["directories"] };
 	discoverAgentsAll?: typeof discoverAgentsAll;
 	onAgentsChanged?: () => void;
 	allowMutatingManagementActions?: boolean;
@@ -632,6 +632,20 @@ function trustedSessionRootsForStatus(ctx: ExtensionContext, deps: ExecutorDeps)
 /** Children follow the launching session's trust; hosts older than Pi's trust concept keep Pi's default. */
 function sessionProjectTrust(ctx: ExtensionContext): boolean | undefined {
 	return typeof ctx.isProjectTrusted === "function" ? ctx.isProjectTrusted() : undefined;
+}
+
+/** Agent and settings discovery follows the launching session's trust, like the child itself. */
+function withSessionProjectTrust(deps: ExecutorDeps, ctx: ExtensionContext): ExecutorDeps {
+	if (sessionProjectTrust(ctx) !== false) return deps;
+	return { ...deps, discoverAgents: (cwd, scope, preferredModelProvider) => deps.discoverAgents(cwd, scope, preferredModelProvider, { projectTrusted: false }) };
+}
+
+function projectScopeTrustError(params: SubagentParamsLike, ctx: ExtensionContext): AgentToolResult<Details> | undefined {
+	if (sessionProjectTrust(ctx) !== false || resolveExecutionAgentScope(params.agentScope) !== "project") return undefined;
+	const action = typeof params.action === "string" ? params.action.trim() : undefined;
+	// These actions resolve agents in the requested scope; management actions are left to their own handlers.
+	if (action !== undefined && action !== "resume" && action !== "validate" && action !== "append-step") return undefined;
+	return buildRequestedModeError(params, projectScopeRequiresTrustMessage(resolveRequestedCwd(ctx.cwd, params.cwd)));
 }
 
 function spawnBudgetErrorResult(message: string, mode: "single" | "parallel" | "chain"): AgentToolResult<Details> {
@@ -1180,7 +1194,7 @@ function interruptAsyncRun(
 	kill?: (pid: number, signal?: NodeJS.Signals | 0) => boolean,
 	location?: { asyncDir: string | null; resolvedId?: string },
 ): AgentToolResult<Details> | null {
-	const target = getAsyncInterruptTarget(state, runId, location);
+	const target = getAsyncInterruptTarget(state, runId, location, { fallbackToNewest: runId === undefined });
 	if (!target) return null;
 	const status = reconcileAsyncRun(target.asyncDir, omitUndefinedProperties({ kill })).status;
 	if (!status || status.state !== "running" || typeof status.pid !== "number") {
@@ -1375,6 +1389,7 @@ function appendStepToAsyncChain(input: {
 		cwd: input.ctx.cwd,
 		currentSessionId: resolveCurrentSessionId(input.ctx.sessionManager),
 		parentSessionId: input.ctx.sessionManager.getSessionId() ?? undefined,
+		parentSessionFile: input.ctx.sessionManager.getSessionFile() ?? undefined,
 		currentModelProvider: parentModel?.provider,
 		currentModel: parentModel,
 		scopedModelIds: scopedModelIdsFromContext(input.ctx),
@@ -1680,9 +1695,15 @@ async function interruptNestedRun(target: ResolvedSubagentRunId & { kind: "neste
 	if (run.state === "failed") return { content: [{ type: "text", text: `Nested run ${run.id} has failed and cannot be interrupted.` }], isError: true, details: { mode: "management", results: [] } };
 	if (run.state === "paused") return { content: [{ type: "text", text: `Nested run ${run.id} is already paused.` }], isError: true, details: { mode: "management", results: [] } };
 	const result = await sendNestedControlRequest(target, "interrupt");
-	if (result) return { content: [{ type: "text", text: result.message }], ...(result.ok ? {} : { isError: true }), details: { mode: "management", results: [] } };
+	// The owner's foreground map cannot address a detached async child. Only
+	// that missing-route response may use the existing authorized async inbox;
+	// other owner refusals must remain authoritative.
+	const missingForegroundRoute = result?.ok === false && result.message === nestedRunNotActiveMessage(run.id);
+	if (result && !missingForegroundRoute) return { content: [{ type: "text", text: result.message }], ...(result.ok ? {} : { isError: true }), details: { mode: "management", results: [] } };
 	const direct = directNestedAsyncInterrupt(target);
 	if (direct) return direct;
+	// No async inbox either: the owner's own answer is the accurate one.
+	if (result) return { content: [{ type: "text", text: result.message }], isError: true, details: { mode: "management", results: [] } };
 	return { content: [{ type: "text", text: `Nested run ${run.id} owner is not reachable and no safe direct async interrupt fallback is available.` }], isError: true, details: { mode: "management", results: [] } };
 }
 
@@ -1819,6 +1840,7 @@ async function resumeExternalJobFollowUp(input: {
 			cwd: input.requestCwd,
 			currentSessionId,
 			parentSessionId: input.ctx.sessionManager.getSessionId() ?? undefined,
+			parentSessionFile: input.ctx.sessionManager.getSessionFile() ?? undefined,
 			currentModelProvider: parentModel?.provider,
 			currentModel: parentModel,
 			scopedModelIds: scopedModelIdsFromContext(input.ctx),
@@ -2102,6 +2124,7 @@ async function resumeAsyncRun(input: {
 				cwd: input.requestCwd,
 				currentSessionId: input.deps.state.currentSessionId,
 				parentSessionId: input.ctx.sessionManager.getSessionId() ?? undefined,
+				parentSessionFile: input.ctx.sessionManager.getSessionFile() ?? undefined,
 				currentModelProvider: parentModel?.provider,
 				currentModel: parentModel,
 				scopedModelIds: scopedModelIdsFromContext(input.ctx),
@@ -2235,6 +2258,7 @@ async function resumeAsyncRun(input: {
 			cwd: input.requestCwd,
 			currentSessionId: input.deps.state.currentSessionId,
 			parentSessionId: input.ctx.sessionManager.getSessionId() ?? undefined,
+			parentSessionFile: input.ctx.sessionManager.getSessionFile() ?? undefined,
 			currentModelProvider: parentModel?.provider,
 			currentModel: parentModel,
 			scopedModelIds: scopedModelIdsFromContext(input.ctx),
@@ -3555,6 +3579,7 @@ async function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): Pro
 		cwd: ctx.cwd,
 		currentSessionId: data.parentSessionId!,
 		parentSessionId: data.parentPiSessionId,
+		parentSessionFile: ctx.sessionManager.getSessionFile() ?? undefined,
 		currentModelProvider: parentModel?.provider,
 		currentModel: parentModel,
 		scopedModelIds: data.scopedModelIds,
@@ -4257,6 +4282,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 	const interruptController = new AbortController();
 	let detachForeground: ((reason?: string) => boolean) | undefined;
 	let childSessionControls: ForegroundChildSessionControls | undefined;
+	let pendingRuntimeStop: string | undefined;
 	const foregroundControl = deps.state.foregroundControls.get(runId);
 	const syncHerdrForegroundChild = () => {
 		if (!foregroundControl?.parentWorkflowRunId) return;
@@ -4325,6 +4351,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 		? new Promise<Awaited<ReturnType<typeof runSync>>>((resolve) => { resolveDetachedWorkflowChild = resolve; })
 		: undefined;
 	try {
+		const childSessionFile = sessionFileForTask(params.agent!, 0, modelOverride, modelOverrideFromParent, modelOrigin);
 		const launched = await runSync(ctx.cwd, agents, params.agent!, task, compactOptional<Parameters<typeof runSync>[4]>({
 			machine: foregroundMachine,
 			parentProviderRegistry: ctx.modelRegistry,
@@ -4333,9 +4360,13 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 			permissions: deps.config.permissions,
 			runtimeSnapshotHost: deps.pi,
 			parentSessionId: ctx.sessionManager.getSessionId() ?? undefined,
+			parentSessionFile: ctx.sessionManager.getSessionFile() ?? undefined,
 			requiredExtensions,
 			childRuntime: deps.childRuntime,
-			onChildSession: (controls) => { childSessionControls = controls; },
+			onChildSession: (controls) => {
+				childSessionControls = controls;
+				if (pendingRuntimeStop) controls.stop(pendingRuntimeStop);
+			},
 			context: data.contextPolicy.contextForAgent(params.agent!),
 			unknownAgentDiagnosticContext: data.unknownAgentDiagnosticContext,
 			runFanoutBudget: params.runFanoutAdmitted ? data.runFanoutBudget : { ...data.runFanoutBudget, parentPath: `${data.runFanoutBudget.parentPath ? `${data.runFanoutBudget.parentPath}/` : ""}single` },
@@ -4348,7 +4379,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 			intercomEvents: deps.pi.events,
 			runId,
 			sessionDir: sessionDirForIndex(0),
-			sessionFile: sessionFileForTask(params.agent!, 0, modelOverride, modelOverrideFromParent, modelOrigin),
+			sessionFile: childSessionFile,
 			share: shareEnabled,
 			artifactsDir: artifactConfig.enabled ? artifactsDir : undefined,
 			artifactConfig,
@@ -4389,6 +4420,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 				detachForeground = detach;
 			},
 			onDetachedExit: async (result) => {
+				if (foregroundControl) foregroundControl.stopForRuntimeReplacement = undefined;
 				if (resolveDetachedWorkflowChild) {
 					resolveDetachedWorkflowChild(result);
 					return;
@@ -4436,6 +4468,18 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 			capabilityCeiling: data.capabilityCeiling,
 			allowZeroToolBudget: data.allowZeroToolBudget && effectiveToolBudget.toolBudget === data.toolBudget,
 		}));
+		if (launched.detached && foregroundControl) {
+			// Record the stop before aborting so the next runtime's history restore finds it.
+			foregroundControl.stopForRuntimeReplacement = () => {
+				// The detach receipt predates the session file that resume needs.
+				const sessionFile = childSessionFile && fs.existsSync(childSessionFile) ? childSessionFile : undefined;
+				const stopped = { ...launched, detached: undefined, stopped: true, exitCode: 1, error: RUNTIME_REPLACED_STOP_ERROR, finalOutput: RUNTIME_REPLACED_STOP_ERROR, sessionFile };
+				rememberForegroundRun(deps.state, { modelResponseAliases, runId, mode: "single", cwd: singleCwd, sessionId: data.parentSessionId, results: [stopped], params, effectiveOutput, effectiveOutputMode, extensionBindings: params.extensionBindings, requiredExtensions });
+				// A child detached during creation has no controls yet; stop it as soon as they arrive.
+				if (childSessionControls) childSessionControls.stop(RUNTIME_REPLACED_STOP_ERROR);
+				else pendingRuntimeStop = RUNTIME_REPLACED_STOP_ERROR;
+			};
+		}
 		r = launched.detached && detachedWorkflowChild ? await detachedWorkflowChild : launched;
 	} catch (error) {
 		await cleanupSingleWorktree();
@@ -4802,6 +4846,7 @@ function workflowSteerReceipt(key: string, result: AgentToolResult<Details>): Wo
 }
 
 const CHILD_SESSION_NOT_RUNNING_YET = "Child session is not running yet.";
+const RUNTIME_REPLACED_STOP_ERROR = "Subagent stopped because the pi-subagents runtime that ran it was replaced (reload or session switch).";
 const MAX_WORKFLOW_RESUME_HINT_BYTES = 1024;
 const MAX_WORKFLOW_CHILD_RUN_ID_BYTES = 256;
 const WORKFLOW_RESUME_HINT_PARENT_STATES = new Set(["complete", "failed", "partial"]);
@@ -5356,6 +5401,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 	/** Scheduled state visible to the current runtime supervisor owner only. */
 	getCurrentSupervisorOwnerStates: () => Iterable<SubagentState>;
 } {
+	const executorDeps = deps;
 	const delegatedThinkingOverrides = new WeakMap<object, AgentConfig["thinking"]>();
 	const delegatedZeroToolBudgets = new WeakSet<object>();
 	const delegatedExecutions = new WeakSet<object>();
@@ -5385,6 +5431,9 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		preserveActiveSession = false,
 		parentModelOverride?: ParentModel | null,
 	): Promise<AgentToolResult<Details>> => {
+		const projectScopeError = projectScopeTrustError(params, ctx);
+		if (projectScopeError) return projectScopeError;
+		const deps = withSessionProjectTrust(executorDeps, ctx);
 		const workflowLaunchObserver = workflowLaunchObservers.get(params);
 		const inheritedUsageBudget = workflowOwnedUsageBudgets.get(params);
 		const retainedRequiredExtensions = workflowRetainedRequiredExtensions.get(params);
@@ -6174,9 +6223,9 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 								const journalFingerprint = workflowJournalFingerprints.get(notification.childKey);
 								if (journalFingerprint) appendWorkflowChildJournal(asyncDir, { type: "settle", key: notification.childKey, fingerprint: journalFingerprint, result: notification.result });
 								// Fresh, journal-reused and re-attached children all settle here, so their rows take usage from the same result.
-								const settledResults = notification.result.results;
-								const settledStep = settledResults?.length ? status.steps?.find((candidate) => candidate.workflowKey === notification.childKey) : undefined;
-								if (settledResults?.length && settledStep) {
+								const settledResults = notification.result.results ?? [];
+								const settledStep = settledResults.length ? status.steps?.find((candidate) => candidate.workflowKey === notification.childKey) : undefined;
+								if (settledStep) {
 									const usage = sumResultsUsage(settledResults);
 									settledStep.tokens = { input: usage.input, output: usage.output, total: usage.input + usage.output };
 									if (usage.turns > 0) settledStep.turnCount = usage.turns;
