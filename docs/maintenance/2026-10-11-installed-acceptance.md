@@ -25,6 +25,6 @@ ssot: false
 
 ## Installed readback
 
-Every one of the 1,342 files in the downloaded release tarball was compared byte-for-byte with the permanent installed directory. All files matched. A provider-free RPC smoke loaded the installed package and exposed the expected `subagent`, `subagents-guide`, `subagents-fleet`, `subagents-doctor`, `subagents-stop`, `skill:pi-subagents`, and related commands; provider requests were 0.
+Every one of the 1,342 files in the downloaded release tarball was compared byte-for-byte with the permanent installed directory. All files matched. A provider-free RPC smoke loaded the installed package and exposed the expected `subagents`, `subagents-guide`, `subagents-fleet`, `subagents-doctor`, `subagents-stop`, `skill:pi-subagents`, and related commands; provider requests were 0.
 
 The local maintenance page subsequently reported `0.77.0-fork.1`, release manifest source `5c8002e51`, and the maintained fork source/installation association. Community main later advanced by one upstream commit; that newer community fix is not silently claimed as part of this immutable release. Disk installation does not imply that already-running Pi processes or children have hot-reloaded the package; restart only after active work is settled.
