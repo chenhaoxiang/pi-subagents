@@ -22,7 +22,7 @@ Applies only to chenhaoxiang/pi-subagents. The community project remains [nicoba
 
 ## Baseline for this release
 
-Version **0.76.1-fork.3** integrates reviewed community main through `d7ac44bdf95b42026720482cfa9f826df0fd9aee` and the previously installed model-pool repair `5a69711e` (replayed with provenance). Guarded fallback, activity-based idle timeout, runner/Pi compatibility and the fork background-wait timeout contract are retained. The old experimental source is preserved before installation; it is not silently discarded. See [upgrade evidence and installation boundaries](maintenance/2026-10-10-community-performance.md).
+Version **0.77.0-fork.1** integrates reviewed community main through `5808e94199735b399fed637e6fbd2559ec3b4620` while retaining the fork's heterogeneous fallback, activity-based idle timeout, runner/Pi compatibility, host fail-closed checks and background-wait contract. The previous `0.76.1-fork.3` source and package remain available for rollback; they are not silently discarded. See [upgrade evidence and installation boundaries](maintenance/2026-10-11-community-0.77.0.md).
 
 ## Publish every version
 
@@ -37,9 +37,9 @@ Version **0.76.1-fork.3** integrates reviewed community main through `d7ac44bdf9
 
 ## Installation
 
-See [upgrade evidence and installation boundaries](maintenance/2026-10-10-community-performance.md) for the current source, release and installed-acceptance record.
+See [upgrade evidence and installation boundaries](maintenance/2026-10-11-community-0.77.0.md) for the current source, release and installed-acceptance record.
 
-Prefer the pinned git command in README. For offline/artifact installs, download the three release assets into a temporary directory, verify the checksums, then extract the package into a permanent user-owned package directory and run `pi install /absolute/path/to/package`. Do not leave an active install under a temporary release directory. Restart Pi after this upgrade. The 0.76.1 update detector rejects reload when imported modules belong to an old in-place version; disk updates do not replace loaded code. Let active work finish before restarting.
+Prefer the pinned git command in README. For offline/artifact installs, download the three release assets into a temporary directory, verify the checksums, then extract the package into a permanent user-owned package directory and run `pi install /absolute/path/to/package`. Do not leave an active install under a temporary release directory. Restart Pi after this upgrade. The 0.77.0 update detector rejects reload when imported modules belong to an old in-place version; disk updates do not replace loaded code. Let active work finish before restarting.
 
 Keep the previous release/source available for rollback. Never force-stop unrelated active children or silently replace a custom experimental installed package.
 

@@ -61,7 +61,7 @@ import { clearSlashSnapshots, getSlashRenderableSnapshot, resolveSlashMessageDet
 import { resolveWaitToolConfig } from "../runs/background/subagent-wait.ts";
 import { registerWaitTool } from "../runs/background/wait-tool.ts";
 import { registerSubagentToolActivation } from "./tool-activation.ts";
-import { registerPinnedTool } from "./declaration-pinning.ts";
+import { recordedPromptSection, registerPinnedTool } from "./declaration-pinning.ts";
 import { createWaitSubscriptionManager } from "../runs/background/wait-subscriptions.ts";
 import { drainOutstandingWork } from "../runs/background/auto-drain.ts";
 import registerSubagentNotify from "../runs/background/notify.ts";
@@ -108,6 +108,8 @@ export { loadConfig, resolveAsyncByDefault } from "./config.ts";
 const SLOW_RELOAD_PHASE_MS = 250;
 // Long enough for Pi to finish starting; loading the executor blocks the event loop for tens of ms.
 const MODULE_PRELOAD_DELAY_MS = 1_000;
+const COMPACTION_RESUME_POLL_MS = 50;
+const COMPACTION_RESUME_DEADLINE_MS = 10_000;
 const RUNTIME_REGISTRY_STORE_KEY = "__piSubagentRuntimeRegistry";
 
 type SubagentExecutorModule = typeof import("../runs/foreground/subagent-executor.ts");
@@ -346,7 +348,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 
 	// Every notice that wakes the parent goes through parentWake; the watchdog wakes only inside a run.
 	const parentWake = createParentWake(pi);
-	const wakingPi = { events: pi.events, sendMessage: parentWake.sendMessage, on: pi.on };
+	const wakingPi = { events: pi.events, sendMessage: parentWake.sendMessage, isHeld: parentWake.isHeld, on: pi.on };
 	const supervisorChannel = createNativeSupervisorChannel(pi, state, {
 		// Owner states are created only by scheduled execution, which loads the executor first.
 		getCurrentOwnerStates: () => executor?.getCurrentSupervisorOwnerStates() ?? [],
@@ -396,7 +398,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	});
 	let refreshResultDelivery = () => {};
 	let advertisedAgents: AgentConfig[] = [];
-	let advertisedContext: Pick<ExtensionContext, "cwd" | "model"> | undefined;
+	let advertisedContext: Pick<ExtensionContext, "cwd" | "model"> & { projectTrusted?: boolean } | undefined;
 	let advertisementGeneration = 0;
 	let globalRoot: string | null = null;
 	let advertisementReady: Promise<void | { error: unknown }> = Promise.resolve();
@@ -414,7 +416,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		advertisedAgents = [];
 		if (!advertisedContext) return;
 		clearAgentDiscoveryCache();
-		advertisedAgents = discoverAgents(advertisedContext.cwd, "both", advertisedContext.model?.provider, { globalNpmRoot: globalRoot }).agents
+		advertisedAgents = discoverAgents(advertisedContext.cwd, "both", advertisedContext.model?.provider, { globalNpmRoot: globalRoot, projectTrusted: advertisedContext.projectTrusted }).agents
 			.filter((agent) => agent.advertise === true);
 	};
 	const beginAdvertisement = (ctx: ExtensionContext) => {
@@ -422,7 +424,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		notifySessionChange();
 		sessionChanged = new Promise<void>((resolve) => { notifySessionChange = resolve; });
 		advertisedAgents = [];
-		advertisedContext = { cwd: ctx.cwd, model: ctx.model };
+		advertisedContext = { cwd: ctx.cwd, model: ctx.model, projectTrusted: typeof ctx.isProjectTrusted === "function" ? ctx.isProjectTrusted() : undefined };
 		globalRoot = null;
 		advertisementReady = resolveGlobalNpmRoot().then((root) => {
 			if (generation !== advertisementGeneration) return;
@@ -442,9 +444,9 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		if (scheduledRunManager.observedCompletionRunIds().size > 0) return true;
 		return missionObserverResultCandidateFiles(DIRS.results).length > 0;
 	};
-	const discoverAgentsForRuntime = (cwd: string, scope: AgentScope, preferredModelProvider?: string) => {
-		if (listRuntimeAgentConfigs(pi).length === 0) return discoverAgents(cwd, scope, preferredModelProvider, { globalNpmRoot: globalRoot });
-		const snapshot = discoverAgentSnapshot(cwd, scope, preferredModelProvider, { includeChains: false, globalNpmRoot: globalRoot });
+	const discoverAgentsForRuntime = (cwd: string, scope: AgentScope, preferredModelProvider?: string, options: { projectTrusted?: boolean } = {}) => {
+		if (listRuntimeAgentConfigs(pi).length === 0) return discoverAgents(cwd, scope, preferredModelProvider, { globalNpmRoot: globalRoot, projectTrusted: options.projectTrusted });
+		const snapshot = discoverAgentSnapshot(cwd, scope, preferredModelProvider, { includeChains: false, globalNpmRoot: globalRoot, projectTrusted: options.projectTrusted });
 		const discovered = snapshot.effective;
 		const all = snapshot.all;
 		const configuredAgents: AgentConfig[] = [
@@ -453,7 +455,8 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 			...all.user,
 			...all.project,
 		];
-		const merged = mergeRuntimeAgents(pi, discovered, configuredAgents, { cwd, scope, preferredModelProvider });
+		// Runtime agents take model settings from the scope discovery actually used.
+		const merged = mergeRuntimeAgents(pi, discovered, configuredAgents, { cwd, scope: discovered.scope, preferredModelProvider, projectTrusted: options.projectTrusted });
 		if (discovered.maxThinking === undefined) return merged;
 		return {
 			...merged,
@@ -714,7 +717,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		// Structured sections let Pi append a transcript delta instead of replacing the
 		// cached system prompt. Set the section on every turn it applies: Pi rebuilds the
 		// options each turn, and an unset turn records a removal.
-		const catalog = buildAdvertisedAgentCatalog(advertisedAgents, resolveCurrentSubagentCapabilityCeiling(sessionId));
+		const catalog = buildAdvertisedAgentCatalog(advertisedAgents, resolveCurrentSubagentCapabilityCeiling(sessionId), recordedPromptSection(pi, "advertised_subagents"));
 		if (catalog) event.systemPromptOptions.sections.advertised_subagents = catalog;
 	});
 
@@ -722,6 +725,13 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 
 	pi.on("agent_end", async (_event, ctx) => {
 		try {
+			// The run is still active here, so its signal tells a user stop (Esc) apart from a finished or failed run.
+			// Pi skips agent_before_settle after an abort. Background runs keep going, but they must not restart the parent.
+			if (ctx.hasUI && ctx.signal?.aborted) {
+				parentWake.userAborted();
+				const active = [...state.asyncJobs.values()].filter((job) => job.status === "queued" || job.status === "running").length;
+				if (active > 0) ctx.ui.notify(`${active} background subagent ${active === 1 ? "run is" : "runs are"} still active · /subagents-stop to stop ${active === 1 ? "it" : "them"}`, "info");
+			}
 			// A headless host may dispose the session as soon as this turn settles, so hand
 			// finished results to Pi now; Pi runs the queued completion turn after agent_end.
 			// A failed drain rejects without this step so its deadline stays exact.
@@ -940,6 +950,15 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 			programStatus.dispose(shutdownReason);
 			releaseHostSessionLiveness();
 			releaseHostSessionLiveness = () => {};
+			// Detached foreground children run in this runtime's memory, and the next runtime
+			// cannot see or control them, so stop each one and record it as stopped.
+			for (const control of state.foregroundControls.values()) {
+				try {
+					control.stopForRuntimeReplacement?.();
+				} catch (error) {
+					console.error(`Failed to stop detached foreground run ${control.runId}:`, error);
+				}
+			}
 			// Workflow continuations retain their launch context; abort them before
 			// teardown so a reload cannot launch through a stale context.
 			for (const controller of state.workflowControllers?.values() ?? []) {
@@ -1030,7 +1049,15 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		}
 	};
 
+	let compactionResumeTimer: ReturnType<typeof setTimeout> | undefined;
+	const hasActiveAsyncWork = () => [...state.asyncJobs.values()].some((job) => job.status === "queued" || job.status === "running");
+	const cancelCompactionResume = () => {
+		if (compactionResumeTimer) clearTimeout(compactionResumeTimer);
+		compactionResumeTimer = undefined;
+	};
+
 	pi.on("agent_start", () => {
+		cancelCompactionResume();
 		parentWake.agentStarted();
 		resumeWidgetsAfterCompaction();
 		herdrStatusBridge.agentStarted();
@@ -1048,18 +1075,36 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		if (event.reason !== "manual") suspendWidgetsForCompaction();
 	});
 
+	// Pi emits session_compact before it clears its compaction state, and a parent that is still
+	// compacting can only be woken without before_agent_start (earendil-works/pi#5581). Wait for the
+	// parent to go idle so the resume takes parentWake's prompt() path. A run that starts first resumes it.
 	pi.on("session_compact", (event) => {
 		if (event.reason !== "manual") return;
-		const hasActiveAsyncWork = [...state.asyncJobs.values()].some((job) => job.status === "queued" || job.status === "running");
-		if (!hasActiveAsyncWork || !withLastUiContext(() => true)) return;
-		parentWake.sendMessage(
-			{
-				customType: "subagent-compaction-resume",
-				content: "Compaction is complete. Resume the parent task now; background subagent results will arrive separately when ready.",
-				display: false,
-			},
-			{ triggerTurn: true },
-		);
+		if (!hasActiveAsyncWork() || !withLastUiContext(() => true)) return;
+		cancelCompactionResume();
+		const sessionId = state.currentSessionId;
+		const deadline = Date.now() + COMPACTION_RESUME_DEADLINE_MS;
+		const resumeWhenIdle = () => {
+			compactionResumeTimer = undefined;
+			if (state.currentSessionId !== sessionId || !hasActiveAsyncWork()) return;
+			const idle = withLastUiContext((ctx) => ctx.isIdle());
+			if (idle === undefined) return;
+			if (!idle) {
+				if (Date.now() < deadline) compactionResumeTimer = setTimeout(resumeWhenIdle, COMPACTION_RESUME_POLL_MS);
+				return;
+			}
+			// Pi's compact() aborts a live run first, which set the user-abort hold; this resume is deliberate.
+			parentWake.releaseHold();
+			parentWake.sendMessage(
+				{
+					customType: "subagent-compaction-resume",
+					content: "Compaction is complete. Resume the parent task now; background subagent results will arrive separately when ready.",
+					display: false,
+				},
+				{ triggerTurn: true },
+			);
+		};
+		compactionResumeTimer = setTimeout(resumeWhenIdle, COMPACTION_RESUME_POLL_MS);
 	});
 
 	pi.on("session_start", (event, ctx) => {
@@ -1096,6 +1141,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.on("session_shutdown", async (event) => {
+		cancelCompactionResume();
 		completionNotifier.sessionShutdown(event?.reason);
 		parentWake.sessionShutdown(event?.reason);
 		runtimeEntry.cleanup(event?.reason);

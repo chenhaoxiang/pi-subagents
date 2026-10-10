@@ -3,7 +3,6 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { beforeEach, describe, it } from "node:test";
-import { initTheme } from "@earendil-works/pi-coding-agent";
 import { visibleWidth } from "@earendil-works/pi-tui";
 
 import { registerAgent } from "../../src/api/agents.ts";
@@ -11,7 +10,6 @@ import { clearRuntimeAgentsForPi } from "../../src/agents/runtime-agent-registry
 import { scheduledRunStorePath } from "../../src/runs/background/scheduled-runs.ts";
 import { updateActiveRunIndex } from "../../src/runs/background/active-run-index.ts";
 import { getArtifactPaths, getArtifactsDir } from "../../src/shared/artifacts.ts";
-import { renderSubagentMessage } from "../../src/tui/subagent-messages.ts";
 import { ASYNC_DIR, DIRS } from "../../src/shared/types.ts";
 import type { WatchdogReviewFunction } from "../../src/watchdog/runtime.ts";
 
@@ -154,6 +152,7 @@ async function withIsolatedHome<T>(fn: () => Promise<T>): Promise<T> {
 function createCommandContext(
 	overrides: Partial<{
 		cwd: string;
+		mode: "tui" | "rpc" | "print";
 		hasUI: boolean;
 		custom: (...args: unknown[]) => Promise<unknown>;
 		notify: (message: string, type?: string) => void;
@@ -175,6 +174,7 @@ function createCommandContext(
 ) {
 	return {
 		cwd: overrides.cwd ?? process.cwd(),
+		mode: overrides.mode ?? (overrides.hasUI ? "tui" : "print"),
 		hasUI: overrides.hasUI ?? false,
 		ui: {
 			notify: overrides.notify ?? ((_message: string) => {}),
@@ -235,6 +235,7 @@ async function captureSlashCommandParams(
 	args: string,
 	cwd: string,
 	setup?: (pi: RuntimeSlashPi) => void,
+	ctxOverrides: Parameters<typeof createCommandContext>[0] = {},
 ): Promise<{ params: unknown; notifications: string[] }> {
 	return withIsolatedHome(async () => {
 		const commands = new Map<string, RegisteredSlashCommand>();
@@ -274,6 +275,7 @@ async function captureSlashCommandParams(
 				notify: (message) => {
 					notifications.push(message);
 				},
+				...ctxOverrides,
 			}));
 			return { params: requestedParams, notifications };
 		} finally {
@@ -480,15 +482,8 @@ describe("subagents watchdog slash command", { skip: !available ? "watchdog comm
 			assert.equal(blocker.details?.severity, "blocker");
 			assert.equal(blocker.details?.importance, "high");
 			assert.match(blocker.content ?? "", /<blocker_guidance>/);
-
-			// Expanded blocks render markdown with Pi's theme, which Pi initializes at startup.
-			initTheme("dark");
-			const theme = { fg: (_name: string, value: string) => value, bg: (_name: string, value: string) => value, bold: (value: string) => value };
-			// SAFETY: the renderer reads only fg, bg, and bold from Pi's theme.
-			const rendered = renderSubagentMessage({ customType: blocker.customType ?? "", content: blocker.content ?? "", details: blocker.details }, { expanded: true }, theme as never)!.render(100).join("\n");
-			assert.match(rendered, /\[subagent\] watchdog blocker/);
-			assert.match(rendered, /Subagent watchdog Blocker \(displayed\): check the blocker/);
-			assert.match(rendered, /Manual \/subagents-watchdog test blocker message/);
+			assert.match(blocker.content ?? "", /<summary>check the blocker<\/summary>/);
+			assert.match(blocker.content ?? "", /Manual \/subagents-watchdog test blocker message/);
 		});
 	});
 
@@ -746,6 +741,13 @@ describe("slash command custom message delivery", { skip: !available ? "slash-co
 		let opened = 0;
 		await commands.get("subagents-fleet")!.handler("", createCommandContext({ hasUI: true, custom: async () => { opened += 1; return undefined; } }));
 		assert.equal(opened, 1);
+	});
+
+	it("/subagents-fleet answers with the fleet status over RPC, where ui.custom is a no-op", async () => {
+		let opened = 0;
+		const { params } = await captureSlashCommandParams("subagents-fleet", "", process.cwd(), undefined, { mode: "rpc", hasUI: true, custom: async () => { opened += 1; return undefined; } });
+		assert.equal(opened, 0);
+		assert.deepEqual(params, { action: "status", view: "fleet" });
 	});
 
 	it("/subagents-stop keeps the selector within its allocated width", async () => {
