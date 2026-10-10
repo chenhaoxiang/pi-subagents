@@ -5,7 +5,7 @@ status: active
 truth_mode: maintained
 created: 2026-10-10
 verified: 2026-10-10
-verified_by: manual
+verified_by: source-ci-install-readback
 ---
 
 # 0.76.1-fork.3 community performance integration
@@ -29,8 +29,14 @@ The full local macOS suite is not green. Initial full unit execution used a Git-
 
 ## Independent review repair
 
-The first fresh-context same-model review found one P1: inherited-provider diagnostic advice changed the error string consumed by the exact pre-tool fallback classifier. The repair stores the original/displayed pair in a private WeakMap, reusing the original only while the attempt error is still that exact diagnostic-bearing value. Later errors and tool activity retain the existing fail-closed checks. Nine synthetic model-diagnostic tests pass, including inherited provider plus first 429 plus fallback success and no replay after tool execution. The 21 wait/description regressions and both native activation cases pass; typecheck and compiled rebuild pass. The earlier CI failed only the discovery-description string contract; those strings are restored. Exact updated-head CI and independent recheck are still required.
+The first fresh-context same-model review found one P1: inherited-provider diagnostic advice changed the error string consumed by the exact pre-tool fallback classifier. The repair stores the original/displayed pair in a private WeakMap, reusing the original only while the attempt error is still that exact diagnostic-bearing value. Later errors and tool activity retain the existing fail-closed checks. Nine synthetic model-diagnostic tests pass, including inherited provider plus first 429 plus fallback success and no replay after tool execution. The 21 wait/description regressions and both native activation cases pass; typecheck and compiled rebuild pass. The earlier CI failed only the discovery-description string contract; those strings are restored. The final updated-head CI and independent recheck are recorded below; the earlier failures remain part of the validation history.
 
 ## Delivery boundary
 
-This document starts as source-validation evidence. Source merge, release tag/assets, downloaded checksums, selected local package and real host loading will be recorded after they occur. The old immutable fork.2 package and active sessions are preserved; a settings change is not a hot upgrade.
+[PR #20](https://github.com/chenhaoxiang/pi-subagents/pull/20) merged normally as `295111b1a16f45872b3cedb4ff420ceefd24d7ab`. The final reviewed head was `3fd1dcbb78f6494767d3a6e1739d697a4b97fa20`; [CI run 37990003155](https://github.com/chenhaoxiang/pi-subagents/actions/runs/37990003155) passed all 17 checks. Fresh-context same-model review and bounded repair rechecks ended with no P0/P1/P2 findings. This is independent-context review, not heterogeneous-model review.
+
+[Release v0.76.1-fork.3](https://github.com/chenhaoxiang/pi-subagents/releases/tag/v0.76.1-fork.3) was rebuilt from the clean merged source, published with an exact-source manifest and SHA256SUMS, then downloaded afresh and verified. The compiled tarball SHA-256 is `4f26e44c06ff8ae15ec94b65c4a86e736621df811dcd0ad0f4edc07d1bcd1e06`. Release assets and tags remain immutable; this acceptance update does not replace them.
+
+The permanent versioned local package is selected in Pi settings. Fresh Pi `1.1.0-fork.1` offline discovery/load checks passed; all 12 runner host aliases resolved with no missing targets. The canonical checkout was fast-forwarded to the merged source and read back. The full local macOS-suite limits above remain; remote CI does not convert those failures into local passes.
+
+The old immutable fork.2 package and active sessions are preserved; a settings change is not a hot upgrade. Installation/rollback receipts remain owner-only. No real-provider request or long-running production child is claimed as part of this installed acceptance.

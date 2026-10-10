@@ -22,7 +22,7 @@ Applies only to chenhaoxiang/pi-subagents. The community project remains [nicoba
 
 ## Baseline for this release
 
-Version **0.76.1-fork.3** integrates reviewed community main through `d7ac44bdf95b42026720482cfa9f826df0fd9aee` and the previously installed model-pool repair `5a69711e` (replayed with provenance). Guarded fallback, activity-based idle timeout, runner/Pi compatibility and the fork background-wait timeout contract are retained. The old experimental source is preserved before installation; it is not silently discarded. See [upgrade evidence and installation boundaries](maintenance/2026-10-06-community-0.76.1.md).
+Version **0.76.1-fork.3** integrates reviewed community main through `d7ac44bdf95b42026720482cfa9f826df0fd9aee` and the previously installed model-pool repair `5a69711e` (replayed with provenance). Guarded fallback, activity-based idle timeout, runner/Pi compatibility and the fork background-wait timeout contract are retained. The old experimental source is preserved before installation; it is not silently discarded. See [upgrade evidence and installation boundaries](maintenance/2026-10-10-community-performance.md).
 
 ## Publish every version
 
@@ -37,7 +37,7 @@ Version **0.76.1-fork.3** integrates reviewed community main through `d7ac44bdf9
 
 ## Installation
 
-See the [0.76.1-fork.2 installed acceptance snapshot](maintenance/2026-10-08-pi-core-fork-installed.md) for owner-recorded exact-source/runtime evidence and limitations.
+See [upgrade evidence and installation boundaries](maintenance/2026-10-10-community-performance.md) for the current source, release and installed-acceptance record.
 
 Prefer the pinned git command in README. For offline/artifact installs, download the three release assets into a temporary directory, verify the checksums, then extract the package into a permanent user-owned package directory and run `pi install /absolute/path/to/package`. Do not leave an active install under a temporary release directory. Restart Pi after this upgrade. The 0.76.1 update detector rejects reload when imported modules belong to an old in-place version; disk updates do not replace loaded code. Let active work finish before restarting.
 

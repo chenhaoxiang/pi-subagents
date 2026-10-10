@@ -6,7 +6,7 @@ This file intentionally does not duplicate user-global or tool-level instruction
 
 ## Documentation map
 
-- [0.76.1-fork.3 performance and reliability upgrade](docs/maintenance/2026-10-10-community-performance.md): exact upstream integration, retained fork contracts, source/CI checks and installation boundaries.
+- [0.76.1-fork.3 performance and reliability upgrade](docs/maintenance/2026-10-10-community-performance.md): exact upstream integration, retained fork contracts, reviewed source/CI, immutable release and installed acceptance/restart boundaries.
 
 - [0.76.1-fork.2 installed acceptance](docs/maintenance/2026-10-08-pi-core-fork-installed.md): exact release/source, verified immutable install and no forced parent/child restart.
 
