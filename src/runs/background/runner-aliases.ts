@@ -30,8 +30,9 @@ export const HOST_PEER_ALIASES: ReadonlyArray<{ specifier: string; pkg: string; 
 	{ specifier: "typebox/value", pkg: "typebox", subpath: "./value" },
 ];
 
-/** Public Pi manifests introduce chord in 0.85.0 (absent through 0.84.4). */
-const CHORD_PEER_ALIASES = [
+/** Pi manifests declare chord from 0.85.0 through 1.1.x; earlier hosts and 1.2.0+ do not ship it. */
+const CHORD_PACKAGE = "@earendil-works/chord";
+const CHORD_PEER_ALIASES: typeof HOST_PEER_ALIASES = [
 	{ specifier: "@earendil-works/chord", pkg: "@earendil-works/chord", subpath: "." },
 	{ specifier: "@earendil-works/chord/context", pkg: "@earendil-works/chord", subpath: "./context" },
 ];
@@ -44,6 +45,8 @@ interface PackageManifest {
 	name?: unknown;
 	version?: unknown;
 	main?: unknown;
+	dependencies?: unknown;
+	optionalDependencies?: unknown;
 	exports?: unknown;
 }
 
@@ -151,17 +154,25 @@ function findPeerPackageDir(piPackageRoot: string, pkg: string, hostName: unknow
 	return candidates.find((candidate) => readManifest(candidate)?.name === pkg);
 }
 
+function declaresDependency(manifest: PackageManifest, pkg: string): boolean {
+	return [manifest.dependencies, manifest.optionalDependencies].some((deps) => !!deps && typeof deps === "object" && Object.hasOwn(deps, pkg));
+}
+
 /** The alias map the runner needs, or the specifiers that could not be resolved. */
 export function resolveHostPeerAliases(piPackageRoot: string): { aliases: Record<string, string>; missing: string[] } {
 	const aliases: Record<string, string> = {};
 	const missing: string[] = [];
 	const hostManifest = readManifest(piPackageRoot);
-	// Only known stable pre-chord versions may omit it. Unknown/prerelease
-	// hosts retain the required aliases, rather than hiding a broken install.
-	const stableVersion = typeof hostManifest?.version === "string" ? /^0\.(\d+)\.\d+$/.exec(hostManifest.version) : null;
-	const isPreChord = stableVersion !== null && Number(stableVersion[1]) < 85;
-	const required: ReadonlyArray<(typeof HOST_PEER_ALIASES)[number]> = [...HOST_PEER_ALIASES, ...(isPreChord ? [] : CHORD_PEER_ALIASES)];
-	for (const { specifier, pkg, subpath, optional } of required) {
+	// Only identified stable community/fork hosts may omit chord before 0.85 or
+	// from 1.2 onward. Declared-but-missing chord and unknown hosts fail closed.
+	const stableVersion = typeof hostManifest?.version === "string"
+		? /^(0|[1-9]\d{0,5})\.(0|[1-9]\d{0,5})\.(?:0|[1-9]\d{0,5})(?:-fork\.[1-9]\d{0,5})?$/.exec(hostManifest.version)
+		: null;
+	const knownChordless = stableVersion !== null && (Number(stableVersion[1]) === 0
+		? Number(stableVersion[2]) < 85
+		: Number(stableVersion[1]) > 1 || Number(stableVersion[2]) >= 2);
+	const chordRequired = !knownChordless || declaresDependency(hostManifest!, CHORD_PACKAGE);
+	for (const { specifier, pkg, subpath, optional } of [...HOST_PEER_ALIASES, ...CHORD_PEER_ALIASES]) {
 		const packageDir = findPeerPackageDir(piPackageRoot, pkg, hostManifest?.name);
 		const target = packageDir ? resolvePackageSubpath(packageDir, subpath) : undefined;
 		// Only a positively identified Pi 1.x host may omit the removed export; unknown
@@ -169,7 +180,7 @@ export function resolveHostPeerAliases(piPackageRoot: string): { aliases: Record
 		if (optional && packageDir && target === undefined && mayOmitAlias(hostManifest, specifier)) continue;
 		// Native loaders short-circuit resolution, so aliases must retain the real package's dependency scope.
 		if (target && fs.existsSync(target)) aliases[specifier] = fs.realpathSync(target);
-		else if (target !== undefined || !mayOmitAlias(hostManifest, specifier)) missing.push(specifier);
+		else if ((pkg !== CHORD_PACKAGE || chordRequired) && (target !== undefined || !mayOmitAlias(hostManifest, specifier))) missing.push(specifier);
 	}
 	return { aliases, missing };
 }

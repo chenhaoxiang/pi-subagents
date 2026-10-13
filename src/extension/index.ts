@@ -49,7 +49,7 @@ import { registerSlashCommands } from "../slash/slash-commands.ts";
 import { registerPromptTemplateDelegationBridge } from "../slash/prompt-template-bridge.ts";
 import { registerMainWatchdog } from "../watchdog/register-main.ts";
 import { registerSlashSubagentBridge } from "../slash/slash-bridge.ts";
-import { createNativeSupervisorChannel } from "../intercom/native-supervisor-channel.ts";
+import { createNativeSupervisorChannel, topLevelSupervisorTool } from "../intercom/native-supervisor-channel.ts";
 import { renderSubagentEntry, renderSubagentMessage, SUBAGENT_ENTRY_TYPES, SUBAGENT_MESSAGE_TYPES } from "../tui/subagent-messages.ts";
 import { registerHerdrStatusBridge, type HerdrStatusRun } from "../integrations/herdr-status.ts";
 import { registerProgramStatusReporter } from "../integrations/program-status.ts";
@@ -61,7 +61,8 @@ import { clearSlashSnapshots, getSlashRenderableSnapshot, resolveSlashMessageDet
 import { resolveWaitToolConfig } from "../runs/background/subagent-wait.ts";
 import { registerWaitTool } from "../runs/background/wait-tool.ts";
 import { registerSubagentToolActivation } from "./tool-activation.ts";
-import { recordedPromptSection, registerPinnedTool } from "./declaration-pinning.ts";
+import { recordedPromptSection, registerPinnedTool, setDeclarationPinning } from "./declaration-pinning.ts";
+import { buildActiveRunsSection } from "./active-runs-prompt.ts";
 import { createWaitSubscriptionManager } from "../runs/background/wait-subscriptions.ts";
 import { drainOutstandingWork } from "../runs/background/auto-drain.ts";
 import registerSubagentNotify from "../runs/background/notify.ts";
@@ -102,8 +103,6 @@ import {
 	type SubagentControlMessageDetails,
 } from "./control-notices.ts";
 import { showUpgradeNotice } from "./upgrade-notice.ts";
-
-export { loadConfig, resolveAsyncByDefault } from "./config.ts";
 
 const SLOW_RELOAD_PHASE_MS = 250;
 // Long enough for Pi to finish starting; loading the executor blocks the event loop for tens of ms.
@@ -289,6 +288,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	cleanupOldChainDirs();
 
 	const config = loadConfig();
+	setDeclarationPinning(pi, config.pinToolDeclarations !== false);
 	const waitToolConfig = resolveWaitToolConfig(config.waitTool);
 	const asyncByDefault = resolveAsyncByDefault(config);
 	const fleetViewEnabled = config.fleetView !== false;
@@ -437,9 +437,10 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 			return { error };
 		});
 	};
+	const activeAsyncJobCount = () => [...state.asyncJobs.values()].filter((job) => job.status === "queued" || job.status === "running").length;
 	const hasResultDeliveryDemand = () => {
 		if (owedResultRunIds.size > 0) return true;
-		if ([...state.asyncJobs.values()].some((job) => job.status === "queued" || job.status === "running")) return true;
+		if (activeAsyncJobCount() > 0) return true;
 		if (state.foregroundControls.size > 0) return true;
 		if (scheduledRunManager.observedCompletionRunIds().size > 0) return true;
 		return missionObserverResultCandidateFiles(DIRS.results).length > 0;
@@ -709,14 +710,19 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	};
 
 	registerPinnedTool(pi, tool);
+	// Declared with the same definition children use, so a fork's tool list equals this session's.
+	registerPinnedTool(pi, topLevelSupervisorTool());
 
 	pi.on("before_agent_start", async (event, ctx) => {
 		await waitForAdvertisement();
-		if (!event.systemPromptOptions.selectedTools.includes("subagent")) return;
 		const sessionId = state.currentSessionId ?? resolveCurrentSessionId(ctx.sessionManager);
 		// Structured sections let Pi append a transcript delta instead of replacing the
 		// cached system prompt. Set the section on every turn it applies: Pi rebuilds the
 		// options each turn, and an unset turn records a removal.
+		// Active runs are listed even when only subagents_enable is selected, e.g. runs re-adopted after a resume.
+		const activeRuns = config.activeRunsPrompt === true ? buildActiveRunsSection(state.asyncJobs.values(), sessionId) : undefined;
+		if (activeRuns) event.systemPromptOptions.sections.active_subagents = activeRuns;
+		if (!event.systemPromptOptions.selectedTools.includes("subagent")) return;
 		const catalog = buildAdvertisedAgentCatalog(advertisedAgents, resolveCurrentSubagentCapabilityCeiling(sessionId), recordedPromptSection(pi, "advertised_subagents"));
 		if (catalog) event.systemPromptOptions.sections.advertised_subagents = catalog;
 	});
@@ -729,8 +735,8 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 			// Pi skips agent_before_settle after an abort. Background runs keep going, but they must not restart the parent.
 			if (ctx.hasUI && ctx.signal?.aborted) {
 				parentWake.userAborted();
-				const active = [...state.asyncJobs.values()].filter((job) => job.status === "queued" || job.status === "running").length;
-				if (active > 0) ctx.ui.notify(`${active} background subagent ${active === 1 ? "run is" : "runs are"} still active · /subagents-stop to stop ${active === 1 ? "it" : "them"}`, "info");
+				const active = activeAsyncJobCount();
+				if (active > 0) ctx.ui.notify(`${active} background subagent run${active === 1 ? " is" : "s are"} still active · /subagents-stop`, "info");
 			}
 			// A headless host may dispose the session as soon as this turn settles, so hand
 			// finished results to Pi now; Pi runs the queued completion turn after agent_end.
@@ -1050,11 +1056,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	};
 
 	let compactionResumeTimer: ReturnType<typeof setTimeout> | undefined;
-	const hasActiveAsyncWork = () => [...state.asyncJobs.values()].some((job) => job.status === "queued" || job.status === "running");
-	const cancelCompactionResume = () => {
-		if (compactionResumeTimer) clearTimeout(compactionResumeTimer);
-		compactionResumeTimer = undefined;
-	};
+	const cancelCompactionResume = () => { clearTimeout(compactionResumeTimer); compactionResumeTimer = undefined; };
 
 	pi.on("agent_start", () => {
 		cancelCompactionResume();
@@ -1077,16 +1079,15 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 
 	// Pi emits session_compact before it clears its compaction state, and a parent that is still
 	// compacting can only be woken without before_agent_start (earendil-works/pi#5581). Wait for the
-	// parent to go idle so the resume takes parentWake's prompt() path. A run that starts first resumes it.
+	// parent to go idle so the resume takes parentWake's prompt() path. A run that starts first cancels the pending resume.
 	pi.on("session_compact", (event) => {
 		if (event.reason !== "manual") return;
-		if (!hasActiveAsyncWork() || !withLastUiContext(() => true)) return;
+		if (activeAsyncJobCount() === 0 || !withLastUiContext(() => true)) return;
 		cancelCompactionResume();
 		const sessionId = state.currentSessionId;
 		const deadline = Date.now() + COMPACTION_RESUME_DEADLINE_MS;
 		const resumeWhenIdle = () => {
-			compactionResumeTimer = undefined;
-			if (state.currentSessionId !== sessionId || !hasActiveAsyncWork()) return;
+			if (state.currentSessionId !== sessionId || activeAsyncJobCount() === 0) return;
 			const idle = withLastUiContext((ctx) => ctx.isIdle());
 			if (idle === undefined) return;
 			if (!idle) {
