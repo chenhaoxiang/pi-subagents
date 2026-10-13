@@ -275,14 +275,14 @@ test("Pi 1.x hosts may omit the removed pi-agent-core/node export", () => {
 	}
 });
 
-test("chord is omitted before 0.85, but required host-first on chord-era and unknown hosts (#2026)", () => {
+test("chord is required only when the host declares it, and aliased host-first whenever present (#2026, #2854)", () => {
 	const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-chord-alias-"));
 	const host = path.join(root, "host");
 	const extension = path.join(root, "extension");
 	const chord = "@earendil-works/chord";
-	function writePackage(dir: string, name: string, version: string, exports: Record<string, string>) {
+	function writePackage(dir: string, name: string, version: string, exports: Record<string, string>, extra: Record<string, unknown> = {}) {
 		fs.mkdirSync(dir, { recursive: true });
-		fs.writeFileSync(path.join(dir, "package.json"), JSON.stringify({ name, version, exports }));
+		fs.writeFileSync(path.join(dir, "package.json"), JSON.stringify({ name, version, exports, ...extra }));
 		for (const target of Object.values(exports)) fs.writeFileSync(path.join(dir, target), "export {};\n");
 	}
 	const hostChord = path.join(host, "node_modules", chord);
@@ -303,12 +303,26 @@ test("chord is omitted before 0.85, but required host-first on chord-era and unk
 		assert.equal(preChord.aliases[`${chord}/context`], undefined);
 		// An extension-local copy must never satisfy a missing host chord export.
 		writePackage(path.join(extension, "node_modules", chord), chord, "0.85.1", { ".": "./index.mjs", "./context": "./context.mjs" });
-		for (const version of ["0.85.0", "0.85.1", "1.0.0", "1.0.0-beta.1", "0.84.4-test", "unknown"]) {
+		// Pi 1.2.0+ no longer depends on chord: an undeclared, absent chord is not required.
+		for (const version of ["1.2.0", "1.2.0-fork.1", "2.0.0"]) {
+			writePackage(host, "@earendil-works/pi-coding-agent", version, hostExports, { dependencies: { "@earendil-works/pi-tui": "^1.2.0" } });
+			const result = resolveHostPeerAliases(host);
+			assert.deepEqual(result.missing, [], version);
+			assert.equal(result.aliases[chord], undefined, version);
+		}
+		// Unknown/prerelease hosts and old chord-era manifests retain the fork fail-closed contract.
+		for (const version of ["0.85.0", "0.85.1", "1.0.0", "1.1.0-fork.1", "1.0.0-beta.1", "1.2.0-beta.1", "2.0.0-test", "0.84.4-test", "unknown"]) {
 			writePackage(host, "@earendil-works/pi-coding-agent", version, hostExports);
 			const result = resolveHostPeerAliases(host);
 			for (const specifier of [chord, `${chord}/context`]) assert.ok(result.missing.includes(specifier), version);
 		}
-		writePackage(host, "@earendil-works/pi-coding-agent", "0.85.1", hostExports);
+		// A host that declares chord (0.85 through 1.1) fails closed when it is missing.
+		for (const field of ["dependencies", "optionalDependencies"]) {
+			writePackage(host, "@earendil-works/pi-coding-agent", "1.1.0", hostExports, { [field]: { [chord]: "^1.1.0" } });
+			const result = resolveHostPeerAliases(host);
+			for (const specifier of [chord, `${chord}/context`]) assert.ok(result.missing.includes(specifier), field);
+		}
+		writePackage(host, "@earendil-works/pi-coding-agent", "0.85.1", hostExports, { dependencies: { [chord]: "^0.85.1" } });
 		writePackage(hostChord, chord, "0.85.1", { ".": "./index.mjs", "./context": "./context.mjs" });
 		let result = resolveHostPeerAliases(host);
 		assert.deepEqual(result.missing, []);

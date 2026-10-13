@@ -6,6 +6,8 @@ This file intentionally does not duplicate user-global or tool-level instruction
 
 ## Documentation map
 
+- [0.78.0-fork.1 community synchronization](docs/maintenance/2026-10-14-community-0.78.0.md): exact upstream integration, retained fallback/idle/wait contracts, chord-less Pi 1.2 host support and validation/install boundaries.
+
 - [0.77.0-fork.1 installed acceptance](docs/maintenance/2026-10-11-installed-acceptance.md): immutable release download, installed byte readback, RPC smoke and restart boundary.
 
 - [0.77.0-fork.1 community synchronization and installation](docs/maintenance/2026-10-11-community-0.77.0.md): exact upstream 0.77.0 integration, retained fork contracts, validation, immutable release and installed acceptance/restart boundaries.
