@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [0.79.0-fork.2] - 2026-10-18
+
+- Use native custom-message parent turns on released Pi 1.3+ rather than adding a synthetic user wake.
+- Retain legacy prompt lifecycle, result delivery, shared reservations and abort/compaction recovery.
+
 ## [0.79.0-fork.1] - 2026-10-17
 
 - Integrate community v0.79.0 while retaining heterogeneous fallback, activity-based idle timeout, runner/host compatibility and background-wait contracts.

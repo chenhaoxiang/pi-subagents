@@ -6,6 +6,8 @@ This file intentionally does not duplicate user-global or tool-level instruction
 
 ## Documentation map
 
+- [Parent wake provenance and convergence](docs/maintenance/2026-10-18-parent-wake-convergence.md): native custom turns on Pi 1.3+, retained legacy lifecycle/abort protection and synthetic regression evidence.
+
 - [0.79.0-fork.1 synchronization](docs/maintenance/2026-10-17-community-0.79.0.md): exact community integration, retained fallback/idle/wait behavior, startup/resume/supervision fixes, validation and release/install boundaries.
 
 - [0.78.0-fork.1 community synchronization](docs/maintenance/2026-10-14-community-0.78.0.md): exact upstream integration, retained fallback/idle/wait contracts, chord-less Pi 1.2 host support, successful CI with retained first-attempt failure, immutable release and installed-byte/RPC acceptance.
