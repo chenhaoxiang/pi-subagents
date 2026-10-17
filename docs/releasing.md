@@ -22,7 +22,7 @@ Applies only to chenhaoxiang/pi-subagents. The community project remains [nicoba
 
 ## Baseline for this release
 
-Version **0.78.0-fork.1** integrates reviewed community main through `a4c8ced69a8176cdf4179b127feddc8875e3418f` while retaining the fork's heterogeneous fallback, activity-based idle timeout, runner/Pi compatibility, host fail-closed checks and background-wait contract. The previous `0.77.0-fork.1` source and package remain available for rollback; they are not silently discarded. See [upgrade evidence and installation boundaries](maintenance/2026-10-14-community-0.78.0.md).
+Version **0.79.0-fork.1** integrates reviewed community main through `1e272e942bd8d2e6446494ce5de7a21a3f58ab55` while retaining the fork's heterogeneous fallback, activity-based idle timeout, runner/Pi compatibility, host fail-closed checks and background-wait contract. The previous `0.78.0-fork.1` source and package remain available for rollback; they are not silently discarded. See [upgrade evidence and installation boundaries](maintenance/2026-10-17-community-0.79.0.md).
 
 ## Publish every version
 
@@ -37,7 +37,7 @@ Version **0.78.0-fork.1** integrates reviewed community main through `a4c8ced69a
 
 ## Installation
 
-See [upgrade evidence and installation boundaries](maintenance/2026-10-14-community-0.78.0.md) for the current source, release and installed-acceptance record.
+See [upgrade evidence and installation boundaries](maintenance/2026-10-17-community-0.79.0.md) for the current source, release and installed-acceptance record.
 
 Prefer the pinned git command in README. For offline/artifact installs, download the three release assets into a temporary directory, verify the checksums, then extract the package into a permanent user-owned package directory and run `pi install /absolute/path/to/package`. Do not leave an active install under a temporary release directory. Restart Pi after this upgrade. The 0.77.0 update detector rejects reload when imported modules belong to an old in-place version; disk updates do not replace loaded code. Let active work finish before restarting.
 
