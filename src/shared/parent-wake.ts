@@ -1,6 +1,20 @@
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { VERSION, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 export const PARENT_WAKE_TEXT = "Inspect subagent updates above. Answer pending supervisor requests within your authority. For completed work, read saved results and resume the already-authorized parent task, or report completion. If approval is required, explicitly ask the user. Do not silently yield, rerun completed work, or infer new authorization.";
+
+/**
+ * Pi 1.3 fixed custom trigger turns so sendMessage({ triggerTurn: true }) runs the
+ * normal before_agent_start lifecycle. Older hosts need the user-prompt fallback
+ * below because a custom trigger skipped that lifecycle and lost hook-set context.
+ */
+export function supportsNativeCustomTurns(version: string = VERSION): boolean {
+	const match = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$/.exec(version.trim());
+	if (!match) return false;
+	const major = Number(match[1]);
+	const minor = Number(match[2]);
+	const prerelease = match[4];
+	return (major > 1 || (major === 1 && minor >= 3)) && (!prerelease || /^fork\.\d+$/.test(prerelease));
+}
 // A handled or failed wake prompt emits no agent_start. Past this deadline an idle parent's
 // wake counts as abandoned: its notices are already in the session, only the turn is lost.
 const WAKE_PENDING_MS = 10_000;
@@ -15,9 +29,9 @@ const reservations = wakeGlobal[reservationsSymbol] ?? (wakeGlobal[reservationsS
 
 export interface ParentWake {
 	/**
-	 * pi.sendMessage, except that a turn-triggering message to an idle parent is appended and the
-	 * turn is started with sendUserMessage. Pi starts a sendMessage-triggered run without
-	 * before_agent_start (earendil-works/pi#5581), so that run drops every hook-set prompt section.
+	 * Modern Pi starts an idle parent through the custom-message prompt lifecycle.
+	 * Older hosts need an appended notice plus sendUserMessage because their custom
+	 * trigger skipped before_agent_start (earendil-works/pi#5581).
 	 * Returns true when the message was appended that way: Pi emits no extension message_start for it.
 	 * After userAborted() and until the next run starts, a turn-triggering message is only appended.
 	 */
@@ -34,7 +48,11 @@ export interface ParentWake {
 	sessionShutdown(reason: string | undefined): void;
 }
 
-export function createParentWake(pi: Pick<ExtensionAPI, "sendMessage" | "sendUserMessage">, now: () => number = Date.now): ParentWake {
+export function createParentWake(
+	pi: Pick<ExtensionAPI, "sendMessage" | "sendUserMessage">,
+	now: () => number = Date.now,
+	nativeCustomTurns = supportsNativeCustomTurns(),
+): ParentWake {
 	let ctx!: Pick<ExtensionContext, "isIdle">;
 	// Captured at bind: Pi's ctx throws once stale, which it can be by session_shutdown.
 	let session: { manager: object; id: string } | undefined;
@@ -66,6 +84,16 @@ export function createParentWake(pi: Pick<ExtensionAPI, "sendMessage" | "sendUse
 			}
 			if (!ctx.isIdle()) {
 				pi.sendMessage(message, options);
+				return false;
+			}
+			if (nativeCustomTurns && !reserved()) {
+				reservation().sentAt = now();
+				try {
+					pi.sendMessage(message, options);
+				} catch (error) {
+					reservation().sentAt = undefined;
+					throw error;
+				}
 				return false;
 			}
 			pi.sendMessage(message, { triggerTurn: false });
