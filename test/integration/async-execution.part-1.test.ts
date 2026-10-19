@@ -494,16 +494,21 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.equal(status.steps?.[0]?.thinking, "high");
 	});
 
-	it("persists the bounded usage projection in async results and metadata", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
-		mockPi.onCall({ output: "accounted output" });
+	it("persists bounded identity and measured async usage without prompt capture", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		mockPi.onCall({ steps: [
+			{ jsonl: [events.toolStart("read", { path: "synthetic.txt" }), events.toolEnd("read")] },
+			{ delay: 25, jsonl: [events.assistantMessage("accounted output")] },
+		] });
 		const id = `async-usage-artifact-${Date.now().toString(36)}`;
 		const artifactsDir = path.join(tempDir, ".pi", "subagents", "artifacts");
+		const sentinel = "PRIVATE_PROMPT_NOT_A_METRIC";
 		executeAsyncSingle(id, {
 			agent: "worker",
-			task: "Persist usage",
-			agentConfig: makeAgent("worker"),
-			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-usage-artifact" },
-			artifactConfig: { enabled: true, includeInput: false, includeOutput: true, includeJsonl: false, includeMetadata: true, cleanupDays: 7 },
+			task: sentinel,
+			agentConfig: makeAgent("worker", { model: "mock/test-model", thinking: "high" }),
+			availableModels: [{ provider: "mock", id: "test-model", fullId: "mock/test-model" }],
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-usage-artifact", parentSessionId: "parent-usage-session" },
+			artifactConfig: { enabled: true, includeInput: false, includeOutput: true, includeJsonl: false, includeTranscript: false, includeMetadata: true, cleanupDays: 7 },
 			artifactsDir,
 			shareEnabled: false,
 			maxSubagentDepth: 2,
@@ -515,8 +520,52 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.deepEqual(payload.results[0]?.usage, expectedUsage);
 		const metadataPath = payload.results[0]?.artifactPaths?.metadataPath;
 		assert.ok(metadataPath);
-		const metadata = JSON.parse(fs.readFileSync(metadataPath, "utf-8")) as { usage?: unknown };
+		const metadataText = fs.readFileSync(metadataPath, "utf-8");
+		const metadata: { runId?: string; index?: number; parentSessionId?: string; model?: string; thinking?: string; exitCode?: number; durationMs?: number; toolCount?: number; costStatus?: string; artifactPaths?: object; usage?: object } = JSON.parse(metadataText);
 		assert.deepEqual(metadata.usage, expectedUsage);
+		assert.equal(metadata.costStatus, "sdk-reported");
+		assert.deepEqual(metadata.artifactPaths, payload.results[0]?.artifactPaths);
+		assert.equal(metadata.runId, id);
+		assert.equal(metadata.index, 0);
+		assert.equal(metadata.parentSessionId, "parent-usage-session");
+		assert.equal(metadata.model, "mock/test-model:high");
+		assert.equal(metadata.model, payload.results[0]?.model);
+		assert.equal(metadata.thinking, "high");
+		assert.equal(metadata.exitCode, 0);
+		assert.equal(metadata.toolCount, 1);
+		assert.ok(metadata.durationMs !== undefined && metadata.durationMs >= 25, "measured child duration must survive metadata persistence");
+		assert.doesNotMatch(metadataText, new RegExp(sentinel));
+		assert.equal(fs.existsSync(payload.results[0]?.artifactPaths?.transcriptPath ?? ""), false);
+	});
+
+	it("keeps failed native-run metrics and marks zero SDK cost unpriced", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		mockPi.onCall({
+			jsonl: [{ type: "message_end", message: {
+				role: "assistant", content: [], model: "mock/test-model", stopReason: "error",
+				errorMessage: "synthetic terminal failure",
+				usage: { input: 3, output: 0, cacheRead: 0, cacheWrite: 0, cost: { total: 0 } },
+			} }],
+			exitCode: 1,
+		});
+		const id = `async-failed-metrics-${Date.now().toString(36)}`;
+		executeAsyncSingle(id, {
+			agent: "worker", task: "Synthetic failed metrics", agentConfig: makeAgent("worker"),
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "failed-metrics-session" },
+			artifactConfig: { enabled: true, includeInput: false, includeOutput: false, includeTranscript: false, includeJsonl: false, includeMetadata: true, cleanupDays: 7 },
+			artifactsDir: path.join(tempDir, "failed-metrics-artifacts"),
+			shareEnabled: false, maxSubagentDepth: 2, acceptance: false,
+		});
+		const payload = await readAsyncPayload(id);
+		assert.equal(payload.success, false);
+		const metadataPath = payload.results[0]?.artifactPaths?.metadataPath;
+		assert.ok(metadataPath);
+		const metadata: { exitCode?: number; durationMs?: number; toolCount?: number; costStatus?: string; usage?: { input?: number; cost?: number } } = JSON.parse(fs.readFileSync(metadataPath, "utf-8"));
+		assert.equal(metadata.exitCode, 1);
+		assert.equal(metadata.toolCount, 0, "a measured zero is distinct from an unknown count");
+		assert.ok(metadata.durationMs !== undefined && metadata.durationMs >= 0);
+		assert.equal(metadata.usage?.input, 3);
+		assert.equal(metadata.usage?.cost, 0);
+		assert.equal(metadata.costStatus, "unpriced", "zero SDK pricing is not a free or reconciled bill");
 	});
 
 	it("records the parent session id in background run metadata", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {

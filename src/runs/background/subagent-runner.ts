@@ -1108,6 +1108,7 @@ export async function runSingleStepInner(
 	const aggregateUsage = emptyUsage();
 	let launched = false;
 	let cumulativeToolCount = 0;
+	let cumulativeDurationMs = 0;
 	let recoveryTask = task;
 	let stagedIndexBaseline: string | undefined;
 	singleLaunch: while (modelIndex < modelCandidates.length) {
@@ -1262,6 +1263,7 @@ export async function runSingleStepInner(
 		aggregateUsage.cost += run.usage.cost;
 		aggregateUsage.turns += run.usage.turns;
 		cumulativeToolCount += run.toolCount;
+		cumulativeDurationMs += run.durationMs;
 		// A parked run still owes output diagnostics when it actually finishes.
 		// Stopped/timedOut runs already have terminal failures, so terminal output diagnostics are deferred.
 		const terminalDiagnosticsEligible = !run.interrupted && !run.stopped && !run.timedOut;
@@ -1543,14 +1545,26 @@ export async function runSingleStepInner(
 			})),
 			metadata: {
 				runId: ctx.id,
+				index: ctx.flatIndex,
 				parentSessionId: step.parentSessionId,
 				agent: step.agent,
 				task: PROMPT_REDACTED,
 				exitCode: effectiveFinalExitCode,
 				model: finalResult?.model,
+				thinking: finalResult ? resolveEffectiveThinking(finalResult.model, step.thinking) : undefined,
 				nativeMachine: finalResult?.nativeMachine,
 				requestedModel: step.requestedModel,
+				modelAttempts: modelAttempts.length > 1 ? modelAttempts : undefined,
+				attemptedModels: attemptedModels.length > 1 ? attemptedModels : undefined,
+				skippedModels: skippedModels?.length ? skippedModels : undefined,
+				// Reuse child-attempt measurements, as foreground metadata does. Status duration
+				// also includes runner setup/acceptance; an unlaunched child has unknown metrics.
+				durationMs: launched ? cumulativeDurationMs : undefined,
+				toolCount: launched ? cumulativeToolCount : undefined,
 				usage,
+				costStatus: usage ? (usage.cost > 0 ? "sdk-reported" : "unpriced") : undefined,
+				artifactPaths,
+				savedOutputPath: finalizedOutput.savedPath,
 				error: effectiveFinalError,
 				acceptance: effectiveAcceptance,
 				...(capabilityAudit ? { capabilityCeiling: capabilityAudit.ceiling, capabilityAudit } : {}),

@@ -324,7 +324,8 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			task: "Do work",
 			agentConfig: makeAgent("worker", { model: "openai/gpt-5-mini", fallbackModels: ["anthropic/claude-sonnet-4"] }),
 			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
-			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+			artifactConfig: { enabled: true, includeInput: false, includeOutput: false, includeTranscript: false, includeJsonl: false, includeMetadata: true, cleanupDays: 7 },
+			artifactsDir: path.join(tempDir, "fallback-metrics"),
 			shareEnabled: false,
 			maxSubagentDepth: 2,
 		});
@@ -336,6 +337,15 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.equal(payload.results[0]?.model, "anthropic/claude-sonnet-4");
 		assert.deepEqual(payload.results[0]?.attemptedModels, ["openai/gpt-5-mini", "anthropic/claude-sonnet-4"]);
 		assert.equal(payload.results[0]?.modelAttempts?.length, 2);
+		const metadataPath = payload.results[0]?.artifactPaths?.metadataPath;
+		assert.ok(metadataPath);
+		const metadata: { model?: string; attemptedModels?: string[]; modelAttempts?: object[]; durationMs?: number; toolCount?: number; usage?: object } = JSON.parse(fs.readFileSync(metadataPath, "utf8"));
+		assert.equal(metadata.model, "anthropic/claude-sonnet-4");
+		assert.deepEqual(metadata.attemptedModels, payload.results[0]?.attemptedModels);
+		assert.deepEqual(metadata.modelAttempts, payload.results[0]?.modelAttempts);
+		assert.deepEqual(metadata.usage, payload.results[0]?.usage);
+		assert.ok(metadata.durationMs !== undefined && metadata.durationMs >= 0);
+		assert.equal(metadata.toolCount, 0);
 		const statusPayload = await waitForAsyncState(id, (candidate) => candidate.state === "complete");
 		assert.deepEqual(statusPayload.steps?.[0]?.attemptedModels, ["openai/gpt-5-mini", "anthropic/claude-sonnet-4"]);
 		assert.equal(statusPayload.steps?.[0]?.modelAttempts?.length, 2);

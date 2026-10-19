@@ -3784,7 +3784,7 @@ if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
 			runtimeAcknowledgedExtensions: { version: 1, source: "child-runtime", ids: ["ext.ok"], omitted: 0 },
 		});
 		const privateExtension = path.join(tempDir, "extensions", "private-extension.ts");
-		const agents = [makeAgent("echo", { extensions: [privateExtension] })];
+		const agents = [makeAgent("echo", { extensions: [privateExtension], model: "openai/gpt-5-mini:high" })];
 		const artifactsDir = path.join(tempDir, "artifacts");
 		const sentinel = "PROMPT_AUDIT_SENTINEL_1021";
 
@@ -3811,7 +3811,15 @@ if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
 		assert.equal(result.transcriptError, undefined);
 		assert.ok(fs.existsSync(artifactsDir), "artifacts dir should exist");
 		const metadataText = fs.readFileSync(result.artifactPaths.metadataPath, "utf-8");
-		const metadata = JSON.parse(metadataText) as { task?: string; launchContractDigest?: string; launchResolvedExtensions?: LaunchResolvedExtensions; runtimeAcknowledgedExtensions?: RuntimeAcknowledgedExtensions };
+		const metadata: { runId?: string; index?: number; model?: string; thinking?: string; durationMs?: number; toolCount?: number; costStatus?: string; artifactPaths?: object; task?: string; launchContractDigest?: string; launchResolvedExtensions?: LaunchResolvedExtensions; runtimeAcknowledgedExtensions?: RuntimeAcknowledgedExtensions } = JSON.parse(metadataText);
+		assert.equal(metadata.runId, "test-run");
+		assert.equal(metadata.index, result.index);
+		assert.equal(metadata.model, result.model);
+		assert.equal(metadata.thinking, "high");
+		assert.equal(metadata.durationMs, result.progressSummary?.durationMs);
+		assert.equal(metadata.toolCount, 0);
+		assert.equal(metadata.costStatus, "sdk-reported");
+		assert.deepEqual(metadata.artifactPaths, result.artifactPaths);
 		assert.doesNotMatch(metadataText, new RegExp(sentinel));
 		assert.equal(metadata.task, "[prompt redacted]");
 		assert.equal(result.task, "[prompt redacted]");
