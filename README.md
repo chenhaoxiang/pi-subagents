@@ -12,11 +12,11 @@ This repository is the maintained fork at:
 
 <https://github.com/chenhaoxiang/pi-subagents>
 
-It tracks the community project selectively and keeps fork-specific behavior on the fork's `main` line. The current source candidate is `0.79.2-fork.1`, integrating community `main` through `d48d580954086a426d31f1c7b8d793a1d26ad184` (v0.79.2 plus subsequent fixes). The previous published rollback release is `0.79.0-fork.3`.
+It tracks the community project selectively and keeps fork-specific behavior on the fork's `main` line. The current source candidate is `0.80.0-fork.1`, integrating community `main` through `80f8f79d51ee8075fd39baf7fe8ff36b43c3a790` (community v0.80.0). The previous published rollback release is `0.79.2-fork.1`.
 
 ## Releases and branch policy
 
-The source candidate is **0.79.2-fork.1**, based on community **0.79.2** and the exact main snapshot above; **0.79.0-fork.3** remains available for rollback. Fork releases use `<community-version>-fork.<revision>`; the fork revision increases without pretending to be a new upstream release.
+The source candidate is **0.80.0-fork.1**, based on community **0.80.0** and the exact main snapshot above; **0.79.2-fork.1** remains available for rollback. Fork releases use `<community-version>-fork.<revision>`; the fork revision increases without pretending to be a new upstream release.
 
 - `main`: our maintained integration and release branch, including fork fixes.
 - `upstream-main`: an exact mirror of the community's `main`, with no fork commits. Never install from this branch.
@@ -25,10 +25,12 @@ The source candidate is **0.79.2-fork.1**, based on community **0.79.2** and the
 Install a reproducible release:
 
 ```bash
-pi install git:github.com/chenhaoxiang/pi-subagents@v0.79.2-fork.1
+pi install git:github.com/chenhaoxiang/pi-subagents@v0.80.0-fork.1
 ```
 
 [GitHub Releases](https://github.com/chenhaoxiang/pi-subagents/releases) include the installable package tarball, a provenance manifest, and `SHA256SUMS`. These GitHub releases are not npm publications under the upstream author's namespace. See [release maintenance](docs/releasing.md) for asset installation and future releases.
+
+That is the only required step. pi-subagents needs Pi 1.2.0 or newer. Background children use the host's SDK: npm Pi keeps its detached Node runner; the official Pi 1.2.0 Linux x64 standalone release loads the same runner through Pi's embedded SDK, without a separate SDK install. See [Standalone background execution](docs/standalone-background.md) for the supported boundary and validation gate.
 
 ## Install this fork
 
@@ -44,7 +46,7 @@ After installation, **restart Pi** to load the new runtime. Version 0.79.0 detec
 
 ## Fork-specific behavior
 
-The fork retains the community `0.79.2` functionality and adds or maintains:
+The fork retains the community `0.80.0` functionality and adds or maintains:
 
 - **Guarded heterogeneous model fallback** for native Pi children. Explicit fallback chains and the built-in pool advance only for provider/model failures that occur before child tool activity; each attempt remains visible as evidence.
 - **Activity-based `idleTimeoutMs`** for foreground and background children. Stream and tool lifecycle activity resets the inactivity window; this is not a wall-clock runtime cap.

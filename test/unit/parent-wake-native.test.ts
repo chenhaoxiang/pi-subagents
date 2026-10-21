@@ -17,9 +17,9 @@ function harness() {
 	return { calls, wake, manager, pi, setIdle: (value: boolean) => { idle = value; } };
 }
 
-it("uses the native custom prompt lifecycle only on released Pi 1.3+ hosts", () => {
-	for (const version of ["1.3.0", "1.3.0-fork.1", "1.10.0", "2.0.0"]) assert.equal(supportsNativeCustomTurns(version), true, version);
-	for (const version of ["0.87.0", "1.2.0-fork.1", "1.3.0-rc.1", "unknown", ""]) assert.equal(supportsNativeCustomTurns(version), false, version);
+it("uses the native custom prompt lifecycle only on released Pi 1.2+ hosts", () => {
+	for (const version of ["1.2.0", "1.2.0-fork.1", "1.3.0", "1.3.0-fork.1", "1.10.0", "2.0.0"]) assert.equal(supportsNativeCustomTurns(version), true, version);
+	for (const version of ["0.87.0", "1.1.0-fork.1", "1.2.0-rc.1", "1.3.0-rc.1", "unknown", ""]) assert.equal(supportsNativeCustomTurns(version), false, version);
 });
 
 it("wakes once with the result itself, without inventing a human user prompt", () => {

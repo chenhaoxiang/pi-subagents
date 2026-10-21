@@ -12,11 +12,11 @@
 
 <https://github.com/chenhaoxiang/pi-subagents>
 
-本变更源码候选版本为 `0.79.2-fork.1`，整合社区 main 快照 `d48d580954086a426d31f1c7b8d793a1d26ad184`（含 v0.79.2 之后的修复）；已发布的上一版 `0.79.0-fork.3` 保留供回退。fork 专属行为继续保留在 fork 的 `main` 上。
+本变更源码候选版本为 `0.80.0-fork.1`，整合社区 main 快照 `80f8f79d51ee8075fd39baf7fe8ff36b43c3a790`（社区 v0.80.0）；已发布的上一版 `0.79.2-fork.1` 保留供回退。fork 专属行为继续保留在 fork 的 `main` 上。
 
 ## 发布版本与分支约定
 
-本变更源码候选版本为 **0.79.2-fork.1**，基于社区 **0.79.2** 及上述固定 main 快照；上一版为 **0.79.0-fork.3**。fork 版本统一使用 `<社区版本>-fork.<修订号>`，本地修订不冒充社区新版本。
+本变更源码候选版本为 **0.80.0-fork.1**，基于社区 **0.80.0** 及上述固定 main 快照；上一版为 **0.79.2-fork.1**。fork 版本统一使用 `<社区版本>-fork.<修订号>`，本地修订不冒充社区新版本。
 
 - `main`：我们的维护、整合与发布主线，保留 fork 修复。
 - `upstream-main`：仅镜像社区 `main`，不加入 fork 提交，也不作为安装来源。
@@ -25,7 +25,7 @@
 固定版本安装：
 
 ```bash
-pi install git:github.com/chenhaoxiang/pi-subagents@v0.79.2-fork.1
+pi install git:github.com/chenhaoxiang/pi-subagents@v0.80.0-fork.1
 ```
 
 [GitHub Releases](https://github.com/chenhaoxiang/pi-subagents/releases) 提供可安装的包、来源清单和 `SHA256SUMS` 校验文件；这不是向上游作者的 npm 命名空间发布。发布及制品安装流程见[维护说明](docs/releasing.md)。
@@ -44,7 +44,7 @@ pi install git:github.com/chenhaoxiang/pi-subagents@main
 
 ## Fork 专属能力
 
-fork 保留社区 `0.79.2` 能力，并额外维护：
+fork 保留社区 `0.80.0` 能力，并额外维护：
 
 - **受保护的异构模型 fallback**：只有在子 Agent 尚未产生工具副作用前发生 provider/model 失败时，才推进显式 fallback 链或内置模型池；每次尝试都会保留为证据；
 - **基于活动的 `idleTimeoutMs`**：前台和后台子 Agent 的流式输出及工具生命周期活动会续期；它不是墙钟总时长上限；
