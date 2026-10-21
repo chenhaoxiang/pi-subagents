@@ -22,7 +22,7 @@ Applies only to chenhaoxiang/pi-subagents. The community project remains [nicoba
 
 ## Baseline for this release
 
-The latest published release is **0.79.0-fork.2**. The current source candidate is **0.79.0-fork.3** and is not a release or installed-acceptance claim until its exact-head review, package checksums and fresh install are complete. Both retain the community `0.79.0` base through `1e272e942bd8d2e6446494ce5de7a21a3f58ab55`, including heterogeneous fallback, activity-based idle timeout, runner/Pi compatibility, host fail-closed checks and background-wait contracts. Keep the published `.2` source and package available for rollback. See [upgrade evidence and installation boundaries](maintenance/2026-10-17-community-0.79.0.md).
+The current source candidate is **0.79.2-fork.1**, integrating community version **0.79.2** through `d48d580954086a426d31f1c7b8d793a1d26ad184`. Previous published **0.79.0-fork.3** remains available for rollback. See [the synchronization report](maintenance/2026-10-21-community-sync.md) for retained contracts and provider-free validation. Exact publication, fresh-download and installed-byte acceptance are recorded by the matching immutable Release; source metadata alone is not proof of runtime activation.
 
 ## Publish every version
 

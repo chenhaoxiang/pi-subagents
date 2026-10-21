@@ -6,6 +6,8 @@ This file intentionally does not duplicate user-global or tool-level instruction
 
 ## Documentation map
 
+- [0.79.2-fork.1 community synchronization](docs/maintenance/2026-10-21-community-sync.md): exact main snapshot, retained fork behavior, validation and release/install boundaries.
+
 - [Native-child run measurements](docs/maintenance/2026-10-20-async-measurements.md): existing metadata parity, run/session identity, unknown and unpriced semantics, safe artifact consumption and verification boundaries.
 
 - [Parent wake provenance and convergence](docs/maintenance/2026-10-18-parent-wake-convergence.md): native custom turns on Pi 1.3+, retained legacy lifecycle/abort protection and synthetic regression evidence.
