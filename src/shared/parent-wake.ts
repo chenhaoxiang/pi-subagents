@@ -3,8 +3,9 @@ import { VERSION, type ExtensionAPI, type ExtensionContext } from "@earendil-wor
 export const PARENT_WAKE_TEXT = "Inspect subagent updates above. Answer pending supervisor requests within your authority. For completed work, read saved results and resume the already-authorized parent task, or report completion. If approval is required, explicitly ask the user. Do not silently yield, rerun completed work, or infer new authorization.";
 
 /**
- * Pi 1.3 fixed custom trigger turns so sendMessage({ triggerTurn: true }) runs the
- * normal before_agent_start lifecycle. Older hosts need the user-prompt fallback
+ * The current Pi 1.2 SDK runs the normal before_agent_start lifecycle for
+ * sendMessage({ triggerTurn: true }); upstream 0.80 proves this in real-SDK tests.
+ * Older hosts need the user-prompt fallback
  * below because a custom trigger skipped that lifecycle and lost hook-set context.
  */
 export function supportsNativeCustomTurns(version: string = VERSION): boolean {
@@ -13,15 +14,21 @@ export function supportsNativeCustomTurns(version: string = VERSION): boolean {
 	const major = Number(match[1]);
 	const minor = Number(match[2]);
 	const prerelease = match[4];
-	return (major > 1 || (major === 1 && minor >= 3)) && (!prerelease || /^fork\.\d+$/.test(prerelease));
+	return (major > 1 || (major === 1 && minor >= 2)) && (!prerelease || /^fork\.\d+$/.test(prerelease));
 }
-// A handled or failed wake prompt emits no agent_start. Past this deadline an idle parent's
-// wake counts as abandoned: its notices are already in the session, only the turn is lost.
+/** Ends a waking notice that reports results. */
+export const COMPLETION_ACTION = "Read the saved results above and resume the already-authorized parent task, or report completion. If approval is required, explicitly ask the user. Do not silently yield, rerun completed work, or infer new authorization.";
+/** Ends a waking notice that reports a problem or a run state rather than results. */
+export const STATUS_ACTION = "Check the run status and details above, then resume the already-authorized parent task or report the problem. If approval is required, explicitly ask the user. Do not silently yield, rerun completed work, or infer new authorization.";
+
+// A wake whose run never starts emits no agent_start; past this deadline an idle parent's wake counts as abandoned.
+// Pi persists the waking notice only when its run reaches message_end, so a run that never starts loses it;
+// notify.ts records undelivered subagent-notify notices at shutdown and replays them at the next start.
 const WAKE_PENDING_MS = 10_000;
 
-// Reload replaces extension instances, not Pi's session manager or a wake prompt in preflight.
-// The key and shape are shared with pi-intercom's idle wake: Pi marks a run active only after the
-// prompt's async preflight, so a second extension's wake sent in that gap throws in agent.prompt().
+// Reload replaces extension instances, not Pi's session manager or a wake still starting.
+// The key and shape are shared with pi-intercom's idle wake: a wake prompt it sends is in
+// preflight until agent_start, and a second extension's wake must not start another run then.
 type WakeReservation = { sessionId: string; sentAt?: number };
 const reservationsSymbol = Symbol.for("pi.idle-wake.v1");
 const wakeGlobal = globalThis as typeof globalThis & { [reservationsSymbol]?: WeakMap<object, WakeReservation> };
@@ -77,8 +84,9 @@ export function createParentWake(
 				pi.sendMessage(message, options);
 				return false;
 			}
-			if (held) {
+			if (held || (ctx.isIdle() && reserved())) {
 				// Appended now, or at the end of a run still finishing; neither emits an extension message_start.
+				// A reserved wake's run picks the notice up when it starts.
 				pi.sendMessage(message, { triggerTurn: false });
 				return true;
 			}

@@ -22,7 +22,7 @@ Applies only to chenhaoxiang/pi-subagents. The community project remains [nicoba
 
 ## Baseline for this release
 
-The current source candidate is **0.79.2-fork.1**, integrating community version **0.79.2** through `d48d580954086a426d31f1c7b8d793a1d26ad184`. Previous published **0.79.0-fork.3** remains available for rollback. See [the synchronization report](maintenance/2026-10-21-community-sync.md) for retained contracts and provider-free validation. Exact publication, fresh-download and installed-byte acceptance are recorded by the matching immutable Release; source metadata alone is not proof of runtime activation.
+The current source candidate is **0.80.0-fork.1**, integrating community version **0.80.0** through `80f8f79d51ee8075fd39baf7fe8ff36b43c3a790`. Previous published **0.79.2-fork.1** remains available for rollback. Community support starts at Pi 1.2.0; the fork retains version-gated legacy wake/peer-loader compatibility and the existing protected legacy clean-install smoke contexts. See [the 0.80 synchronization report](maintenance/2026-10-21-community-0.80.0.md) for retained contracts and provider-free validation. Exact publication, fresh-download and installed-byte acceptance are recorded by the matching immutable Release; source metadata alone is not proof of runtime activation.
 
 ## Publish every version
 
