@@ -1106,14 +1106,14 @@ describe("native subagent fleet", () => {
 			);
 			try {
 				assert.ok(Buffer.byteLength(path.join(asyncDir, "output-0.log")) > 100, "fixture must force a wrapped path");
-				const latest = component.render(100);
-				assert.ok(latest.some((line) => line.includes("FINAL ASYNC OUTPUT")));
-				assert.ok(latest.some((line) => line.includes("worker") && line.includes("[fork]")));
-				for (const line of latest) assert.ok(visibleWidth(line) <= 100, `line exceeded width: ${line}`);
-				// Extract the detail column; line wrapping may split a filename in the middle.
-				const detail = latest.map((line) => line.split("│")[2]?.trim() ?? "").join("");
-				assert.match(detail, /Output:.*output-0\.logSession:/);
-				assert.match(detail, /Session:.*worker\.jsonlTranscript tail/);
+				const lines = component.render(100);
+				assert.ok(lines.some((line) => line.includes("FINAL ASYNC OUTPUT")));
+				assert.ok(lines.some((line) => line.includes("worker") && line.includes("[fork]")));
+				// The detail pane hard-wraps long paths at any character, so read it back as one string.
+				const detail = lines.map((line) => (line.replace(/\x1b\[[0-9;]*m/g, "").split("│")[2] ?? "").trimEnd()).join("");
+				assert.ok(detail.includes(path.join(asyncDir, "output-0.log")));
+				assert.ok(detail.includes(path.join(asyncDir, "worker.jsonl")));
+				for (const line of lines) assert.ok(visibleWidth(line) <= 100, `line exceeded width: ${line}`);
 				tui.terminal.rows = 10;
 				assert.ok(component.render(100).length <= 8, "short-terminal render should fit the overlay's 85% height cap");
 				component.handleInput("\x1b[6~");

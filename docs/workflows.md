@@ -69,7 +69,7 @@ Workflow-level child controls default onto each `runs.run`/`runs.all` launch; ex
 
 Child results cross into the script as plain JSON data. Non-JSON host metadata is omitted, so use returned fields such as `runId`, `ok`, `output`, and `structuredOutput` for workflow control.
 
-Omitting a child's `async` preserves awaited final-result semantics, even if the child runs in the background. Explicit child `async: true` intentionally returns after launch: its receipt has `state: "running"`, `ok: false`, an empty `output`, and no completion error or final `outputReference`. `ok` confirms successful child completion, not successful dispatch. Use `runId` and `asyncDir` to inspect the running child; `artifactPaths` may include runtime directories and is not a list of final reports. Reusing the same workflow key returns the same receipt, not a refreshed result.
+Omitting a child's `async` preserves awaited final-result semantics, even if the child runs in the background. Explicit child `async: true` intentionally returns after launch: its receipt has `state: "running"`, `ok: false`, an empty `output`, and no completion error or final `outputReference`. `ok` confirms successful child completion, not successful dispatch. It does not confirm that the task's intent was carried out: a child that declines or cannot do the work can still end normally. When later steps depend on the work having happened, give the child an `outputSchema` with an explicit status field (and check `structuredOutput` in the script) or a host-run `gate`, and treat only that verdict as success. Use `runId` and `asyncDir` to inspect the running child; `artifactPaths` may include runtime directories and is not a list of final reports. Reusing the same workflow key returns the same receipt, not a refreshed result.
 
 A workflow can finish dispatch while these children remain running. Its summary and child rows identify that distinction, and launch receipts do not generate child-completion notices. Consume the later child result before treating its work or report as complete.
 
@@ -115,7 +115,7 @@ subagent({ workflow: "parallel", args: { tasks: [{ agent: "reviewer", task: "Rev
 
 The host resolves the name and validates bounded plain-JSON `args` before starting the workflow. Resource provenance is recorded in workflow details and receipts for downstream permission/policy checks. Resource authority is not caller-supplied: `runs.host` is available only when the resolved resource explicitly grants the requested host key and command. Reply-block (`workflow: true`) and file-path scripts remain raw, unknown-provenance inputs, so their `runs.host` calls are unavailable through the public execution boundary. Named resources cannot be combined with `agent` or `task`; the package ships the `review`, `run-ci` and `parallel` resources, not a user/project resource registry.
 
-`parallel` runs independent children together without writing a script: `args.tasks` is a list of `{ agent, task }` items, the children run in one `runs.all` batch, and the result lists each child's output in order. A failed child fails the workflow. Use a workflow script when steps depend on each other.
+`parallel` runs independent children together without writing a script: `args.tasks` is a list of `{ agent, task, cwd?, model? }` items, the children run in one `runs.all` batch, and the result lists each child's output in order. `cwd` and `model` are optional per child and apply to that child only, as they do on a `runs.all` item, so one call can fan out across several repositories or mix models. A failed child fails the workflow. Use a workflow script when steps depend on each other.
 
 ### Opt-in bounded workflows
 
@@ -453,7 +453,7 @@ const [api, ui] = await runs.all([
 return { api: api.artifactPaths, ui: ui.artifactPaths };
 ```
 
-Each child uses the existing worktree lifecycle: it branches from clean HEAD, journals ownership before launch, captures a patch and handoff manifest, then removes cleanly captured temporary worktrees and branches. The handoff manifest path remains available in the child's `artifactPaths`; return or emit it when the orchestrator needs to apply or inspect the patches. `runs.ref` stays concise and intentionally omits full paths.
+Each child uses the existing worktree lifecycle: it branches from clean HEAD, journals ownership before launch, captures a patch and handoff manifest, then removes cleanly captured temporary worktrees and branches. The handoff manifest path remains available in the child's `artifactPaths`; return or emit it when the orchestrator needs to apply or inspect the patches. `worktree.cleanup` scans only the repository's project artifacts, so a workflow child's worktree is reported as unknown until you pass that manifest as `options.handoffPath`; worktrees of retained, resumable children are then kept rather than removed. `runs.ref` stays concise and intentionally omits full paths.
 
 A top-level `{ workflow: true, worktree: true }` makes isolation the default for every workflow child. An individual child can override that default with `worktree: false`. Keep one writer when parallel writes are not intentionally isolated.
 

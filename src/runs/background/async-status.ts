@@ -18,6 +18,7 @@ import { readRecentTerminalRunIndex, TERMINAL_RUN_INDEX_DIR } from "./terminal-r
 import { canScanAsyncRunPrefix } from "./run-id-query.ts";
 import { asyncStatusChildIdentity } from "../shared/child-identity.ts";
 import { parseWorkflowChildSummary } from "../../workflows/workflow-child-summary.ts";
+import { withWorkflowChildRunModel } from "./workflow-terminal-proof.ts";
 import { assertWorkflowGraphHostSteps, hostStepReportName, hostStepVerdictLabel, validHostStepNodes } from "../shared/host-step-status.ts";
 import { projectAsyncWorkflowRows } from "../shared/async-status-projection.ts";
 import { validateAsyncStatusLaneMetadata } from "../shared/lane-metadata.ts";
@@ -298,6 +299,7 @@ function statusToSummary(asyncDir: string, status: AsyncStatus & { cwd?: string 
 	const statusPath = path.join(asyncDir, "status.json");
 	validateAsyncStatusLaneMetadata(status, `Invalid async status '${statusPath}'`);
 	const workflowChildren = parseWorkflowChildSummary(status.workflowChildren);
+	if (workflowChildren && status.mode === "workflow") workflowChildren.children = workflowChildren.children.map((child) => withWorkflowChildRunModel(asyncDir, child));
 	if (workflowChildren && workflowChildren.workflowRunId !== status.runId) throw new Error(`Invalid async status '${statusPath}': workflowChildren.workflowRunId does not match.`);
 	assertWorkflowGraphHostSteps(status.workflowGraph, statusPath, status.runId);
 	const hostSteps = validHostStepNodes(status.workflowGraph);
@@ -335,6 +337,7 @@ function statusToSummary(asyncDir: string, status: AsyncStatus & { cwd?: string 
 		const stepActivityState = step.activityState;
 		const stepLastActivityAt = step.lastActivityAt;
 		const timeoutRecovery = projectTimeoutRecovery(step.timeoutRecovery);
+		const { model: stepModel, thinking: stepThinking } = status.mode === "workflow" && step.async === true ? withWorkflowChildRunModel(asyncDir, step) : step;
 		return {
 			index,
 			childId: asyncStatusChildIdentity(step, index),
@@ -371,9 +374,9 @@ function statusToSummary(asyncDir: string, status: AsyncStatus & { cwd?: string 
 			...(step.tokens ? { tokens: step.tokens } : {}),
 			...(step.totalCost ? { totalCost: step.totalCost } : {}),
 			...(step.skills ? { skills: step.skills } : {}),
-			...(step.model ? { model: step.model } : {}),
+			...(stepModel ? { model: stepModel } : {}),
 			...(step.contextLimit !== undefined ? { contextLimit: step.contextLimit } : {}),
-			...(step.thinking ? { thinking: step.thinking } : {}),
+			...(stepThinking ? { thinking: stepThinking } : {}),
 			...(step.thinkingCeiling ? { thinkingCeiling: step.thinkingCeiling } : {}),
 			...(step.requestedModel ? { requestedModel: step.requestedModel } : {}),
 			...(step.skippedModels?.length ? { skippedModels: step.skippedModels.map((model) => ({ ...model })) } : {}),

@@ -12,11 +12,11 @@
 
 <https://github.com/chenhaoxiang/pi-subagents>
 
-本变更源码候选版本为 `0.79.0-fork.3`；变更前最近已核验的已发布版本为 `0.79.0-fork.2`，基于社区 Pi Subagents `v0.79.0`，并包含截至 `1e272e942bd8d2e6446494ce5de7a21a3f58ab55` 的已审查上游 `main` 修复。fork 专属行为继续保留在 fork 的 `main` 上。
+本变更源码候选版本为 `0.79.2-fork.1`，整合社区 main 快照 `d48d580954086a426d31f1c7b8d793a1d26ad184`（含 v0.79.2 之后的修复）；已发布的上一版 `0.79.0-fork.3` 保留供回退。fork 专属行为继续保留在 fork 的 `main` 上。
 
 ## 发布版本与分支约定
 
-本变更源码候选版本为 **0.79.0-fork.3**；变更前最近已核验的已发布维护版本为 **0.79.0-fork.2**，基于社区 **0.79.0**。fork 版本统一使用 `<社区版本>-fork.<修订号>`，本地修订不冒充社区新版本。
+本变更源码候选版本为 **0.79.2-fork.1**，基于社区 **0.79.2** 及上述固定 main 快照；上一版为 **0.79.0-fork.3**。fork 版本统一使用 `<社区版本>-fork.<修订号>`，本地修订不冒充社区新版本。
 
 - `main`：我们的维护、整合与发布主线，保留 fork 修复。
 - `upstream-main`：仅镜像社区 `main`，不加入 fork 提交，也不作为安装来源。
@@ -25,7 +25,7 @@
 固定版本安装：
 
 ```bash
-pi install git:github.com/chenhaoxiang/pi-subagents@v0.79.0-fork.2
+pi install git:github.com/chenhaoxiang/pi-subagents@v0.79.2-fork.1
 ```
 
 [GitHub Releases](https://github.com/chenhaoxiang/pi-subagents/releases) 提供可安装的包、来源清单和 `SHA256SUMS` 校验文件；这不是向上游作者的 npm 命名空间发布。发布及制品安装流程见[维护说明](docs/releasing.md)。
@@ -40,11 +40,11 @@ pi install git:github.com/chenhaoxiang/pi-subagents@main
 
 可复现环境使用上面的固定发布 tag。Release 额外提供**编译后的安装包**，包含 `index.js`、API 导出和 runner 文件，不仅是源码归档。下载包、来源清单及校验文件，校验后解压到永久目录，再 `pi install /absolute/path/to/package`；详见[维护说明](docs/releasing.md)。
 
-安装后请**重启 Pi**加载新运行时。0.79.0 会检测原地更新；旧模块尚在内存时可能拒绝 `/reload`，必须重启以免混用新旧代码。安装过程不会强制停止活跃会话或子任务。
+安装后请**重启 Pi**加载新运行时。0.79.2 会检测原地更新；旧模块尚在内存时可能拒绝 `/reload`，必须重启以免混用新旧代码。安装过程不会强制停止活跃会话或子任务。
 
 ## Fork 专属能力
 
-fork 保留社区 `0.79.0` 能力，并额外维护：
+fork 保留社区 `0.79.2` 能力，并额外维护：
 
 - **受保护的异构模型 fallback**：只有在子 Agent 尚未产生工具副作用前发生 provider/model 失败时，才推进显式 fallback 链或内置模型池；每次尝试都会保留为证据；
 - **基于活动的 `idleTimeoutMs`**：前台和后台子 Agent 的流式输出及工具生命周期活动会续期；它不是墙钟总时长上限；
@@ -99,7 +99,7 @@ Run parallel reviewers for correctness, tests, and unnecessary complexity.
 - mission、schedule、验收证据、结构化输出和有界结果持久化；
 - 在契约明确时使用外部 runner 或指定机器执行。
 
-支持动态添加工具的宿主，会先显示紧凑的 `subagents_enable` loader，下一次请求才提供完整 `subagent` schema；如果修改工具列表会破坏 prompt cache，则新会话直接提供 `subagent`。`bg_wait` 和 supervisor 回复无需等待工具激活。
+支持动态添加工具的宿主，会先显示紧凑的 `subagents_enable` loader，下一次请求才提供完整 `subagent` schema；如果修改工具列表会破坏 prompt cache，则新会话直接提供 `subagent`。`bg_wait` 和 supervisor 回复随委派或已登记后台工作按需声明；恢复会话时保留已声明工具。
 
 ## 可见性与控制
 
