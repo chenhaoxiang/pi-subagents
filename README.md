@@ -12,11 +12,11 @@ This repository is the maintained fork at:
 
 <https://github.com/chenhaoxiang/pi-subagents>
 
-It tracks the community project selectively and keeps fork-specific behavior on the fork's `main` line. The current source candidate is `0.80.0-fork.1`, integrating community `main` through `80f8f79d51ee8075fd39baf7fe8ff36b43c3a790` (community v0.80.0). The previous published rollback release is `0.79.2-fork.1`.
+It tracks the community project selectively and keeps fork-specific behavior on the fork's `main` line. The current source candidate is `0.83.0-fork.1`, integrating community `main` through `d9c5ca29d881ee173681cafb66af1cc774285276` (community v0.83.0). The previous published rollback release is `0.80.0-fork.1`.
 
 ## Releases and branch policy
 
-The source candidate is **0.80.0-fork.1**, based on community **0.80.0** and the exact main snapshot above; **0.79.2-fork.1** remains available for rollback. Fork releases use `<community-version>-fork.<revision>`; the fork revision increases without pretending to be a new upstream release.
+The source candidate is **0.83.0-fork.1**, based on community **0.83.0** and the exact main snapshot above; **0.80.0-fork.1** remains available for rollback. Fork releases use `<community-version>-fork.<revision>`; the fork revision increases without pretending to be a new upstream release.
 
 - `main`: our maintained integration and release branch, including fork fixes.
 - `upstream-main`: an exact mirror of the community's `main`, with no fork commits. Never install from this branch.
@@ -25,7 +25,7 @@ The source candidate is **0.80.0-fork.1**, based on community **0.80.0** and the
 Install a reproducible release:
 
 ```bash
-pi install git:github.com/chenhaoxiang/pi-subagents@v0.80.0-fork.1
+pi install git:github.com/chenhaoxiang/pi-subagents@v0.83.0-fork.1
 ```
 
 [GitHub Releases](https://github.com/chenhaoxiang/pi-subagents/releases) include the installable package tarball, a provenance manifest, and `SHA256SUMS`. These GitHub releases are not npm publications under the upstream author's namespace. See [release maintenance](docs/releasing.md) for asset installation and future releases.
@@ -46,13 +46,14 @@ After installation, **restart Pi** to load the new runtime. Version 0.79.0 detec
 
 ## Fork-specific behavior
 
-The fork retains the community `0.80.0` functionality and adds or maintains:
+The fork retains the community `0.83.0` functionality and adds or maintains:
 
 - **Guarded heterogeneous model fallback** for native Pi children. Explicit fallback chains and the built-in pool advance only for provider/model failures that occur before child tool activity; each attempt remains visible as evidence.
 - **Activity-based `idleTimeoutMs`** for foreground and background children. Stream and tool lifecycle activity resets the inactivity window; this is not a wall-clock runtime cap.
 - **Runner and Pi 1.x compatibility** for long-lived parents and host layouts, with fail-closed handling for unknown or pre-1.0 layouts.
 - **Command supervision** for native children that are granted `bash` and `subagent_command`: inspect, yield, or cancel the child command without hiding it from the parent.
 - **Maintained background execution**, workflow recovery, model-scope handling, child-extension requirements, and Pi 1.0 clean-install compatibility from the synchronized community line.
+- **Community 0.83 reliability updates** for prompt-cache stability, terminal child settlement, placed-child launch, `subagent:jobs-changed` refresh events, background work keyed by Pi session id, and strict validation of thinking levels and agent overrides.
 
 The fork does not silently replay a child after tool side effects. Provider/model fallback is deliberately narrower than generic task retry.
 
