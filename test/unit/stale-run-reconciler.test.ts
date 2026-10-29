@@ -178,7 +178,7 @@ describe("async stale-run reconciliation", () => {
 					startedAt: now - 100, lastUpdate: now - 100,
 					steps: [{ agent: "worker", status: "running", startedAt: now - 100 }],
 				});
-				const options = { resultsDir, pidNamespaceScope: () => scenario.observed, now: () => now };
+				const options = { resultsDir, kill: () => true, pidNamespaceScope: () => scenario.observed, now: () => now };
 				const repaired = reconcileAsyncRun(asyncDir, options);
 				assert.equal(repaired.repaired, scenario.immediate, scenario.name);
 				assert.equal(repaired.status?.state, scenario.immediate ? "failed" : "running", scenario.name);
