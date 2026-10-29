@@ -2,11 +2,58 @@
 
 ## [Unreleased]
 
-## [0.83.0-fork.1] - 2026-10-28
+## [0.84.0-fork.1] - 2026-10-30
 
-- Integrate community v0.83.0 at `d9c5ca29d881ee173681cafb66af1cc774285276` while retaining guarded heterogeneous fallback, activity-based idle timeouts, runner/host compatibility, native-child evidence and Pi 1.x compatibility.
-- Preserve the maintained fork's release/install contract, bilingual documentation and rollback path from `0.80.0-fork.1`.
-- Carry forward the community 0.83 prompt-cache, child-settlement, placed-child, event-refresh, session-keyed `bg_wait`, thinking-level and override-validation fixes.
+- Integrate community v0.84.0 at `a04617faa7f5edc8fd4d87f6d9bca8f3a6b9e3d4` while retaining the fork's unknown async-run recovery changes and prior guarded fallback, timeout, runner/host compatibility, native-child evidence and Pi 1.x contracts.
+- Carry forward the community workflow-script sandbox security fix, locked-down provider diagnostics and background-run retention fix.
+- Preserve the maintained fork's release/install contract, bilingual documentation and rollback path from `0.83.0-fork.1`.
+
+### Community 0.84.0 changes
+
+### Changed
+
+- On Node, workflow scripts now run in a fresh permission-restricted process with no inherited startup flags or credentials, and cannot write files or start processes through Node APIs even outside the VM. A supervisor exits when the parent disconnects, including when the script is busy. Bun keeps its existing worker boundary. Thanks to [@XLi-hub](https://github.com/XLi-hub) for #3104.
+
+### Fixed
+
+- The `cost` RPC and `/subagent-cost` now include background runs that were started without a `subagent` tool call, such as RPC `spawn` launches and their workflow children. Before, these runs were left out of the child rows and totals. Thanks to [@BenedictP](https://github.com/BenedictP) for #3106.
+
+## [0.84.0] - 2026-10-28
+
+### Highlights
+
+- Security fix: workflow scripts can no longer reach the Pi process outside their sandbox. Upgrade if you use workflow scripts.
+- A locked-down background agent that fails because one of your extensions' providers did not load in it now says which provider and how to load it.
+- Old background runs are now actually deleted from disk.
+
+### Security
+
+- Workflow scripts could reach the Pi process outside their sandbox. Upgrade to this version; see [GHSA-6v8j-6w28-2w8r](https://github.com/nicobailon/pi-subagents/security/advisories/GHSA-6v8j-6w28-2w8r) for affected versions and a workaround. Workflow scripts can no longer set `Error.prepareStackTrace`, and a script that calls `import()`, which always failed inside a workflow, is now rejected before it runs.
+
+### Fixed
+
+- Old background runs are now deleted from disk. Background runs are meant to be removed 30 days after they finish, but a run was kept forever while its Pi session file still existed, and session files are never deleted, so almost no run was ever removed. A run whose session still exists is now kept for 90 days, so you can still resume it for that long, and is then removed like any other finished run. Thanks to [@LCorleone](https://github.com/LCorleone) for the report and fix, and [@isjiajia01](https://github.com/isjiajia01) for reproducing it. (#3098)
+- A background agent that loads no ambient extensions (for example one with `extensions: []`) now says so when it fails on a model whose provider one of your extensions registers or overrides. That extension never loaded in the child, so the child sent its requests through the built-in provider of the same name and failed with an unrelated provider error. The failure now names the provider and how to load its extension for that agent. Thanks to [@Yivas](https://github.com/Yivas) for the report. (#3100)
+
+## [0.83.1] - 2026-10-27
+
+### Highlights
+
+- Stopping, interrupting, or resuming a subagent can no longer act on the wrong run: an interrupt with no id is refused, and resuming a worktree child while it is still cleaning up no longer runs it in your main checkout.
+- A mission you start on purpose stays open until its result is checked, instead of showing `completed` on the writer's own report.
+- Capability limits registered by session id, as the docs show, now cover background runs and workflow children, not only foreground launches.
+- Agent files with a blank line inside an indented block are read in full, so settings below that line are no longer dropped.
+
+### Fixed
+
+- `subagent({ action: "interrupt" })` without an id is now refused with "action='interrupt' requires id.", the same as `stop`, `steer`, and `resume`. Before, it interrupted the last foreground run or the newest background run, so a call that lost its id could interrupt the wrong child. When an id matches no run, `stop`, `interrupt`, and `resume` now name that id in the error. Thanks to [@mannainsect](https://github.com/mannainsect) for the report. (#3081)
+- Resuming a background child that ran in its own worktree (`worktree: true`) no longer continues it in your main checkout. If you resumed it in the few seconds while it was saving its changes and removing its worktree, the child could start in your main checkout and commit or switch branches there, or start in a deleted worktree. That resume is now refused with a message to retry once the run finishes cleaning up. Thanks to [@peskycipher](https://github.com/peskycipher) for the report and [@isjiajia01](https://github.com/isjiajia01) for narrowing it down. (#3083)
+- A mission you start with `mission` or `missionId` no longer becomes `completed` when nothing confirmed its result. Before, a background writer run with only its own report marked its mission `completed`, so a claimed result looked like a proven one. When the run, or any workflow child in the mission, ends with acceptance `review-required`, `rejected`, `claimed`, or `pending`, the mission now stays `waiting`, and `mission.show` lists each child's acceptance status. Close it with `mission.close` after you check the result. A `gate` or `acceptance.verify` command alone does not complete a writer run's mission, because writer runs also need a review; add `review: { required: false }` to the `acceptance` policy when the command is enough ([missions.md](docs/missions.md)). Missions created automatically for ordinary launches still complete as before. Thanks to [@kiote](https://github.com/kiote). (#3078)
+- A capability ceiling registered the way the docs show, with `ctx.sessionManager.getSessionId()`, now applies in saved sessions. Before, most checks looked it up by session file path, so background launches, workflow children, and `{ action: "list" }` ignored it and only foreground launches were blocked. Every check now uses the session id, so a ceiling registered by session file path no longer applies. Thanks to [@corobis](https://github.com/corobis) for the report. (#3087)
+- A blank line inside an indented block in an agent file's frontmatter, such as an `external-cli` script argument with an empty line, cut the value off there and dropped every setting below it. The whole block is now read. Lists that used to stop at a blank line, such as `tools:`, now include their later entries, so an agent can get tools it did not get before. `|` and `>` blocks are unchanged. Thanks to [@jbachorik](https://github.com/jbachorik). (#3089)
+- A workflow script that called `runs.run({ key, agent, task })` with a single object passed validation and then failed with "runs.run has an invalid key.". Validation now rejects that call, and both the validation error and the running script show the right forms: `runs.run("plan", { agent, task })` or `runs.all([{ key, agent, task }])`. Thanks to [@brunovcosta](https://github.com/brunovcosta) for the report. (#3088)
+- In a project you have not trusted, agent lookup no longer scans the project's `.git`, `.pi`, and `.agents` folders on every call. It already ignored what was in them, but it still listed them to decide when to refresh, so ordinary git activity made it rebuild its agent list. Thanks to [@ArietidsZ](https://github.com/ArietidsZ). (#3080)
+- Long errors and verdicts in the `runs.lanes` result are now cut at a whole character, so they no longer end in a broken character or go over the 256-byte limit. Thanks to [@XLi-hub](https://github.com/XLi-hub). (#3097)
 
 ## [0.83.0] - 2026-10-25
 

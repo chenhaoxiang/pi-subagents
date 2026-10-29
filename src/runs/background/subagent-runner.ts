@@ -1260,6 +1260,7 @@ export async function runSingleStepInner(
 			modelVerificationRegistry: step.modelVerificationRegistry,
 			modelResponseAliases: step.modelResponseAliases,
 			mutationTools: step.mutationTools,
+			parentExtensionProvider: step.parentExtensionProvider,
 		}));
 		launched = true;
 		const attemptedModel = candidate ?? run.model ?? "default";
