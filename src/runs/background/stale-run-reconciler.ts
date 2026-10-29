@@ -44,6 +44,8 @@ interface ReconcileAsyncRunOptions {
 	staleAlivePidMs?: number;
 	pidNamespaceScope?: () => string | undefined;
 	bootId?: () => string | undefined;
+	/** Replaces the default PID probe for deterministic isolated reconciliation tests. */
+	probe?: (pid: number) => PidLiveness;
 	/**
 	 * This process's completion owner, for an owner-exited workflow repair to adopt so the session that
 	 * reopened it delivers its notice. Only callers whose session owns the run pass it.
@@ -572,6 +574,7 @@ export function reconcileAsyncRun(asyncDir: string, options: ReconcileAsyncRunOp
 		kill: options.kill,
 		observedScope: options.pidNamespaceScope ? options.pidNamespaceScope() : currentPidNamespaceScope(),
 		observedBootId: options.bootId ? options.bootId() : currentBootId(),
+		...(options.probe ? { probe: options.probe } : {}),
 	});
 	if (liveness !== "dead") {
 		const unknownStatus = liveness === "unknown" ? markUnknownRecovery(asyncDir, effectiveStatus, now) : effectiveStatus;
