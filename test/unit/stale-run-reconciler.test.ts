@@ -34,6 +34,36 @@ describe("async stale-run reconciliation", () => {
 		assert.equal(checkPidLiveness(123, () => { throw new Error("boom"); }), "unknown");
 	});
 
+	it("retains an injected unknown liveness observation as recoverable", () => {
+		const root = tempRoot("pi-stale-run-unknown-probe-");
+		try {
+			const asyncDir = path.join(root, "run-unknown");
+			writeStatus(asyncDir, {
+				runId: "run-unknown",
+				mode: "single",
+				state: "running",
+				pid: 4242,
+				pidNamespaceScope: "pid:[runner]",
+				startedAt: 1000,
+				lastUpdate: 1000,
+				steps: [{ agent: "worker", status: "running", startedAt: 1000 }],
+			});
+			const result = reconcileAsyncRun(asyncDir, {
+				resultsDir: path.join(root, "results"),
+				pidNamespaceScope: () => "pid:[observer]",
+				probe: () => "unknown",
+				now: () => 2000,
+			});
+			assert.equal(result.repaired, false);
+			assert.equal(result.status?.state, "running");
+			assert.equal(result.status?.recovery?.state, "unknown");
+			assert.equal(result.status?.recovery?.action, "reconcile");
+			assert.equal(fs.existsSync(path.join(root, "results", "run-unknown.json")), false);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("treats a pid saved under another boot as dead without probing, only when the pid namespaces are comparable", () => {
 		const noProbe = () => { throw new Error("the pid must not be probed"); };
 		const alive = () => true;
