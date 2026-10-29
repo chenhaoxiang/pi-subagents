@@ -361,6 +361,27 @@ function buildFailedRepair(status: AsyncStatus, asyncDir: string, now: number, r
 	};
 }
 
+function markUnknownRecovery(asyncDir: string, status: AsyncStatus, now: number): AsyncStatus {
+	const recovery = { state: "unknown" as const, action: "reconcile" as const, reason: "runner_liveness_unknown" as const, runId: status.runId };
+	const previous = status.recovery;
+	const firstObservation = previous?.state !== "unknown" || previous.reason !== recovery.reason;
+	const persistedRecovery = firstObservation
+		? { ...recovery, runId: status.runId }
+		: previous;
+	const next = { ...status, recovery: persistedRecovery };
+	if (firstObservation) {
+		writeAtomicJson(path.join(asyncDir, "status.json"), next);
+		appendJsonlBestEffort(path.join(asyncDir, "events.jsonl"), {
+			type: "subagent.run.recovery_unknown",
+			ts: now,
+			runId: status.runId,
+			reason: recovery.reason,
+			nextAction: recovery.action,
+		});
+	}
+	return next;
+}
+
 function writeFailedRepair(asyncDir: string, status: AsyncStatus, resultPath: string, now: number, reason?: string, ownerExited = false, adoptCompletionOwnerId?: string): ReconcileAsyncRunResult {
 	const repair = buildFailedRepair(status, asyncDir, now, reason, ownerExited, adoptCompletionOwnerId);
 	if (repair.result.sessionId) writeAsyncResultFile(resultPath, repair.result);
@@ -553,9 +574,11 @@ export function reconcileAsyncRun(asyncDir: string, options: ReconcileAsyncRunOp
 		observedBootId: options.bootId ? options.bootId() : currentBootId(),
 	});
 	if (liveness !== "dead") {
+		const unknownStatus = liveness === "unknown" ? markUnknownRecovery(asyncDir, effectiveStatus, now) : effectiveStatus;
+		if (liveness === "unknown") return { status: unknownStatus, repaired: false, resultPath, message: "Runner liveness is unknown; no replacement was launched. Reconcile the original run before resuming." };
 		const staleAfterMs = options.staleAlivePidMs ?? 24 * 60 * 60 * 1000;
 		const lastUpdate = effectiveStatus.lastUpdate ?? effectiveStatus.startedAt;
-		if (now - lastUpdate <= staleAfterMs) return { status: status ?? null, repaired: false, resultPath };
+		if (now - lastUpdate <= staleAfterMs) return { status: unknownStatus, repaired: false, resultPath };
 		const probe = liveness === "alive" ? "is still live" : "cannot be probed from this process";
 		const message = `Async runner PID ${effectiveStatus.pid} ${probe}; status has not updated for ${now - lastUpdate}ms, so stale-run reconciliation marked the run failed because PID ownership is unverified.`;
 		return writeFailedRepair(asyncDir, effectiveStatus, resultPath, now, message);

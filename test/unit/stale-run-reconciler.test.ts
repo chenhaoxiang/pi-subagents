@@ -103,9 +103,12 @@ describe("async stale-run reconciliation", () => {
 			assert.match(staleAlive.result.message ?? "", /^Async runner PID 4242 is still live; status has not updated/);
 
 			const staleUnknown = reconcile("wf-stale-unknown", workflowStatus("wf-stale-unknown", { pidNamespaceScope: "pid:[container]" }), { kill: () => { throw errno("ESRCH"); }, staleAlivePidMs: 500 });
-			assert.equal(staleUnknown.status.state, "failed");
+			assert.equal(staleUnknown.result.repaired, false);
+			assert.equal(staleUnknown.status.state, "running");
 			assert.equal(staleUnknown.status.workflow.stopCause, undefined);
-			assert.match(staleUnknown.result.message ?? "", /cannot be probed from this process/);
+			assert.equal(staleUnknown.status.recovery?.state, "unknown");
+			assert.equal(staleUnknown.status.recovery?.action, "reconcile");
+			assert.match(staleUnknown.result.message ?? "", /Runner liveness is unknown/);
 
 			const { workflow: _workflow, ...singleStatus } = workflowStatus("single-dead", { mode: "single" });
 			const single = reconcile("single-dead", singleStatus, { kill: () => { throw errno("ESRCH"); } });
@@ -183,9 +186,12 @@ describe("async stale-run reconciliation", () => {
 				assert.equal(fs.existsSync(resultPath), scenario.immediate, scenario.name);
 				if (!scenario.immediate) {
 					const stale = reconcileAsyncRun(asyncDir, { ...options, staleAlivePidMs: 1000, now: () => now + 2000 });
-					assert.equal(stale.repaired, true, scenario.name);
-					assert.equal(stale.status?.state, "failed", scenario.name);
-					assert.match(stale.message ?? "", /status has not updated for 2100ms.*PID ownership is unverified/);
+					assert.equal(stale.repaired, false, scenario.name);
+					assert.equal(stale.status?.state, "running", scenario.name);
+					assert.equal(stale.status?.recovery?.state, "unknown", scenario.name);
+					assert.match(stale.message ?? "", /Runner liveness is unknown/);
+					assert.equal(fs.existsSync(resultPath), false, scenario.name);
+					continue;
 				}
 				const receipt = fs.readFileSync(resultPath, "utf-8");
 				assert.equal(JSON.parse(receipt).state, "failed");
@@ -232,9 +238,11 @@ describe("async stale-run reconciliation", () => {
 				now: () => 7000,
 			});
 
-			assert.equal(stale.repaired, true);
-			assert.equal(stale.status?.state, "failed");
-			assert.match(stale.message ?? "", /PID 1404 cannot be probed from this process; status has not updated for 6000ms/);
+			assert.equal(stale.repaired, false);
+			assert.equal(stale.status?.state, "running");
+			assert.equal(stale.status?.recovery?.state, "unknown");
+			assert.equal(stale.status?.recovery?.action, "reconcile");
+			assert.match(stale.message ?? "", /Runner liveness is unknown/);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}

@@ -182,6 +182,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 			turnCount: run.turnCount,
 			toolCount: run.toolCount,
 			steering: run.steering,
+			recovery: run.recovery,
 			mode: run.mode,
 			context: run.context,
 			cwd: run.cwd,

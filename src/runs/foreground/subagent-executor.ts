@@ -2025,6 +2025,14 @@ async function resumeAsyncRun(input: {
 		return { content: [{ type: "text", text: message }], isError: true, details: { mode: "management", results: [] } };
 	}
 
+	if (target.kind === "live" && target.recovery?.state === "unknown") {
+		return {
+			content: [{ type: "text", text: [`Async child '${target.runId}' has UNKNOWN runner liveness. No replacement was launched.`, `Reconcile the original run first: subagent({ action: "reconcile", id: "${target.runId}" }).`, "Do not use action='resume' until reconciliation proves the original runner terminal."].join("\n") }],
+			isError: true,
+			details: { mode: "management", results: [], recovery: target.recovery },
+		};
+	}
+
 	if (target.kind === "live" && !attachChain) {
 		return {
 			content: [{
@@ -7316,6 +7324,9 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				} catch (error) {
 					return { content: [{ type: "text", text: error instanceof Error ? error.message : String(error) }], isError: true, details: { mode: "management", results: [] } };
 				}
+			}
+			if (action === "reconcile") {
+				return inspectSubagentStatus({ ...paramsWithResolvedCwd, action: "reconcile" }, omitUndefinedProperties({ state: deps.state, nested: nestedResolutionScopeForExecutor(deps), sessionRoots: trustedSessionRoots(ctx.sessionManager.getSessionFile() ?? null, deps), abandonedSlotReleaseAfterMs: resolveAbandonedSlotReleaseAfterMs(deps.config.capacity?.abandonedSlotReleaseAfterMs) }));
 			}
 			if (action === "status" || action === "debug.run") {
 				if (!preserveActiveSession) deps.state.currentSessionId = resolveCurrentSessionId(ctx.sessionManager);

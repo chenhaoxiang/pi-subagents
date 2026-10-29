@@ -5,6 +5,7 @@ import type { AsyncJobState, AsyncJobStep, HostStepFreshness, HostStepMonitorKin
 import { HOST_STEP_MAX_COUNT, HOST_STEP_MAX_DETAIL_CHARS, HOST_STEP_MAX_LABEL_CHARS, HOST_STEP_MAX_PROVIDER_CHARS, HOST_STEP_MAX_REASON_CHARS, HOST_STEP_MAX_REF_CHARS, HOST_STEP_MAX_ROLE_CHARS, HOST_STEP_MAX_TARGET_CHARS, hostStepReportName, parseHostStepNode, validHostStepNodes } from "./host-step-status.ts";
 import { workflowPreflightLaneForRuntimeKey } from "../../workflows/workflow-preflight.ts";
 import { workflowGraphStageNodes } from "./workflow-graph.ts";
+import type { AsyncRecoveryProjection } from "./async-recovery.ts";
 
 export const ASYNC_STATUS_SNAPSHOT_KIND = "pi-subagents.async-status-snapshot";
 export const ASYNC_STATUS_SNAPSHOT_VERSION = 1;
@@ -70,6 +71,7 @@ export interface AsyncStatusSnapshotNode {
 	thinking?: ThinkingLevel;
 	hostStep?: AsyncStatusSnapshotHostStep;
 	children?: AsyncStatusSnapshotNode[];
+	recovery?: AsyncRecoveryProjection;
 }
 
 export interface AsyncStatusSnapshotCaps {
@@ -442,6 +444,7 @@ function projectRun(job: AsyncJobState, ctx: ProjectionContext, depth: number, c
 		...(updatedAt !== undefined ? { updatedAt } : {}),
 		...(terminalState(state) && updatedAt !== undefined ? { endedAt: updatedAt } : {}),
 		...(activity ? { activity } : {}),
+		...(job.recovery ? { recovery: job.recovery } : {}),
 	};
 	const steps = omitSteps ? [] : job.steps ?? [];
 	const materialized = childrenByParent.get(job.asyncId) ?? [];
