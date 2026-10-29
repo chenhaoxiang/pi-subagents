@@ -430,6 +430,8 @@ const restriction = registerSubagentCapabilityCeiling({
 // restriction.dispose() removes only this provider's registration.
 ```
 
+Register with **`ctx.sessionManager.getSessionId()`**; a ceiling registered by session file path does not apply.
+
 Semantics:
 
 - Active registrations intersect their `allowedTools` and `allowedAgents` sets and OR `denyExtensions`.

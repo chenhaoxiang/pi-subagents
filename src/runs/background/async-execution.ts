@@ -9,6 +9,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import * as nodeModule from "node:module";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ParentProviderRegistry } from "../shared/child-session.ts";
 import { discoverAgents, formatUnknownAgentError, unknownAgentDiagnosticContext, type AgentConfig, type UnknownAgentDiagnosticContext } from "../../agents/agents.ts";
 import { createAtomicJsonWriter, writePrivateAtomicJson } from "../../shared/atomic-json.ts";
 import { childCacheRetentionEnv } from "../../shared/child-cache-retention.ts";
@@ -173,7 +174,7 @@ interface AsyncExecutionContext {
 	cwd: string;
 	currentSessionId: string;
 	completionOwnerId?: string;
-	/** Parent session id used by permission-system ask forwarding. */
+	/** Parent Pi session id (`getSessionId()`): keys permission-system ask forwarding and capability ceilings. */
 	parentSessionId?: string;
 	/** Parent session file, recorded as each new child session's `parentSession` header. */
 	parentSessionFile?: string;
@@ -192,6 +193,19 @@ interface AsyncExecutionContext {
 	childRuntime?: ChildRuntimeConfig;
 	/** The launching session's project trust; undefined when the host has no trust concept. */
 	projectTrusted?: boolean;
+	/** The parent's model registry, read at launch to name a provider an extension registered there. */
+	parentProviderRegistry?: Pick<ParentProviderRegistry, "getRegisteredProviderIds">;
+}
+
+/**
+ * A runner child without the ambient extensions does not load the parent extension that
+ * registered its model's provider, and still resolves the model when a built-in provider
+ * has the same id. Name that provider so a failed run can say so.
+ */
+function parentExtensionProviderForChild(ctx: AsyncExecutionContext, disableAmbientExtensions: boolean, model: string | undefined, availableModels: AvailableModelInfo[] | undefined, preferredProvider: string | undefined): string | undefined {
+	if (!disableAmbientExtensions || !ctx.parentProviderRegistry) return undefined;
+	const provider = findModelInfo(model, availableModels, preferredProvider)?.provider;
+	return provider && ctx.parentProviderRegistry.getRegisteredProviderIds().includes(provider) ? provider : undefined;
 }
 
 export const DEFAULT_ASYNC_TIMEOUT_MS = 30 * 60 * 1000;
@@ -1272,6 +1286,7 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 			runtimeSnapshotHost: ctx.pi,
 		});
 		const launchResolvedExtensions = externalRunner ? undefined : projectLaunchResolvedChildExtensions(toolPlan);
+		const parentExtensionProvider = externalRunner || machine ? undefined : parentExtensionProviderForChild(ctx, toolPlan.disableAmbientExtensions, selectedModel, availableModels, a.modelProvider ?? ctx.currentModelProvider);
 		if (externalRunner && permissionRules) {
 			throw new AsyncStartValidationError(`Agent '${a.name}' uses runner.type='${externalRunnerType}', which cannot enforce native Pi child permission rules.`);
 		}
@@ -1303,6 +1318,7 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 			thinking: resolveEffectiveThinking(selectedModel, effectiveThinking),
 			...(thinkingCeiling ? { thinkingCeiling } : {}),
 			launchResolvedExtensions,
+			...(parentExtensionProvider ? { parentExtensionProvider } : {}),
 			...(requestedModel ? { requestedModel } : {}),
 			...(primaryModelFromParent ? { skipPrimaryModelVerification: true } : {}),
 			...(availableModels && availableModels.length > 0 ? { modelVerificationRegistry: availableModels } : {}),
@@ -1536,7 +1552,8 @@ export function executeAsyncChain(
 	const undefinedLauncher = chain.flatMap(getStepAgents).map((name) => agents.find((agent) => agent.name === name)?.launcher)
 		.find((name) => name !== undefined && !lookupRunnerLauncher(ctx.runnerLaunchers, name));
 	if (undefinedLauncher !== undefined) return formatAsyncStartError(resultMode, `Launcher '${undefinedLauncher}' used by this ${resultMode} is not defined in runnerLaunchers in the user subagent config.`);
-	const capabilityCeiling = params.capabilityCeiling ?? resolveCurrentSubagentCapabilityCeiling(ctx.currentSessionId);
+	const launchParentSessionId = ctx.parentSessionId ?? ctx.currentSessionId;
+	const capabilityCeiling = params.capabilityCeiling ?? resolveCurrentSubagentCapabilityCeiling(launchParentSessionId);
 	const inheritedNestedRoute = inheritedNestedRouteOf(ctx.childRuntime);
 	const nestedAddress = inheritedNestedRoute ? inheritedNestedParentAddressOf(ctx.childRuntime) : undefined;
 	const asyncDir = inheritedNestedRoute
@@ -1637,7 +1654,6 @@ export function executeAsyncChain(
 	const initialStatusAt = Date.now();
 	const initialCompletionOwnerId = ctx.completionOwnerId ?? currentCompletionOwnerId();
 	const completionOwnerProcess = currentRecordedPid();
-	const launchParentSessionId = ctx.parentSessionId ?? ctx.currentSessionId;
 	try {
 		writeRetainedRequiredChildExtensions(asyncDir, params.requiredExtensions ?? ctx.childRuntime?.requiredExtensions ?? resolveRequiredChildExtensions(launchParentSessionId ?? undefined));
 	} catch (error) {
@@ -1923,7 +1939,7 @@ export function executeAsyncSingle(
 		if (extensionBindings !== undefined) unsupported.push("extension bindings");
 		if (unsupported.length > 0) return formatAsyncStartError("single", `Agent '${agentConfig.name}' uses runner.type='${externalRunnerType}' and does not support: ${unsupported.join(", ")}.`);
 	}
-	const capabilityCeiling = intersectSubagentCapabilityCeilings(params.capabilityCeiling ?? resolveCurrentSubagentCapabilityCeiling(ctx.currentSessionId), ctx.childRuntime?.capabilityCeiling);
+	const capabilityCeiling = intersectSubagentCapabilityCeilings(params.capabilityCeiling ?? resolveCurrentSubagentCapabilityCeiling(ctx.parentSessionId ?? ctx.currentSessionId), ctx.childRuntime?.capabilityCeiling);
 	try {
 		assertAgentAllowedByCapabilityCeiling(agentConfig.name, capabilityCeiling);
 	} catch (error) {
@@ -2146,6 +2162,7 @@ export function executeAsyncSingle(
 		runtimeSnapshotHost: ctx.pi,
 	});
 	const launchResolvedExtensions = externalRunner ? undefined : projectLaunchResolvedChildExtensions(toolPlan);
+	const parentExtensionProvider = externalRunner || machine ? undefined : parentExtensionProviderForChild(ctx, toolPlan.disableAmbientExtensions, selectedModel, availableModels, agentConfig.modelProvider ?? ctx.currentModelProvider);
 	const fast = params.fast ?? agentConfig.fast;
 	const launchThinking = resolveEffectiveThinking(selectedModel, effectiveThinking);
 	const { definitionDigest, launchContractDigest } = resolveLaunchBinding({
@@ -2271,6 +2288,7 @@ export function executeAsyncSingle(
 						...(params.fast ?? agentConfig.fast ? { fast: params.fast ?? agentConfig.fast } : {}),
 						thinking: resolveEffectiveThinking(selectedModel, effectiveThinking),
 						...(thinkingCeiling ? { thinkingCeiling } : {}),
+						...(parentExtensionProvider ? { parentExtensionProvider } : {}),
 						...(requestedModel ? { requestedModel } : {}),
 						...(modelOrigin === "inherited" ? { skipPrimaryModelVerification: true } : {}),
 						...(availableModels && availableModels.length > 0 ? { modelVerificationRegistry: availableModels } : {}),

@@ -2050,7 +2050,7 @@ export interface AsyncStatus {
 		label?: string;
 		workflowKey?: string;
 		lane?: WorkflowLaneMetadata;
-		/** Display-only worktree path copied at launch; handoff remains authoritative. */
+		/** Worktree path copied at setup; the handoff stays authoritative for the cwd. */
 		worktreePath?: string;
 		/** Display-only branch copied at launch; handoff remains authoritative. */
 		branch?: string;

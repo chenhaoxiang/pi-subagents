@@ -2839,8 +2839,7 @@ function buildAgentDiscoverySources(cwd: string, preferredModelProvider: string 
 	const watchPaths = new Set<string>([
 		userSettingsPath,
 		...(projectSettingsPath ? [projectSettingsPath] : []),
-		...projectDiscoveryWatchPaths(effectiveCwd),
-		...findProjectRootCandidates(effectiveCwd).map((root) => path.join(getProjectConfigDir(root), "settings.json")),
+		...(projectTrusted ? [...projectDiscoveryWatchPaths(effectiveCwd), ...findProjectRootCandidates(effectiveCwd).map((root) => path.join(getProjectConfigDir(root), "settings.json"))] : []),
 		...userScanDirs.watchPaths,
 		...projectScanDirs.watchPaths,
 		...packageSubagentPaths.watchPaths,

@@ -22,7 +22,7 @@ Applies only to chenhaoxiang/pi-subagents. The community project remains [nicoba
 
 ## Baseline for this release
 
-The current source candidate is **0.83.0-fork.1**, integrating community version **0.83.0** through `d9c5ca29d881ee173681cafb66af1cc774285276`. Previous published **0.80.0-fork.1** remains available for rollback. Community support starts at Pi 1.2.0; the fork retains guarded model fallback, idle-timeout, runner/host compatibility and native-child evidence contracts while carrying the 0.83 reliability fixes. See [the 0.83 synchronization report](maintenance/2026-10-28-community-0.83.0.md) for retained contracts and provider-free validation. Exact publication, fresh-download and installed-byte acceptance are recorded by the matching immutable Release; source metadata alone is not proof of runtime activation.
+The current source candidate is **0.84.0-fork.1**, integrating community version **0.84.0** through `a04617faa1f4d7daf631fefc10afc76412c6fe4a`. Previous published **0.83.0-fork.1** remains available for rollback. Community support starts at Pi 1.2.0; the fork retains guarded model fallback, idle-timeout, runner/host compatibility, native-child evidence and unknown async-run recovery while carrying the 0.84 workflow-script security and retention fixes. See [the 0.84 synchronization report](maintenance/2026-10-30-community-0.84.0.md) for retained contracts and provider-free validation. Exact publication, fresh-download and installed-byte acceptance are recorded by the matching immutable Release; source metadata alone is not proof of runtime activation.
 
 ## Publish every version
 
