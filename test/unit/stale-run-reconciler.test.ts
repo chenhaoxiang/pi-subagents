@@ -34,6 +34,36 @@ describe("async stale-run reconciliation", () => {
 		assert.equal(checkPidLiveness(123, () => { throw new Error("boom"); }), "unknown");
 	});
 
+	it("retains an injected unknown liveness observation as recoverable", () => {
+		const root = tempRoot("pi-stale-run-unknown-probe-");
+		try {
+			const asyncDir = path.join(root, "run-unknown");
+			writeStatus(asyncDir, {
+				runId: "run-unknown",
+				mode: "single",
+				state: "running",
+				pid: 4242,
+				pidNamespaceScope: "pid:[runner]",
+				startedAt: 1000,
+				lastUpdate: 1000,
+				steps: [{ agent: "worker", status: "running", startedAt: 1000 }],
+			});
+			const result = reconcileAsyncRun(asyncDir, {
+				resultsDir: path.join(root, "results"),
+				pidNamespaceScope: () => "pid:[observer]",
+				probe: () => "unknown",
+				now: () => 2000,
+			});
+			assert.equal(result.repaired, false);
+			assert.equal(result.status?.state, "running");
+			assert.equal(result.status?.recovery?.state, "unknown");
+			assert.equal(result.status?.recovery?.action, "reconcile");
+			assert.equal(fs.existsSync(path.join(root, "results", "run-unknown.json")), false);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("treats a pid saved under another boot as dead without probing, only when the pid namespaces are comparable", () => {
 		const noProbe = () => { throw new Error("the pid must not be probed"); };
 		const alive = () => true;
@@ -103,9 +133,12 @@ describe("async stale-run reconciliation", () => {
 			assert.match(staleAlive.result.message ?? "", /^Async runner PID 4242 is still live; status has not updated/);
 
 			const staleUnknown = reconcile("wf-stale-unknown", workflowStatus("wf-stale-unknown", { pidNamespaceScope: "pid:[container]" }), { kill: () => { throw errno("ESRCH"); }, staleAlivePidMs: 500 });
-			assert.equal(staleUnknown.status.state, "failed");
+			assert.equal(staleUnknown.result.repaired, false);
+			assert.equal(staleUnknown.status.state, "running");
 			assert.equal(staleUnknown.status.workflow.stopCause, undefined);
-			assert.match(staleUnknown.result.message ?? "", /cannot be probed from this process/);
+			assert.equal(staleUnknown.status.recovery?.state, "unknown");
+			assert.equal(staleUnknown.status.recovery?.action, "reconcile");
+			assert.match(staleUnknown.result.message ?? "", /Runner liveness is unknown/);
 
 			const { workflow: _workflow, ...singleStatus } = workflowStatus("single-dead", { mode: "single" });
 			const single = reconcile("single-dead", singleStatus, { kill: () => { throw errno("ESRCH"); } });
@@ -161,11 +194,11 @@ describe("async stale-run reconciliation", () => {
 			const now = Date.now();
 			const resultsDir = path.join(root, "results");
 			for (const scenario of [
-				{ name: "matching", recorded: scope, observed: scope, immediate: true },
-				{ name: "missing-recorded", recorded: undefined, observed: scope, immediate: false },
-				{ name: "different", recorded: "pid:[other]", observed: scope, immediate: false },
-				{ name: "missing-observed", recorded: scope, observed: undefined, immediate: false },
-				{ name: "both-missing", recorded: undefined, observed: undefined, immediate: false },
+				{ name: "matching", recorded: scope, observed: scope, immediate: true, probe: () => "dead" as const, unknown: false },
+				{ name: "missing-recorded", recorded: undefined, observed: scope, immediate: false, probe: () => "alive" as const, unknown: false },
+				{ name: "different", recorded: "pid:[other]", observed: scope, immediate: false, probe: () => "dead" as const, unknown: true },
+				{ name: "missing-observed", recorded: scope, observed: undefined, immediate: false, probe: () => "dead" as const, unknown: true },
+				{ name: "both-missing", recorded: undefined, observed: undefined, immediate: false, probe: () => "alive" as const, unknown: false },
 			]) {
 				const runId = `run-zombie-${scenario.name}`;
 				const asyncDir = path.join(root, runId);
@@ -175,7 +208,7 @@ describe("async stale-run reconciliation", () => {
 					startedAt: now - 100, lastUpdate: now - 100,
 					steps: [{ agent: "worker", status: "running", startedAt: now - 100 }],
 				});
-				const options = { resultsDir, pidNamespaceScope: () => scenario.observed, now: () => now };
+				const options = { resultsDir, pidNamespaceScope: () => scenario.observed, probe: scenario.probe, now: () => now };
 				const repaired = reconcileAsyncRun(asyncDir, options);
 				assert.equal(repaired.repaired, scenario.immediate, scenario.name);
 				assert.equal(repaired.status?.state, scenario.immediate ? "failed" : "running", scenario.name);
@@ -183,6 +216,14 @@ describe("async stale-run reconciliation", () => {
 				assert.equal(fs.existsSync(resultPath), scenario.immediate, scenario.name);
 				if (!scenario.immediate) {
 					const stale = reconcileAsyncRun(asyncDir, { ...options, staleAlivePidMs: 1000, now: () => now + 2000 });
+					if (scenario.unknown) {
+						assert.equal(stale.repaired, false, scenario.name);
+						assert.equal(stale.status?.state, "running", scenario.name);
+						assert.equal(stale.status?.recovery?.state, "unknown", scenario.name);
+						assert.match(stale.message ?? "", /Runner liveness is unknown/);
+						assert.equal(fs.existsSync(resultPath), false, scenario.name);
+						continue;
+					}
 					assert.equal(stale.repaired, true, scenario.name);
 					assert.equal(stale.status?.state, "failed", scenario.name);
 					assert.match(stale.message ?? "", /status has not updated for 2100ms.*PID ownership is unverified/);
@@ -232,9 +273,11 @@ describe("async stale-run reconciliation", () => {
 				now: () => 7000,
 			});
 
-			assert.equal(stale.repaired, true);
-			assert.equal(stale.status?.state, "failed");
-			assert.match(stale.message ?? "", /PID 1404 cannot be probed from this process; status has not updated for 6000ms/);
+			assert.equal(stale.repaired, false);
+			assert.equal(stale.status?.state, "running");
+			assert.equal(stale.status?.recovery?.state, "unknown");
+			assert.equal(stale.status?.recovery?.action, "reconcile");
+			assert.match(stale.message ?? "", /Runner liveness is unknown/);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}

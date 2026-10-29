@@ -38,6 +38,7 @@ import { formatWorkflowKeyRevival, projectWorkflowKeyRevival } from "../../workf
 import { capSummaryOutputs } from "../shared/single-output.ts";
 import { ownsRun } from "../shared/run-ownership.ts";
 import { foregroundChildStateLabel } from "../foreground/foreground-history.ts";
+import { formatAsyncRecovery, projectAsyncRecovery } from "../shared/async-recovery.ts";
 
 /** A step whose structured output has a path line needs only a short inline preview. */
 const STRUCTURED_PREVIEW_WITH_PATH_CHARS = 500;
@@ -129,6 +130,26 @@ interface RunStatusDeps {
 
 function hasExistingSessionFile(value: unknown): value is string {
 	return typeof value === "string" && fs.existsSync(value);
+}
+
+function recoveryForStatus(status: AsyncStatus, processTerminal: AsyncStatus["processTerminal"], currentSessionId?: string): ReturnType<typeof projectAsyncRecovery> {
+	if ((status.state === "running" || status.state === "queued") && status.recovery?.state === "unknown") return status.recovery;
+	return projectAsyncRecovery({
+		runId: status.runId,
+		state: status.state,
+		sessionId: status.sessionId,
+		currentSessionId,
+		processTerminal,
+		sessionFile: status.sessionFile,
+		sessionFileAvailable: hasExistingSessionFile(status.sessionFile),
+		steps: (status.steps ?? []).map((step, index) => ({
+			index,
+			sessionFile: step.sessionFile,
+			sessionFileAvailable: hasExistingSessionFile(step.sessionFile),
+			runnerType: step.runner?.type === "external-cli" || step.runner?.type === "external-job" ? step.runner.type : "pi",
+			status: step.status,
+		})),
+	});
 }
 
 function formatResumeGuidance(runId: string | undefined, children: Array<{ agent?: unknown; sessionFile?: unknown; runId?: unknown; workflowKey?: unknown; status?: unknown; activityState?: unknown }>, fallbackSessionFile?: unknown, options: { stopped?: boolean; otherSession?: boolean } = {}): string {
@@ -570,6 +591,7 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 			const steeringText = formatSteeringSummary(status);
 			const processTerminal = readProcessTerminal(asyncDir, { runId: status.runId, runnerProcessInstanceId: status.processTerminal?.runnerProcessInstanceId })
 				?? sanitizeProcessTerminal(status.processTerminal, { runId: status.runId, runnerProcessInstanceId: status.processTerminal?.runnerProcessInstanceId }, path.join(asyncDir, "status.json"));
+			const recovery = recoveryForStatus(status, processTerminal, currentSessionId);
 			const runFanoutBudgetDescriptor = readRunFanoutBudgetDescriptor(asyncDir);
 			const runFanoutBudget = runFanoutBudgetDescriptor ? getRunFanoutBudgetSnapshot(runFanoutBudgetDescriptor) : status.runFanoutBudget;
 			let missionId: string | undefined;
@@ -593,6 +615,7 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 				status.toolCallId ? `Tool call: ${status.toolCallId}` : undefined,
 				missionId ? `Mission: ${missionId}` : undefined,
 				`State: ${status.state}`,
+				formatAsyncRecovery(recovery),
 				inherited ? `Owner: inherited from session '${status.sessionId}' (replaced in this process).` : undefined,
 				processTerminal ? `Process terminal: ${processTerminal.state}${processTerminal.reason ? ` (${processTerminal.reason})` : ""}` : undefined,
 				status.capabilityCeiling ? `Capability ceiling: ${status.capabilityCeiling.allowedTools === undefined ? "names unrestricted" : status.capabilityCeiling.allowedTools.length === 0 ? "none" : status.capabilityCeiling.allowedTools.join(", ")}\nExtensions denied: ${status.capabilityCeiling.denyExtensions ? "yes" : "no"} (sources: ${status.capabilityCeiling.sources.join(", ")})` : undefined,
@@ -624,6 +647,7 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 				`Dir: ${asyncDir}`,
 				outputPath ? `Output: ${outputPath}` : undefined,
 				status.parallelHandoff ? `Parallel handoff: ${status.parallelHandoff.path}` : undefined,
+				recovery.action === "reconcile" ? `Reconcile: subagent({ action: "reconcile", id: "${status.runId}" })` : undefined,
 				reconciliation.message ? `Diagnosis: ${reconciliation.message}` : undefined,
 				reconciliation.resultPath && fs.existsSync(reconciliation.resultPath) ? `Result: ${reconciliation.resultPath}` : undefined,
 			].filter((line): line is string => Boolean(line));
@@ -721,7 +745,7 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 			if (status.workflowReceiptPath) lines.push(`Workflow receipt: ${status.workflowReceiptPath}`);
 			if (status.sessionFile) lines.push(`Session: ${status.sessionFile}`);
 			const allExternal = (status.steps?.length ?? 0) > 0 && status.steps!.every((step) => step.runner?.type === "external-cli" || step.runner?.type === "external-job");
-			if (status.state === "running" && !allExternal && status.mode !== "workflow") lines.push(`Steer running child: subagent({ action: "steer", id: "${status.runId}", message: "..." })`);
+			if (status.state === "running" && recovery.state !== "unknown" && !allExternal && status.mode !== "workflow") lines.push(`Steer running child: subagent({ action: "steer", id: "${status.runId}", message: "..." })`);
 			if (status.state !== "running") {
 				lines.push(allExternal
 					? hasExternalJobFollowUpHint ? "Resume: use the external-job follow-up hint above." : "Resume: unavailable; external runners do not persist Pi sessions."
@@ -730,7 +754,7 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 			if (fs.existsSync(logPath)) lines.push(`Log: ${logPath}`);
 			if (fs.existsSync(eventsPath)) lines.push(`Events: ${eventsPath}`);
 
-			return { content: [{ type: "text", text: lines.join("\n") }], details: { mode: "single", runId: status.runId, ...(status.toolCallId ? { toolCallId: status.toolCallId } : {}), results: [], ...(status.workflowReceiptPath ? { workflowReceiptPath: status.workflowReceiptPath } : {}), ...(status.preflight ? { preflight: status.preflight } : {}), ...(status.workflow?.preflightWarnings?.length ? { preflightWarnings: status.workflow.preflightWarnings } : {}), ...(workflowChildren ? { workflowChildren } : {}), ...(workflowTerminalProof ? { workflowTerminalProof } : {}), ...(runFanoutBudget ? { runFanoutBudget } : {}), ...(processTerminal ? { lifecycleStatus: { processTerminal } } : {}) } };
+			return { content: [{ type: "text", text: lines.join("\n") }], details: { mode: "single", runId: status.runId, ...(status.toolCallId ? { toolCallId: status.toolCallId } : {}), results: [], recovery, ...(status.workflowReceiptPath ? { workflowReceiptPath: status.workflowReceiptPath } : {}), ...(status.preflight ? { preflight: status.preflight } : {}), ...(status.workflow?.preflightWarnings?.length ? { preflightWarnings: status.workflow.preflightWarnings } : {}), ...(workflowChildren ? { workflowChildren } : {}), ...(workflowTerminalProof ? { workflowTerminalProof } : {}), ...(runFanoutBudget ? { runFanoutBudget } : {}), ...(processTerminal ? { lifecycleStatus: { processTerminal } } : {}) } };
 		}
 	}
 

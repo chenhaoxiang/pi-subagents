@@ -275,6 +275,42 @@ describe("async run status inspection", () => {
 		}
 	});
 
+	it("exposes UNKNOWN as an explicit reconcile action without offering resume", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-run-status-unknown-recovery-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			const asyncDir = path.join(asyncRoot, "run-unknown");
+			fs.mkdirSync(asyncDir, { recursive: true });
+			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
+				runId: "run-unknown",
+				mode: "single",
+				state: "running",
+				pid: 1404,
+				pidNamespaceScope: "pid:[runner]",
+				startedAt: 100,
+				lastUpdate: 100,
+				steps: [{ agent: "worker", status: "running", startedAt: 100, sessionFile: path.join(root, "child.jsonl") }],
+			}), "utf-8");
+
+			const result = inspectSubagentStatus({ action: "reconcile", id: "run-unknown" }, {
+				asyncDirRoot: asyncRoot,
+				resultsDir: path.join(root, "results"),
+				kill: () => { throw errno("ESRCH"); },
+				state: { currentSessionId: "session-1", asyncJobs: new Map(), foregroundControls: new Map() } as unknown as SubagentState,
+			});
+			const text = textContent(result);
+			assert.equal(result.isError, undefined);
+			assert.equal(result.details.recovery?.state, "unknown");
+			assert.equal(result.details.recovery?.action, "reconcile");
+			assert.match(text, /Recovery: unknown \(runner_liveness_unknown\)/);
+			assert.match(text, /next action: reconcile/);
+			assert.match(text, /Reconcile: subagent\(\{ action: "reconcile", id: "run-unknown" \}\)/);
+			assert.doesNotMatch(text, /Steer running child/);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("renders bounded recovery guidance from a failed status step", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-run-status-recovery-"));
 		try {

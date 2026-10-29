@@ -29,6 +29,7 @@ import { formatWorkflowChecklistText, projectWorkflowChecklist } from "../../wor
 import type { RawDrainStatusObserver } from "../shared/readonly-drain-observation.ts";
 import { childWatchdogProgressForModel } from "../../watchdog/child-status.ts";
 import { ownerSessionIds } from "../shared/run-ownership.ts";
+import { projectAsyncRecovery } from "../shared/async-recovery.ts";
 
 interface AsyncRunStepSummary {
 	index: number;
@@ -112,6 +113,7 @@ export interface AsyncRunSummary {
 	turnCount?: number;
 	toolCount?: number;
 	steering?: SteeringStatus;
+	recovery?: ReturnType<typeof projectAsyncRecovery>;
 	mode: SubagentRunMode;
 	context?: ContextSummary;
 	cwd?: string;
@@ -429,6 +431,21 @@ function statusToSummary(asyncDir: string, status: AsyncStatus & { cwd?: string 
 		};
 	});
 	attachRootChildrenToSteps(status.runId || path.basename(asyncDir), summarizedSteps, nestedChildren);
+	const recovery = status.recovery?.state === "unknown" ? status.recovery : projectAsyncRecovery({
+		runId: status.runId || path.basename(asyncDir),
+		state: status.state,
+		sessionId: status.sessionId,
+		processTerminal,
+		sessionFile: status.sessionFile,
+		sessionFileAvailable: status.sessionFile ? fs.existsSync(status.sessionFile) : undefined,
+		steps: summarizedSteps.map((step, index) => ({
+			index,
+			sessionFile: step.sessionFile,
+			sessionFileAvailable: step.sessionFile ? fs.existsSync(step.sessionFile) : undefined,
+			runnerType: step.runner?.type === "external-cli" || step.runner?.type === "external-job" ? step.runner.type : "pi",
+			status: step.status,
+		})),
+	});
 	return {
 		id: status.runId || path.basename(asyncDir),
 		asyncDir,
@@ -469,6 +486,7 @@ function statusToSummary(asyncDir: string, status: AsyncStatus & { cwd?: string 
 		...(nestedChildren.length ? { nestedChildren } : {}),
 		...(nestedWarnings.length ? { nestedWarnings } : {}),
 		...(processTerminal ? { processTerminal } : {}),
+		recovery,
 		...(runFanoutBudget ? { runFanoutBudget } : {}),
 		...(status.launchContractDigest ? { launchContractDigest: status.launchContractDigest } : {}),
 		...(status.launchResolvedExtensions ? { launchResolvedExtensions: status.launchResolvedExtensions } : {}),

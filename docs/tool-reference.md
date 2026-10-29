@@ -76,7 +76,7 @@ The `subagent` tool schema lists `agent`, `task`, `workflow`, `args`, `async`, `
 | `options` | object | - | Management and control fields; the rows named `options.<name>` below go here. Unknown keys are rejected with the closest valid option. The same fields are also accepted at the top level. |
 | `agent` | string | - | One direct child or agent-management target. Workflow child agents are set inside `runs.run` or `runs.all`. |
 | `task` | string | agent default | Direct child's task; requires `agent`, excludes `action` and workflow inputs. `agent` may also select a management target. |
-| `action` | string | - | Offline workflow `validate`, agent management (including `guide`, `children.list`, and `refine`/`refine.show`/`refine.rollback`), lane evidence (`lane.status`, `lane.recordMerge`, `lane.recordSupersession`), mission (`mission.create/list/show/update/resolve-decision/attach-run/close`), Inspect actions (`inspector.command/open/status/close`), Herdr project pane (`project.open/status/close`), status/control, reviewed `worktree.cleanup`, schedule, watchdog, or doctor action. |
+| `action` | string | - | Offline workflow `validate`, agent management (including `guide`, `children.list`, and `refine`/`refine.show`/`refine.rollback`), lane evidence (`lane.status`, `lane.recordMerge`, `lane.recordSupersession`), mission (`mission.create/list/show/update/resolve-decision/attach-run/close`), Inspect actions (`inspector.command/open/status/close`), Herdr project pane (`project.open/status/close`), status/reconcile/control, reviewed `worktree.cleanup`, schedule, watchdog, or doctor action. |
 | `options.topic` | `overview \| workflows \| agents \| missions \| observability \| tool-reference \| configuration \| models \| watchdog \| extension-api \| council`, or `<topic>/<section>` | `overview` | Packaged guide topic for `action: "guide"`. A docs topic returns its table of contents; `<topic>/<section>` returns one section. |
 | `options.config` | object/string | - | Agent config for management create/update. |
 | `options.context` | `fresh \| fork \| profile` | global or per-agent default, else `fresh` | Explicit `fresh` or `fork` overrides every workflow child. `profile` requires the selected agent's declared `defaultContext` and ignores config `defaultSubagentContext`; missing agent defaults fail. When omitted, [`defaultSubagentContext`](configuration.md#defaultsubagentcontext) wins over each agent's `defaultContext`; implicit fork falls back to fresh without a persisted parent session and leaf. Explicit fork is strict. Packaged `worker` defaults to `fresh`; packaged `oracle` and `advisor` default to `fork`. |
@@ -198,6 +198,16 @@ Inside a workflow script, `await runs.run(key, { resume, task })` waits for the 
 For a simple implementation challenge outside a workflow script, send the challenge through `subagent({ action: "resume", id: "<retained-writer-run>", message: "Reconsider the implementation and make any better current-scope change." })` when `children.list` reports that retained writer as `resumable`, or attempt it after exact-id status inspection identifies a known direct-child candidate. Status is advisory; resume authoritatively checks eligibility and may reject missing recovery requirements. If there is no known candidate or resume rejects eligibility, start a same-role fallback challenge and record why it is a fallback. Use workflow `runs.run({ resume })` only when the script must await the revived writer output before the next step. Do not use `steer` as the sole challenge action for a completed retained child; `steer` with `mode: "follow_up"` only queues text for the next `resume`.
 
 `resume` and `agent` are mutually exclusive. The revived child keeps its stored agent, model, and tool contract. `gate` is rejected on retained resume items because resume uses the retained child contract.
+
+### UNKNOWN runner recovery
+
+A status may report `Recovery: unknown (runner_liveness_unknown)` when the recorded runner cannot be safely probed from the observing process (for example, a PID namespace or permission boundary is not comparable). This is a recoverable observation, not a failed or completed run:
+
+1. No replacement runner or business action is launched.
+2. Use `{ action: "reconcile", id: "<run-id>" }` to re-read the original run, result and process evidence after the runtime boundary becomes available.
+3. Only after reconciliation proves the original runner terminal should `{ action: "resume", id: "<run-id>", message: "..." }` be used.
+
+`reconcile` is a read/recovery action over the existing status, result and event files; it is not a second ledger, retry queue or effect dispatcher. Until the original runner is proven terminal, `resume` is rejected to prevent duplicate work.
 
 ## Management actions
 

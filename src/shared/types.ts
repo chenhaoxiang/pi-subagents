@@ -21,6 +21,7 @@ import type { WatchdogWarningDetails } from "../watchdog/types.ts";
 import type { RequiredChildExtensionSnapshot } from "./required-child-extensions.ts";
 import type { RecordedPid } from "../runs/background/stale-run-reconciler.ts";
 import type { WorkflowStopCause } from "../workflows/workflow-stop-cause.ts";
+import type { AsyncRecoveryProjection } from "../runs/shared/async-recovery.ts";
 
 // ============================================================================
 // Basic Types
@@ -1546,6 +1547,8 @@ export interface Details {
 	agentCapabilities?: AgentCapabilitiesSnapshot;
 	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
 	capabilityAudit?: SubagentCapabilityAudit;
+	/** Read-only recovery guidance; it never dispatches or authorizes a new effect. */
+	recovery?: AsyncRecoveryProjection;
 	parallelHandoff?: ParallelHandoffReference;
 	lifecycleStatus?: {
 		processTerminal?: ProcessTerminal;
@@ -2021,6 +2024,8 @@ export interface AsyncStatus {
 	/** Parent admission authority before the selected workflow child's descendant restrictions. */
 	admissionCapabilityCeiling?: ResolvedSubagentCapabilityCeiling;
 	capabilityAudit?: SubagentCapabilityAudit;
+	/** Read-only recovery guidance; UNKNOWN is actionable via reconcile, never an automatic retry. */
+	recovery?: AsyncRecoveryProjection;
 	workflow?: Details["workflow"];
 	workflowChildren?: WorkflowChildSummary;
 	parentWorkflowRunId?: string;
@@ -2154,6 +2159,8 @@ export interface AsyncJobState {
 	/** Parent-resolved child session root retained for trusted live transcript lookup. */
 	sessionRoot?: string;
 	status: "queued" | "running" | "complete" | "failed" | "partial" | "paused" | "stopped" | "rejected";
+	/** Read-only recovery guidance derived from the current owner status/result. */
+	recovery?: AsyncRecoveryProjection;
 	/** Short caller-facing task/goal shown in fleet surfaces when available. */
 	description?: string;
 	pid?: number;
@@ -2991,7 +2998,7 @@ export const POLL_INTERVAL_MS = 250;
 export const WIDGET_ANIMATION_INTERVAL_MS = 1000;
 export const MAX_WIDGET_JOBS = 4;
 export const DEFAULT_SUBAGENT_MAX_DEPTH = 2;
-export const SUBAGENT_ACTIONS = ["list", "get", "models", "children.list", "guide", "validate", "create", "update", "delete", "eject", "disable", "enable", "reset", "mission.create", "mission.list", "mission.show", "mission.update", "mission.resolve-decision", "mission.attach-run", "mission.close", "worktree.discard", "worktree.cleanup", "lane.status", "lane.recordMerge", "lane.recordSupersession", "refine", "refine.show", "refine.rollback", "inspector.open", "inspector.command", "inspector.status", "inspector.close", "project.open", "project.status", "project.close", "status", "debug.run", "grant-spawn-budget", "interrupt", "resume", "steer", "stop", "command.status", "command.yield", "command.cancel", "dismiss", "doctor", "watchdog.status", "watchdog.check", "watchdog.configure", "watchdog.recommend-model", "schedule.create", "schedule.list", "schedule.show", "schedule.history", "schedule.pause", "schedule.resume", "schedule.run", "schedule.run-due", "schedule.delete"] as const;
+export const SUBAGENT_ACTIONS = ["list", "get", "models", "children.list", "guide", "validate", "create", "update", "delete", "eject", "disable", "enable", "reset", "mission.create", "mission.list", "mission.show", "mission.update", "mission.resolve-decision", "mission.attach-run", "mission.close", "worktree.discard", "worktree.cleanup", "lane.status", "lane.recordMerge", "lane.recordSupersession", "refine", "refine.show", "refine.rollback", "inspector.open", "inspector.command", "inspector.status", "inspector.close", "project.open", "project.status", "project.close", "status", "reconcile", "debug.run", "grant-spawn-budget", "interrupt", "resume", "steer", "stop", "command.status", "command.yield", "command.cancel", "dismiss", "doctor", "watchdog.status", "watchdog.check", "watchdog.configure", "watchdog.recommend-model", "schedule.create", "schedule.list", "schedule.show", "schedule.history", "schedule.pause", "schedule.resume", "schedule.run", "schedule.run-due", "schedule.delete"] as const;
 
 export const DEFAULT_FORK_PREAMBLE =
 	"You are a delegated subagent running from a fork of the parent session. " +
