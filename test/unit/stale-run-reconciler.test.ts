@@ -164,11 +164,11 @@ describe("async stale-run reconciliation", () => {
 			const now = Date.now();
 			const resultsDir = path.join(root, "results");
 			for (const scenario of [
-				{ name: "matching", recorded: scope, observed: scope, immediate: true },
-				{ name: "missing-recorded", recorded: undefined, observed: scope, immediate: false },
-				{ name: "different", recorded: "pid:[other]", observed: scope, immediate: false },
-				{ name: "missing-observed", recorded: scope, observed: undefined, immediate: false },
-				{ name: "both-missing", recorded: undefined, observed: undefined, immediate: false },
+				{ name: "matching", recorded: scope, observed: scope, immediate: true, probe: () => "dead" as const, unknown: false },
+				{ name: "missing-recorded", recorded: undefined, observed: scope, immediate: false, probe: () => "alive" as const, unknown: false },
+				{ name: "different", recorded: "pid:[other]", observed: scope, immediate: false, probe: () => "dead" as const, unknown: true },
+				{ name: "missing-observed", recorded: scope, observed: undefined, immediate: false, probe: () => "dead" as const, unknown: true },
+				{ name: "both-missing", recorded: undefined, observed: undefined, immediate: false, probe: () => "alive" as const, unknown: false },
 			]) {
 				const runId = `run-zombie-${scenario.name}`;
 				const asyncDir = path.join(root, runId);
@@ -178,7 +178,7 @@ describe("async stale-run reconciliation", () => {
 					startedAt: now - 100, lastUpdate: now - 100,
 					steps: [{ agent: "worker", status: "running", startedAt: now - 100 }],
 				});
-				const options = { resultsDir, kill: () => true, pidNamespaceScope: () => scenario.observed, now: () => now };
+				const options = { resultsDir, pidNamespaceScope: () => scenario.observed, probe: scenario.probe, now: () => now };
 				const repaired = reconcileAsyncRun(asyncDir, options);
 				assert.equal(repaired.repaired, scenario.immediate, scenario.name);
 				assert.equal(repaired.status?.state, scenario.immediate ? "failed" : "running", scenario.name);
@@ -186,12 +186,17 @@ describe("async stale-run reconciliation", () => {
 				assert.equal(fs.existsSync(resultPath), scenario.immediate, scenario.name);
 				if (!scenario.immediate) {
 					const stale = reconcileAsyncRun(asyncDir, { ...options, staleAlivePidMs: 1000, now: () => now + 2000 });
-					assert.equal(stale.repaired, false, scenario.name);
-					assert.equal(stale.status?.state, "running", scenario.name);
-					assert.equal(stale.status?.recovery?.state, "unknown", scenario.name);
-					assert.match(stale.message ?? "", /Runner liveness is unknown/);
-					assert.equal(fs.existsSync(resultPath), false, scenario.name);
-					continue;
+					if (scenario.unknown) {
+						assert.equal(stale.repaired, false, scenario.name);
+						assert.equal(stale.status?.state, "running", scenario.name);
+						assert.equal(stale.status?.recovery?.state, "unknown", scenario.name);
+						assert.match(stale.message ?? "", /Runner liveness is unknown/);
+						assert.equal(fs.existsSync(resultPath), false, scenario.name);
+						continue;
+					}
+					assert.equal(stale.repaired, true, scenario.name);
+					assert.equal(stale.status?.state, "failed", scenario.name);
+					assert.match(stale.message ?? "", /status has not updated for 2100ms.*PID ownership is unverified/);
 				}
 				const receipt = fs.readFileSync(resultPath, "utf-8");
 				assert.equal(JSON.parse(receipt).state, "failed");
