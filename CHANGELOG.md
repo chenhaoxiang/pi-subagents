@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.84.0-fork.2] - 2026-10-31
+
+### Added
+- Add a pure action-boundary preflight for `bg_wait` that omits nullable optional fields, rejects placeholder run ids and unknown options, and refuses invalid non-blocking combinations before polling or arming a subscription.
+- Return structured `NOT_ARMED` correction evidence for invalid wait calls while preserving existing wait, timeout and subscription semantics.
+
 ## [0.84.0-fork.1] - 2026-10-30
 
 - Integrate community v0.84.0 at `a04617faa7f5edc8fd4d87f6d9bca8f3a6b9e3d4` while retaining the fork's unknown async-run recovery changes and prior guarded fallback, timeout, runner/host compatibility, native-child evidence and Pi 1.x contracts.
