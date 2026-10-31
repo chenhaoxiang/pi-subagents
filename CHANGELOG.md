@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.84.0-fork.2] - 2026-10-31
+
 ### Added
 - Add a pure action-boundary preflight for `bg_wait` that omits nullable optional fields, rejects placeholder run ids and unknown options, and refuses invalid non-blocking combinations before polling or arming a subscription.
 - Return structured `NOT_ARMED` correction evidence for invalid wait calls while preserving existing wait, timeout and subscription semantics.
