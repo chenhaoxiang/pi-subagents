@@ -68,6 +68,7 @@ import { toAgentToolUsage } from "../../shared/utils.ts";
 import { collectWaitCompletions } from "./wait-completions.ts";
 import { formatResumeFirstFailedRunsNote } from "./resume-guidance.ts";
 import { formatTimeoutRecoveryLines } from "../shared/mutation-evidence.ts";
+import { minimalWaitParameters } from "./wait-parameters.ts";
 export { WAIT_TOOL_DEFAULT_TIMEOUT_MS_ENV, WAIT_TOOL_ENABLED_ENV, resolveWaitToolConfig, type ResolvedWaitToolConfig } from "./wait-config.ts";
 
 /** States that mean a run is still in flight (not yet resolved). */
@@ -662,6 +663,11 @@ export async function waitForSubagents(
 	signal: AbortSignal | undefined,
 	deps: SubagentWaitDeps,
 ): Promise<AgentToolResult<Details>> {
+	try {
+		params = minimalWaitParameters(params as unknown as Record<string, unknown>);
+	} catch (error) {
+		return result(error instanceof Error ? error.message : String(error), true);
+	}
 	if (deps.enabled === false) {
 		return result("bg_wait is disabled by config.waitTool or PI_SUBAGENT_WAIT_TOOL_ENABLED; returning immediately without blocking background work. Active work keeps going, and you can inspect subagents with subagent({ action: \"status\" }) or rely on completion notifications.");
 	}
