@@ -45,7 +45,7 @@ Starting Pi in a folder where another session's subagent runs were cut off by it
 
 The completion notice of a workflow stopped by a Pi exit or a runtime replacement has one line right after `Workflow run: <id>` that says what happens next: `Auto-resumed as <new id>.`, `Resumed as <new id>.` (resumed by id), `Relaunched as <new id>.` (relaunched with the same script or `options.reuseFrom`), `Not auto-resumed: <reason>.` followed by the way to continue by hand, or, when nothing continues it, `Resume by hand: subagent({ action: "resume", id: "<id>" })` (or the `options.reuseFrom` form when its launch cannot be resumed by id).
 
-After `/new`, `/resume`, or a fork in the same Pi process, the new session owns the async runs of the session it replaced, and of the sessions that one replaced. It can list, `bg_wait` on, steer, stop, and resume them, receives their completion notices, and answers their children's pending supervisor requests. Over RPC, a host can steer, interrupt, stop, resume, and inspect them, and sees them in the fleet and `subagent-async` snapshots. Startup and other Pi processes inherit nothing; `/reload` adds nothing new but keeps what the session already inherited. To relaunch a stopped workflow instead of controlling its children one by one, use `options.reuseFrom`.
+After `/new`, `/resume`, or a fork in the same Pi process, the new session owns the async runs of the session it replaced, and of the sessions that one replaced. It can list, `bg_wait` on, steer, stop, and resume them, receives their completion notices, and answers their children's pending supervisor requests. Over RPC, a host can steer, interrupt, stop, resume, and inspect them, and sees them in the fleet and `subagent-async` snapshots. Startup and other Pi processes inherit nothing; `/reload` adds nothing new but keeps what the session already inherited. A replaced session that starts again (pi-web reopening it) takes its runs back. To relaunch a stopped workflow instead of controlling its children one by one, use `options.reuseFrom`.
 
 Once the Pi process that started a background single, parallel, or chain run has exited, the run is reported once to a Pi window that has its session open, whether it finished while Pi was closed or finishes later. A workflow's children are reported through their workflow.
 
@@ -136,6 +136,18 @@ subagent({ workflow: "parallel", args: { tasks: [{ agent: "reviewer", task: "Rev
 The host resolves the name and validates bounded plain-JSON `args` before starting the workflow. Resource provenance is recorded in workflow details and receipts for downstream permission/policy checks. Resource authority is not caller-supplied: `runs.host` is available only when the resolved resource explicitly grants the requested host key and command. Reply-block (`workflow: true`) and file-path scripts remain raw, unknown-provenance inputs, so their `runs.host` calls are unavailable through the public execution boundary. Named resources cannot be combined with `agent` or `task`; the package ships the `review`, `run-ci` and `parallel` resources, not a user/project resource registry.
 
 `parallel` runs independent children together without writing a script: `args.tasks` is a list of `{ agent, task, cwd?, model? }` items, the children run in one `runs.all` batch, and the result lists each child's output in order. `cwd` and `model` are optional per child and apply to that child only, as they do on a `runs.all` item, so one call can fan out across several repositories or mix models. A failed child fails the workflow. Use a workflow script when steps depend on each other.
+
+### Approving workflow children in permission extensions
+
+Before a workflow starts a child, pi-subagents makes a nested `subagent_launch` tool call, so permission extensions see it in their `tool_call` handler like any other tool call. This covers reply-block, file and named workflows, and `chain` and `tasks`. The call's input is `{ workflowRunId, key, agent?, task?, cwd?, model?, async?, worktree?, resume? }`. `cwd` is the absolute directory the child starts in. It is left out for a resumed child, which keeps its earlier directory, and for a child placed on another machine. The other optional fields appear when the child request sets them. A blocked or failed call stops that child; it fails with `Workflow child '<key>' was not started: …` and the block reason. Allowed calls do nothing else. The tool is not declared to the model.
+
+Extensions that ask about tools they have no rule for ask once per workflow child until you allow `subagent_launch`. Ones that deny unknown tools without a UI, as in `pi -p`, refuse every workflow child until you allow it.
+
+Limits:
+- Children reused from an interrupted run's journal are not offered again; nothing new starts.
+- Starts with no tool call behind them are not offered: schedule ticks, auto-resume on session reopen, `/prompt-workflow` and prompt-template delegation, and RPC or SDK launches. Block `schedule.create`, set `authorityPolicy.scheduleCreate` to `"forbid"`, or set [`autoResume`](configuration.md#autoresume) to `false` to control those.
+- Workflows started inside child agents are not offered: children do not register `subagent_launch`. Neither are workflows in a session whose tool allowlist (`pi --tools …`) leaves it out.
+- Host commands (`gate`, `acceptance.verify`, `runs.host`) and output-file writes are not offered.
 
 ### Opt-in bounded workflows
 
