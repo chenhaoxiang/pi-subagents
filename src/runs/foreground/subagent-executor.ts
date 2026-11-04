@@ -119,8 +119,8 @@ import { formatHerdrMachineRunnerUnsupported, resolveMachinePlacement } from "..
 import { lookupRunnerLauncher, resolveAgentRunnerLauncher } from "../shared/runner-launcher.ts";
 import { applyForceTopLevelAsyncOverride } from "../background/top-level-async.ts";
 import { handleMissionAction, MISSION_ACTIONS } from "../../missions/actions.ts";
-import { attachMissionToLaunchResult, missionAcceptanceStatus, prepareMissionLaunch, writeMissionAsyncBinding, type MissionLaunchBinding } from "../../missions/lifecycle.ts";
-import { MissionNotFoundError, updateMission } from "../../missions/store.ts";
+import { attachMissionToLaunchResult, missionAcceptanceStatus, prepareMissionLaunch, readMissionBinding, writeMissionAsyncBinding, type MissionLaunchBinding } from "../../missions/lifecycle.ts";
+import { MissionNotFoundError, readMission, updateMission } from "../../missions/store.ts";
 import type { MissionWorkflowChildUpdate } from "../../missions/types.ts";
 import { createMissionWorkflowState } from "../../missions/workflow-state.ts";
 import { resolveAuthorityDecision } from "../../policy/authority.ts";
@@ -2286,6 +2286,7 @@ async function resumeAsyncRun(input: {
 	}
 	const runId = randomUUID();
 	const topLevelResume = depth === 0 && !inheritedNestedRoute(input.deps) && !input.params.workflowParentRunId;
+	const resumeOwnerSessionId = input.deps.state.currentSessionId;
 	let activeAsyncCapacity: ActiveAsyncCapacityHandle | undefined;
 	try {
 		activeAsyncCapacity = !topLevelResume ? undefined : target.source === "async"
@@ -2468,13 +2469,40 @@ async function resumeAsyncRun(input: {
 		revivedTarget ? `Intercom target: ${revivedTarget} (if registered)` : undefined,
 		`Status if needed: subagent({ action: "status", id: "${revivedId}" })`,
 	].filter((line): line is string => Boolean(line));
-	return {
+	const revivedResult: AgentToolResult<Details> = {
 		content: [{ type: "text", text: formatAsyncStartedMessage(lines.join("\n"), input.ctx.hasUI) }],
 		details: {
 			...result.details,
 			...(target.launchContractDigest ? { sourceLaunchContractDigest: target.launchContractDigest } : {}),
 		},
 	};
+	if (!topLevelResume || target.source !== "async" || target.mode !== "single" || !sourceAsyncDir) return revivedResult;
+	try {
+		const sourceStatus = readStatus(sourceAsyncDir);
+		if (sourceStatus?.isNested || sourceStatus?.parentWorkflowRunId) return revivedResult;
+		const binding = readMissionBinding(sourceAsyncDir);
+		if (!binding) return revivedResult;
+		if (sourceStatus?.runId !== target.runId || sourceStatus.mode !== "single") {
+			throw new Error(`Source run '${target.runId}' no longer has matching single-run status.`);
+		}
+		const mission = readMission(binding.location, binding.missionId);
+		// Run admission may allow owner succession; mission inheritance in this path requires the exact native owner.
+		if (!resumeOwnerSessionId || sourceStatus?.sessionId !== resumeOwnerSessionId || mission.ownerSessionId !== resumeOwnerSessionId) {
+			throw new Error(`Source run '${target.runId}' and mission '${binding.missionId}' must belong to the current parent session.`);
+		}
+		if (mission.id !== binding.missionId || !mission.runs.some((run) => run.runId === target.runId && run.mode === "single" && run.asyncDir && path.resolve(run.asyncDir) === path.resolve(sourceAsyncDir))) {
+			throw new Error(`Mission '${binding.missionId}' does not link source run '${target.runId}' at '${sourceAsyncDir}'.`);
+		}
+		return attachMissionToLaunchResult({ binding, result: revivedResult });
+	} catch (error) {
+		return {
+			...revivedResult,
+			details: {
+				...revivedResult.details,
+				missionWarning: `Mission tracking unavailable after resume launch; mission association incomplete: ${error instanceof Error ? error.message : String(error)}`,
+			},
+		};
+	}
 }
 
 function resultSummaryForIntercom(result: SingleResult): string {

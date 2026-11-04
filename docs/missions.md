@@ -20,6 +20,8 @@ Records created under the old default `<project>/.pi/subagents/missions` stay on
 Behavior:
 
 - Automatic persistence failures do not block the run and are reported as `details.missionWarning`. Explicit `missionId` and `mission` requests remain strict before launch.
+- A top-level native async single-run `resume` by the same exact parent owner reuses the source run's existing mission binding, even if automatic mission creation is now disabled. The new run joins the old mission, receives its own `asyncDir/mission.json`, and returns `details.missionId`, `missionPath`, and `mission`. The source run, its outputs, and earlier acceptance are not rewritten. Terminal missions stay terminal; a new output is not business acceptance.
+- A missing resume binding keeps the prior no-mission behavior. An invalid, retention-deleted, foreign, or failed-to-attach binding leaves the launched run intact and returns a non-fatal `details.missionWarning` stating that mission association is incomplete; attachment writes may be partial. No replacement mission is created and no run is cancelled or replayed. This inheritance does not extend external, workflow/chain, nested, or cross-parent-session resume behavior.
 - Human receipts end with `Mission: <id> (<status>)`, while JSON/structured output text stays unchanged and `details.missionId` is authoritative.
 - Pass `mission: false` for an intentionally ephemeral workflow. It creates no mission for the workflow or its children and has no `state` global.
 - Set `missions.enabled: false` to disable automatic mission creation; explicit mission fields and actions still work.

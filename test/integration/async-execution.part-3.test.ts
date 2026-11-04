@@ -9,8 +9,9 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import * as fs from "node:fs";
+import fsDefault, * as fs from "node:fs";
 import * as path from "node:path";
+import { syncBuiltinESMExports } from "node:module";
 import { ChildProcess } from "node:child_process";
 import { channel } from "node:diagnostics_channel";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -26,6 +27,10 @@ import { registerRequiredChildExtensions } from "../../src/api/required-child-ex
 import { deriveForkPromptCacheKey } from "../../src/runs/shared/child-tool-plan.ts";
 import { INVALID_STRUCTURED_OUTPUT_SCHEMA_ERROR, STRUCTURED_OUTPUT_FOLLOW_UP, validateStructuredOutputValue } from "../../src/runs/shared/structured-output.ts";
 import type { ChildRuntimeConfig } from "../../src/runs/shared/child-runtime-config.ts";
+import type { Details } from "../../src/shared/types.ts";
+import { MISSION_BINDING_FILE, readMissionBinding, syncMissionFromAsyncCompletion } from "../../src/missions/lifecycle.ts";
+import { readMission, updateMission } from "../../src/missions/store.ts";
+import { recordSessionReplacement, recordSessionStart } from "../../src/shared/session-succession.ts";
 import type { AsyncExecutionResult, AsyncResultPayload, AsyncStatusPayload } from "../support/async-execution-fixture.ts";
 import {
 	installAsyncExecutionHooks, waitForMockPiRuntime, available, isAsyncAvailable,
@@ -90,6 +95,56 @@ function waitForJson<T>(file: string, predicate: (value: T) => boolean, asyncDir
 		fs.watchFile(file, { interval: 20 }, inspect);
 		inspect();
 	});
+}
+
+type MissionAsyncExecutionResult = AsyncExecutionResult & { details: Details };
+
+async function launchMissionResumeSource(params: { mission?: unknown } = {}) {
+	const parentSessionFile = path.join(tempDir, "mission-parent.jsonl");
+	const sessionFile = path.join(tempDir, "mission-child.jsonl");
+	const header = JSON.stringify({ type: "session", version: 1, id: "mission-resume", cwd: fs.realpathSync(tempDir) });
+	fs.writeFileSync(parentSessionFile, `${header}\n`);
+	fs.writeFileSync(sessionFile, `${header}\n`);
+	const ctx = {
+		...makeMinimalCtx(tempDir),
+		sessionManager: {
+			getSessionId: () => "mission-parent",
+			getSessionFile: () => parentSessionFile,
+			getLeafId: () => "leaf",
+			openSession: () => ({ createBranchedSession: () => sessionFile }),
+		},
+	};
+	const config = { missions: { directory: path.join(tempDir, "missions"), globalIndex: false } };
+	const executor = makeAsyncExecutor([makeAgent("worker")], config);
+	const report = path.join(tempDir, "report.md");
+	mockPi.onCall({ output: "Original mission report" });
+	const launch = await executor.execute("mission-resume-source", {
+		agent: "worker", task: "Initial work", async: true, context: "fork", artifacts: false,
+		acceptance: false, output: report, ...params,
+	}, new AbortController().signal, undefined, ctx) as MissionAsyncExecutionResult;
+	assert.ok(!launch.isError, launch.content[0]?.text);
+	assert.ok(launch.details.asyncId);
+	assert.ok(launch.details.asyncDir);
+	const payload = await readAsyncPayload(launch.details.asyncId);
+	assert.equal(payload.success, true);
+	assert.match(fs.readFileSync(report, "utf-8"), /Original mission report/);
+	await waitForJson<{ processTerminal?: { state?: string } }>(path.join(launch.details.asyncDir, "status.json"), (status) => status.processTerminal?.state === "observed", launch.details.asyncDir);
+	return { executor, ctx, launch, report, payload };
+}
+
+function missionResumeSourceArtifacts(source: Awaited<ReturnType<typeof launchMissionResumeSource>>) {
+	const files = [
+		source.report,
+		path.join(RESULTS_DIR, `${source.launch.details.asyncId}.json`),
+		...["status.json", "recovery-descriptor.json"].map((name) => path.join(source.launch.details.asyncDir!, name)),
+	];
+	const bindingPath = path.join(source.launch.details.asyncDir!, MISSION_BINDING_FILE);
+	if (fs.existsSync(bindingPath)) files.push(bindingPath);
+	return files.map((file) => ({ file, bytes: fs.readFileSync(file) }));
+}
+
+function assertMissionResumeSourceArtifactsUnchanged(artifacts: ReturnType<typeof missionResumeSourceArtifacts>): void {
+	for (const { file, bytes } of artifacts) assert.deepEqual(fs.readFileSync(file), bytes, `source artifact changed: ${file}`);
 }
 
 describe("async execution utilities", { skip: !available ? "pi packages not available" : undefined }, () => {
@@ -2005,6 +2060,184 @@ syncBuiltinESMExports();
 		assert.match(fs.readFileSync(revivedReport, "utf-8"), /Stage 2 report/);
 		assert.ok(revived.results[0]?.output?.includes(`Output saved to: ${revivedReport}`), revived.results[0]?.output);
 	});
+
+	for (const requested of [false, true]) {
+		it(`inherits the source mission on native single-async resume (${requested ? "requested waiting" : "automatic completed"})`, { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
+			const source = await launchMissionResumeSource(requested ? { mission: { title: "Retained mission" } } : {});
+			const sourceId = source.launch.details.asyncId!;
+			const sourceDir = source.launch.details.asyncDir!;
+			const binding = readMissionBinding(sourceDir);
+			assert.ok(binding);
+			assert.equal(binding.autoCreated, !requested);
+			syncMissionFromAsyncCompletion({ ...source.payload, runId: sourceId, asyncDir: sourceDir });
+			if (requested) updateMission(binding.location, binding.missionId, { status: "waiting", acceptance: { status: "review-required", summary: "Original result still needs review" } });
+			const originalMission = readMission(binding.location, binding.missionId);
+			const artifacts = missionResumeSourceArtifacts(source);
+			const existingRuns = new Set(fs.readdirSync(ASYNC_DIR));
+
+			mockPi.onCall({ output: "Continued mission report" });
+			// Recover from persisted bindings, even if automatic creation is now disabled.
+			const resumed = await makeAsyncExecutor([makeAgent("worker")], { missions: { enabled: false } }).execute("mission-resume", {
+				action: "resume", id: sourceId, message: "Continue", acceptance: false,
+			}, new AbortController().signal, undefined, source.ctx) as MissionAsyncExecutionResult;
+			assert.ok(!resumed.isError, resumed.content[0]?.text);
+			assert.ok(resumed.details.asyncId);
+			assert.ok(resumed.details.asyncDir);
+			assert.notEqual(resumed.details.asyncId, sourceId);
+			assert.notEqual(resumed.details.asyncDir, sourceDir);
+			assert.equal(resumed.details.missionWarning, undefined);
+			assert.equal(resumed.details.missionId, source.launch.details.missionId);
+			assert.equal(resumed.details.missionPath, source.launch.details.missionPath);
+			assert.equal(resumed.details.sourceLaunchContractDigest, source.launch.details.launchContractDigest);
+			assert.deepEqual(readMissionBinding(resumed.details.asyncDir), binding);
+			const mission = readMission(binding.location, binding.missionId);
+			assert.deepEqual(resumed.details.mission, mission);
+			assert.deepEqual(mission.runs.find((run) => run.runId === sourceId), originalMission.runs.find((run) => run.runId === sourceId));
+			assert.deepEqual(mission.acceptance, originalMission.acceptance, "resumption does not accept the old result");
+			assert.equal(mission.runs.length, 2);
+			assert.equal(mission.runs[1]?.runId, resumed.details.asyncId);
+			assert.equal(mission.runs[1]?.asyncDir, resumed.details.asyncDir);
+			assert.equal(mission.status, requested ? "active" : "completed", "a terminal mission is not reopened for observers");
+			assert.equal(fs.readdirSync(binding.location.missionDir).filter((name) => name.endsWith(".json")).length, 1);
+
+			const payload = await readAsyncPayload(resumed.details.asyncId);
+			assert.equal(payload.success, true);
+			assert.equal(mockPi.callCount(), 2, "resume launches exactly one new synthetic child");
+			assert.deepEqual(fs.readdirSync(ASYNC_DIR).filter((id) => !existingRuns.has(id)), [resumed.details.asyncId]);
+			const continuedReport = path.join(tempDir, `report.${resumed.details.asyncId.slice(0, 8)}.md`);
+			assert.match(fs.readFileSync(continuedReport, "utf-8"), /Continued mission report/);
+			assertMissionResumeSourceArtifactsUnchanged(artifacts);
+		});
+	}
+
+	for (const problem of ["missing-binding", "invalid-binding", "invalid-record", "missing-record", "foreign-owner", "missing-owner", "foreign-run", "foreign-async-dir", "foreign-record-id", "inherited-source-owner"] as const) {
+		it(`preserves a launched native resume with ${problem} mission metadata`, { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
+			const source = await launchMissionResumeSource({ mission: problem === "missing-binding" ? false : { title: "Original mission" } });
+			const sourceDir = source.launch.details.asyncDir!;
+			const bindingPath = path.join(sourceDir, MISSION_BINDING_FILE);
+			const missionPath = source.launch.details.missionPath;
+			const successor = path.join(tempDir, "successor-parent.jsonl");
+			if (problem === "invalid-binding") fs.writeFileSync(bindingPath, "{broken");
+			if (problem === "invalid-record") fs.writeFileSync(missionPath!, "{broken");
+			if (problem === "missing-record") fs.rmSync(missionPath!);
+			if (["foreign-owner", "missing-owner", "foreign-run", "foreign-async-dir", "foreign-record-id"].includes(problem)) {
+				const record = JSON.parse(fs.readFileSync(missionPath!, "utf-8"));
+				if (problem === "foreign-owner") record.ownerSessionId = "another-parent";
+				if (problem === "missing-owner") delete record.ownerSessionId;
+				if (problem === "foreign-run") record.runs[0].runId = "another-run";
+				if (problem === "foreign-async-dir") record.runs[0].asyncDir = path.join(tempDir, "another-async-dir");
+				if (problem === "foreign-record-id") record.id = "another-mission";
+				fs.writeFileSync(missionPath!, JSON.stringify(record));
+			}
+			if (problem === "inherited-source-owner") {
+				recordSessionReplacement(successor, source.ctx.sessionManager.getSessionFile());
+				source.ctx.sessionManager.getSessionFile = () => successor;
+				const record = JSON.parse(fs.readFileSync(missionPath!, "utf-8"));
+				record.ownerSessionId = successor;
+				fs.writeFileSync(missionPath!, JSON.stringify(record));
+			}
+			const originalMission = missionPath && fs.existsSync(missionPath) ? fs.readFileSync(missionPath) : undefined;
+			const artifacts = missionResumeSourceArtifacts(source);
+			mockPi.onCall({ output: "Continued despite mission metadata problem" });
+			let resumed: MissionAsyncExecutionResult;
+			try {
+				resumed = await source.executor.execute("mission-resume-metadata-problem", {
+					action: "resume", id: source.launch.details.asyncId, message: "Continue", acceptance: false,
+				}, new AbortController().signal, undefined, source.ctx) as MissionAsyncExecutionResult;
+			} finally {
+				if (problem === "inherited-source-owner") recordSessionStart(successor, true);
+			}
+			assert.ok(!resumed.isError, resumed.content[0]?.text);
+			assert.ok(resumed.details.asyncId);
+			assert.ok(resumed.details.asyncDir);
+			assert.equal(resumed.details.missionId, undefined);
+			assert.equal(resumed.details.missionPath, undefined);
+			assert.equal(resumed.details.mission, undefined);
+			if (problem === "missing-binding") assert.equal(resumed.details.missionWarning, undefined);
+			else assert.match(resumed.details.missionWarning ?? "", /Mission tracking unavailable after resume launch; mission association incomplete:/);
+			assert.equal(readMissionBinding(resumed.details.asyncDir), undefined);
+			assert.equal((await readAsyncPayload(resumed.details.asyncId)).success, true);
+			assert.equal(mockPi.callCount(), 2, "mission errors must not cancel or replay the started child");
+			if (missionPath) {
+				if (originalMission) assert.deepEqual(fs.readFileSync(missionPath), originalMission);
+				else assert.equal(fs.existsSync(missionPath), false, "retention-deleted records must not be recreated");
+			}
+			assertMissionResumeSourceArtifactsUnchanged(artifacts);
+		});
+	}
+
+	for (const sourceKind of ["nested", "workflow-child"] as const) {
+		it(`does not inherit a mission when the native resume source is a ${sourceKind}`, { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
+			const source = await launchMissionResumeSource({ mission: { title: "Excluded source" } });
+			const sourceDir = source.launch.details.asyncDir!;
+			const statusPath = path.join(sourceDir, "status.json");
+			const status = JSON.parse(fs.readFileSync(statusPath, "utf-8"));
+			if (sourceKind === "nested") status.isNested = true;
+			else status.parentWorkflowRunId = "enclosing-workflow";
+			fs.writeFileSync(statusPath, JSON.stringify(status));
+			fs.writeFileSync(path.join(sourceDir, MISSION_BINDING_FILE), "{outside-the-inheritance-boundary");
+			const artifacts = missionResumeSourceArtifacts(source);
+			const mission = fs.readFileSync(source.launch.details.missionPath!);
+			mockPi.onCall({ output: "Continued excluded source" });
+			const resumed = await source.executor.execute("mission-resume-excluded-source", {
+				action: "resume", id: source.launch.details.asyncId, message: "Continue", acceptance: false,
+			}, new AbortController().signal, undefined, source.ctx) as MissionAsyncExecutionResult;
+			assert.ok(!resumed.isError, resumed.content[0]?.text);
+			assert.ok(resumed.details.asyncId);
+			assert.ok(resumed.details.asyncDir);
+			assert.equal(resumed.details.missionId, undefined);
+			assert.equal(resumed.details.missionWarning, undefined, "excluded paths must not read the source binding");
+			assert.equal(readMissionBinding(resumed.details.asyncDir), undefined);
+			assert.equal((await readAsyncPayload(resumed.details.asyncId)).success, true);
+			assert.equal(mockPi.callCount(), 2);
+			assert.deepEqual(fs.readFileSync(source.launch.details.missionPath!), mission);
+			assertMissionResumeSourceArtifactsUnchanged(artifacts);
+		});
+	}
+
+	for (const failure of ["mission-record", "mission-sidecar"] as const) {
+		it(`keeps native resume launched when attaching the ${failure} fails`, { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async (t) => {
+			const source = await launchMissionResumeSource({ mission: { title: "Mission write failure" } });
+			const sourceDir = source.launch.details.asyncDir!;
+			const binding = readMissionBinding(sourceDir)!;
+			const originalMission = readMission(binding.location, binding.missionId);
+			const artifacts = missionResumeSourceArtifacts(source);
+			const rename = fsDefault.renameSync;
+			let failedWrites = 0;
+			const failureMock = t.mock.method(fsDefault, "renameSync", ((from: fs.PathLike, to: fs.PathLike) => {
+				if (failure === "mission-record" ? String(to) === source.launch.details.missionPath : path.basename(String(to)) === MISSION_BINDING_FILE && path.dirname(String(to)) !== sourceDir) {
+					failedWrites++;
+					throw new Error(`simulated ${failure} write failure`);
+				}
+				return rename(from, to);
+			}) as typeof fsDefault.renameSync);
+			syncBuiltinESMExports();
+			mockPi.onCall({ output: "Continued despite mission write failure" });
+			let resumed: MissionAsyncExecutionResult;
+			try {
+				resumed = await source.executor.execute("mission-resume-write-failure", {
+					action: "resume", id: source.launch.details.asyncId, message: "Continue", acceptance: false,
+				}, new AbortController().signal, undefined, source.ctx) as MissionAsyncExecutionResult;
+			} finally {
+				failureMock.mock.restore();
+				syncBuiltinESMExports();
+			}
+			assert.ok(!resumed.isError, resumed.content[0]?.text);
+			assert.ok(resumed.details.asyncId);
+			assert.ok(resumed.details.asyncDir);
+			assert.equal(failedWrites, 1);
+			assert.match(resumed.details.missionWarning ?? "", new RegExp(`mission association incomplete: simulated ${failure} write failure`));
+			assert.equal(resumed.details.missionId, undefined, "a partial attachment is not reported as complete");
+			assert.equal(readMissionBinding(resumed.details.asyncDir), undefined);
+			assert.equal((await readAsyncPayload(resumed.details.asyncId)).success, true);
+			assert.equal(mockPi.callCount(), 2);
+			const mission = readMission(binding.location, binding.missionId);
+			assert.deepEqual(mission.runs[0], originalMission.runs[0]);
+			assert.deepEqual(mission.acceptance, originalMission.acceptance);
+			assert.equal(mission.runs.length, failure === "mission-record" ? 1 : 2, "sidecar failure may leave the already-written mission link");
+			assertMissionResumeSourceArtifactsUnchanged(artifacts);
+		});
+	}
 
 	it("writes an output-less resume of a relative-output foreground run next to its saved report", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
 		const executor = makeAsyncExecutor([makeAgent("worker")]);
