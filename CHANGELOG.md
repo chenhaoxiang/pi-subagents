@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [0.84.0-fork.4] - 2026-11-05
+
+- Preserve an existing mission when the same native parent owner resumes a top-level single async run. The new run joins the original mission and returns its native binding without rewriting earlier results or acceptance.
+- Keep missing/corrupt/foreign or failed mission attachment non-fatal after native launch; retain the run and report incomplete association instead of creating a replacement mission or replaying work. Cross-owner, nested, workflow/chain and external recovery contracts are unchanged.
+
 ## [0.84.0-fork.3] - 2026-11-03
 
 - Sync community main through `8520aeb788ca19479baa852b5a7884a86bed813e`, retaining guarded fallback, activity-based idle timeout, runner/host compatibility, native-child evidence and unknown async-run recovery.

@@ -10,7 +10,7 @@ import {
 	readMissionBinding,
 	syncMissionFromAsyncCompletion,
 } from "../../src/missions/lifecycle.ts";
-import { readMission } from "../../src/missions/store.ts";
+import { readMission, updateMission } from "../../src/missions/store.ts";
 import { PROMPT_REDACTED } from "../../src/shared/utils.ts";
 
 function projectFixture() {
@@ -306,6 +306,37 @@ describe("mission launch lifecycle", () => {
 			fs.rmSync(test.root, { recursive: true, force: true });
 		}
 	});
+
+	for (const status of ["completed", "failed", "cancelled"] as const) {
+		it(`preserves a ${status} mission and earlier acceptance when a bound async continuation is attached`, () => {
+			const test = projectFixture();
+			try {
+				const sourceDir = path.join(test.root, "source-run");
+				const continuedDir = path.join(test.root, "continued-run");
+				fs.mkdirSync(sourceDir);
+				fs.mkdirSync(continuedDir);
+				const binding = prepareMissionLaunch({ params: { mission: { title: "Retained mission" } }, projectRoot: test.projectRoot, config: test.missionConfig, ownerSessionId: "session-1" });
+				assert.ok(binding);
+				attachMissionToLaunchResult({ binding, result: { content: [{ type: "text", text: "Source started" }], details: { mode: "single", runId: "source", asyncId: "source", asyncDir: sourceDir, results: [] } } });
+				const original = updateMission(binding.location, binding.missionId, { status, acceptance: { status: "review-required", summary: "Original evidence" } });
+				const sourceBinding = fs.readFileSync(path.join(sourceDir, "mission.json"));
+				const retained = readMissionBinding(sourceDir);
+				assert.ok(retained);
+
+				const continued = attachMissionToLaunchResult({ binding: retained, result: { content: [{ type: "text", text: "Continuation started" }], details: { mode: "single", runId: "continued", asyncId: "continued", asyncDir: continuedDir, results: [] } } });
+				assert.equal(continued.details.missionId, original.id);
+				assert.equal(continued.details.mission?.status, status);
+				assert.equal(continued.details.mission?.ownerSessionId, original.ownerSessionId);
+				assert.deepEqual(continued.details.mission?.acceptance, original.acceptance);
+				assert.deepEqual(continued.details.mission?.runs[0], original.runs[0]);
+				assert.deepEqual(continued.details.mission?.runs.map((run) => run.runId), ["source", "continued"]);
+				assert.deepEqual(readMissionBinding(continuedDir), retained);
+				assert.deepEqual(fs.readFileSync(path.join(sourceDir, "mission.json")), sourceBinding);
+			} finally {
+				fs.rmSync(test.root, { recursive: true, force: true });
+			}
+		});
+	}
 
 	it("keeps a mission waiting when a foreground run ends without accepted evidence", () => {
 		const test = projectFixture();
