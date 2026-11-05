@@ -8,19 +8,23 @@ import { it } from "node:test";
 import { fileURLToPath } from "node:url";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { inspectSubagentStatus } from "../../src/runs/background/run-status.ts";
+import { checkRecordedPidLiveness } from "../../src/runs/background/stale-run-reconciler.ts";
 import { DIRS, type AsyncStatus, type Details, type ProcessTerminal } from "../../src/shared/types.ts";
 import { createMockPi } from "../support/mock-pi.ts";
 
 type ToolResult = AgentToolResult<Details>;
 type HostIdentity = { sessionId: string; sessionFile: string; header: { id: string }; pid: number };
 type HostSnapshot = {
-	sent: Array<{ message: { customType?: string; details?: { runs?: Array<{ runId?: string }> } } }>;
+	sent: Array<{ message: { customType?: string; details?: { runs?: Array<{ runId?: string; status?: string }> } } }>;
 	staleSends: unknown[];
 	shutdownAt?: number;
 };
 type PublishedResult = Pick<AsyncStatus, "sessionId" | "completionOwnerId" | "completionOwnerProcess"> & {
+	id?: string;
+	state?: string;
 	success: boolean;
-	results: Array<{ output?: string; acceptance?: { status: string }; artifactPaths?: { outputPath?: string } }>;
+	summary?: string;
+	results: Array<{ output?: string; error?: string; success?: boolean; acceptance?: { status: string }; artifactPaths?: { outputPath?: string } }>;
 };
 
 // These files are produced by the package and the scripted test host, never real user sessions.
@@ -40,13 +44,8 @@ async function until<T>(label: string, readValue: () => T | Promise<T>, predicat
 }
 
 function host(cwd: string, agentDir: string) {
-	// The host fixture intentionally exits while its detached child continues.
-	// Keep the runner's test-parent monitor attached to the main test process,
-	// not this disposable host, on platforms where isolated-temp-root would
-	// otherwise stamp the host PID into PI_SUBAGENTS_TEST_PARENT_PID.
 	const child: ChildProcess = fork(fileURLToPath(new URL("../support/parent-result-continuity-host.mjs", import.meta.url)), [cwd, agentDir], {
 		execArgv: ["--experimental-strip-types", "--import", new URL("../support/register-loader.mjs", import.meta.url).href],
-		env: { ...process.env, PI_SUBAGENTS_TEST_PARENT_PID: String(process.pid), PI_SUBAGENTS_TEST_LOADER: "test-file" },
 		stdio: ["ignore", "pipe", "pipe", "ipc"],
 	});
 	let log = "";
@@ -117,7 +116,13 @@ for (const { outcome, exitOwner } of [
 	{ outcome: "failed", exitOwner: true },
 	{ outcome: "complete", exitOwner: false },
 ] as const) {
-	it(`reads the original ${outcome} single-async result after parent ${exitOwner ? "process exit" : "session shutdown"} without takeover or relaunch`, { timeout: 120_000 }, async (t) => {
+	// Windows intentionally uses the native hidden, non-detached runner policy (#1711).
+	const attachedRunnerLoss = process.platform === "win32" && exitOwner;
+	const expectedState = attachedRunnerLoss ? "failed" : outcome;
+	const title = attachedRunnerLoss
+		? `reports Windows attached runner loss before scripted ${outcome} after parent process exit without takeover or relaunch`
+		: `reads the original ${outcome} single-async result after parent ${exitOwner ? "process exit" : "session shutdown"} without takeover or relaunch`;
+	it(title, { timeout: 120_000 }, async (t) => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "continuity-"));
 		const cwd = path.join(root, "project");
 		const agentDir = path.join(root, "agent");
@@ -167,6 +172,12 @@ for (const { outcome, exitOwner } of [
 			assert.equal(active.state, "running");
 			assert.equal(active.sessionId, identity.sessionFile);
 			assert.equal(active.completionOwnerProcess?.pid, identity.pid, "ownership must come from the native launch, not a test patch");
+			assert.ok(active.pid);
+			assert.notEqual(active.pid, identity.pid);
+			const runnerProcess = { pid: active.pid, bootId: active.bootId, pidNamespaceScope: active.pidNamespaceScope };
+			assert.equal(checkRecordedPidLiveness(runnerProcess), "alive", "the original runner must really start before parent exit");
+			assert.equal(fs.existsSync(release), false);
+			assert.equal(fs.existsSync(resultPath), false, "the gated child cannot have published a result before parent exit");
 			await refused("live-resume-refused", owner.call({ action: "resume", id: runId, message: "Must not duplicate a live child" }), /still running/);
 			const shutdown = save("shutdown", await owner.request("shutdown"));
 			assert.equal(notices(shutdown).length, 0);
@@ -176,63 +187,95 @@ for (const { outcome, exitOwner } of [
 			const observer = save("fresh", await fresh.request<HostIdentity>("start"));
 			assert.notEqual(observer.pid, identity.pid);
 			assert.notEqual(observer.header.id, identity.header.id, "fresh manager must have a genuinely new header");
-			const activeRead = save("fresh-active-status", await fresh.call({ action: "status", id: runId }));
+			if (attachedRunnerLoss) await until("the native attached runner to exit with its Windows parent", () => checkRecordedPidLiveness(runnerProcess), (state) => state === "dead");
+			const activeRead = save("fresh-after-shutdown-status", await fresh.call({ action: "status", id: runId }));
 			assert.notEqual(activeRead.isError, true, text(activeRead));
-			assert.match(text(activeRead), /State: running/);
+			assert.match(text(activeRead), attachedRunnerLoss ? /State: failed/ : /State: running/);
 			assert.equal(activeRead.details.recovery?.reason, "foreign_session");
 			const waiting = save("fresh-bg-wait", await fresh.call({ id: runId, timeoutMs: 1 }, "bg_wait"));
 			assert.match(text(waiting), /No active run matched/);
 
-			// Exercise the existing liveness-probe seam on the real launch artifacts. No status,
-			// ownership or process-terminal field is fabricated to simulate the inaccessible boundary.
-			const unknown = save("unknown-reconcile", inspectSubagentStatus({ action: "reconcile", id: runId }, {
-				kill: () => { throw Object.assign(new Error("test-only inaccessible PID boundary"), { code: "EPERM" }); },
-			}));
-			assert.equal(unknown.details.recovery?.state, "unknown");
-			assert.equal(unknown.details.recovery?.action, "reconcile");
-			assert.equal(read<AsyncStatus>(statusPath).state, "running");
+			if (!attachedRunnerLoss) {
+				// Exercise the existing liveness-probe seam only while the original runner lives.
+				const unknown = save("unknown-reconcile", inspectSubagentStatus({ action: "reconcile", id: runId }, {
+					kill: () => { throw Object.assign(new Error("test-only inaccessible PID boundary"), { code: "EPERM" }); },
+				}));
+				assert.equal(unknown.details.recovery?.state, "unknown");
+				assert.equal(unknown.details.recovery?.action, "reconcile");
+				assert.equal(read<AsyncStatus>(statusPath).state, "running");
+			}
 			assert.equal(mock.callCount(), 1);
 			await refused("fresh-resume-refused", fresh.call({ action: "resume", id: runId, message: "Must not take over the old child" }), /not found in the active session/);
 
-			fs.writeFileSync(release, "finish the original child");
+			if (!attachedRunnerLoss) fs.writeFileSync(release, "finish the original child");
 			await until("the original result", () => fs.existsSync(resultPath), Boolean);
 			const preservedResult = path.join(root, "original-result.json");
 			fs.copyFileSync(resultPath, preservedResult);
 			const payload = read<PublishedResult>(preservedResult);
-			assert.equal(payload.success, outcome === "complete");
+			assert.equal(payload.success, expectedState === "complete");
 			assert.equal(payload.sessionId, identity.sessionFile);
 			assert.equal(payload.completionOwnerId, active.completionOwnerId);
 			assert.equal(payload.completionOwnerProcess?.pid, identity.pid);
 			assert.equal(payload.results.length, 1);
 			const child = payload.results[0];
 			assert.ok(child);
-			assert.equal(child.output, output);
-			assert.equal(child.acceptance?.status, "review-required");
 			const report = child.artifactPaths?.outputPath;
-			assert.ok(report);
-			assert.equal(fs.readFileSync(report, "utf8").trim(), output);
-			const originalHash = hash(report);
+			if (attachedRunnerLoss) {
+				const repairMessage = `Async runner process ${active.pid} exited or disappeared before writing a result. Marked run failed by stale-run reconciliation.`;
+				assert.equal(fs.existsSync(release), false, "Windows loss must precede the scripted completion, not replace its outcome");
+				assert.equal(payload.id, runId);
+				assert.equal(payload.state, "failed");
+				assert.ok(payload.summary?.startsWith(repairMessage), payload.summary);
+				assert.equal(child.success, false);
+				assert.equal(child.error, payload.summary);
+				assert.equal(child.output, payload.summary);
+				assert.notEqual(child.output, output);
+				assert.equal(child.acceptance, undefined, "reconciliation must not manufacture child acceptance");
+				assert.equal(report, undefined, "the unreleased child did not produce a final report");
+				const events = fs.readFileSync(path.join(asyncDir, "events.jsonl"), "utf8").trim().split("\n").map((line) => JSON.parse(line) as { type: string; runId?: string; pid?: number; message?: string });
+				const repairs = events.filter((event) => event.type === "subagent.run.repaired_stale");
+				assert.equal(repairs.length, 1);
+				assert.equal(repairs[0]?.runId, runId);
+				assert.equal(repairs[0]?.pid, active.pid);
+				assert.equal(repairs[0]?.message, payload.summary);
+				assert.equal(events.some((event) => event.type === "subagent.run.completed"), false);
+			} else {
+				assert.equal(child.output, output);
+				assert.equal(child.acceptance?.status, "review-required");
+				assert.ok(report);
+				assert.equal(fs.readFileSync(report, "utf8").trim(), output);
+			}
+			const originalHash = report ? hash(report) : undefined;
 			const resultHash = hash(resultPath);
 			assert.equal(hash(preservedResult), resultHash, "preserve the exact delivery envelope before the owner can retire it");
 			const settled = save("settled-status", await until("the original terminal status", () => read<AsyncStatus>(statusPath),
-				(status) => status.state === outcome && typeof status.endedAt === "number"));
-			assert.equal(settled.state, outcome);
+				(status) => status.state === expectedState && typeof status.endedAt === "number"));
+			assert.equal(settled.state, expectedState);
 			assert.ok(settled.endedAt! >= shutdown.shutdownAt!, "the child must finish after parent shutdown");
 			if (!exitOwner) await until("the still-live host's runner close observer", () => read<ProcessTerminal>(path.join(asyncDir, "process-terminal.json")), (proof) => proof.state === "observed");
 			const descriptorHash = hash(path.join(asyncDir, "recovery-descriptor.json"));
 			const bindingHash = hash(path.join(asyncDir, "mission.json"));
 			const terminalRead = save("fresh-terminal-status", await fresh.call({ action: "status", id: runId }));
-			assert.match(text(terminalRead), new RegExp(`State: ${outcome}`));
+			assert.match(text(terminalRead), new RegExp(`State: ${expectedState}`));
 			assert.ok(text(terminalRead).includes(`Result: ${resultPath}`));
 			const reconciled = save("fresh-terminal-reconcile", await fresh.call({ action: "reconcile", id: runId }));
 			assert.notEqual(reconciled.isError, true, text(reconciled));
-			assert.match(text(reconciled), new RegExp(`State: ${outcome}`));
+			assert.match(text(reconciled), new RegExp(`State: ${expectedState}`));
 			assert.ok(text(reconciled).includes(`Result: ${resultPath}`));
 			assert.equal(reconciled.details.recovery?.reason, "foreign_session");
-			assert.equal(reconciled.details.lifecycleStatus?.processTerminal?.state, exitOwner ? "pending" : "observed", "session shutdown keeps the host close observer; process exit loses it");
+			if (attachedRunnerLoss) {
+				assert.equal(settled.processTerminal?.state, "unknown");
+				assert.equal(settled.processTerminal?.reason, "stale-repair");
+				assert.equal(reconciled.details.lifecycleStatus?.processTerminal?.state, "unknown");
+				assert.equal(reconciled.details.lifecycleStatus?.processTerminal?.reason, "proof-write-failed");
+				assert.notEqual(read<ProcessTerminal>(path.join(asyncDir, "process-terminal.json")).state, "observed", "stale repair must not certify the lost close observer");
+				assert.deepEqual(settled.steps?.[0]?.acceptance, active.steps?.[0]?.acceptance);
+			} else {
+				assert.equal(reconciled.details.lifecycleStatus?.processTerminal?.state, exitOwner ? "pending" : "observed", "session shutdown keeps the host close observer; process exit loses it");
+			}
 			const mission = save("fresh-mission-show", await fresh.call({ action: "mission.show", options: { missionId: launch.details.missionId } }));
 			assert.equal(mission.details.mission?.ownerSessionId, identity.sessionFile);
-			assert.equal(mission.details.mission?.status, outcome === "complete" ? "waiting" : "failed");
+			assert.equal(mission.details.mission?.status, expectedState === "complete" ? "waiting" : "failed");
 			assert.deepEqual(mission.details.mission?.runs.map((run) => run.runId), [runId]);
 			await refused("fresh-transcript-refused", fresh.call({ action: "status", id: runId, options: { view: "transcript" } }), /only available.*owned by the current session/);
 			await refused("fresh-terminal-resume-refused", fresh.call({ action: "resume", id: runId, message: "Do not revive this foreign terminal run" }), /not found in the active session/);
@@ -255,14 +298,22 @@ for (const { outcome, exitOwner } of [
 			const delivered = await until("the reopened owner's notification", () => reopened!.request("snapshot"), (value) => notices(value).length === 1);
 			save("reopened-notification", delivered);
 			assert.equal(notices(delivered)[0]?.message.details?.runs?.[0]?.runId, runId);
+			assert.equal(notices(delivered)[0]?.message.details?.runs?.[0]?.status, expectedState === "complete" ? "completed" : "failed");
 			await reopened.request("reload");
 			assert.equal(notices(await reopened.request("snapshot")).length, 1, "reload cannot deliver a duplicate notice");
 			const afterOwner = save("fresh-after-owner-return", await fresh.call({ action: "status", id: runId }));
-			assert.match(text(afterOwner), new RegExp(`State: ${outcome}`));
+			assert.match(text(afterOwner), new RegExp(`State: ${expectedState}`));
 			const outputLog = text(afterOwner).split("\n").find((line) => line.startsWith("Output: "))?.slice("Output: ".length);
 			assert.ok(outputLog);
-			assert.ok(fs.readFileSync(outputLog, "utf8").includes(output));
-			assert.equal(hash(report), originalHash);
+			if (attachedRunnerLoss) {
+				assert.equal(fs.existsSync(release), false);
+				assert.equal(fs.readFileSync(outputLog, "utf8").includes(output), false, "retained log must not pretend the scripted result was produced");
+				assert.equal(hash(preservedResult), resultHash);
+			} else {
+				assert.ok(fs.readFileSync(outputLog, "utf8").includes(output));
+				assert.ok(report);
+				assert.equal(hash(report), originalHash);
+			}
 			assert.equal(read<AsyncStatus>(statusPath).sessionId, identity.sessionFile);
 			assert.equal(read<AsyncStatus>(statusPath).completionOwnerId, active.completionOwnerId);
 			assert.deepEqual(read<AsyncStatus>(statusPath).steps?.[0]?.acceptance, settled.steps?.[0]?.acceptance);
@@ -281,7 +332,7 @@ for (const { outcome, exitOwner } of [
 				}
 			});
 			assert.deepEqual(scenarioRuns, [runId], "no replacement run may be allocated under either session owner");
-			save("summary", { runId, missionId: launch.details.missionId, report, outputSha256: originalHash, resultSha256: resultHash, childLaunches: mock.callCount(), processTerminal: reconciled.details.lifecycleStatus?.processTerminal, outcome, exitOwner });
+			save("summary", { runId, missionId: launch.details.missionId, report, outputSha256: originalHash, resultSha256: resultHash, childLaunches: mock.callCount(), processTerminal: reconciled.details.lifecycleStatus?.processTerminal, outcome: expectedState, scriptedOutcome: outcome, resultOrigin: attachedRunnerLoss ? "stale-run-reconciliation" : "child", platform: process.platform, exitOwner });
 			t.diagnostic(`Continuity artifacts: ${root}`);
 		} catch (error) {
 			scenarioFailed = true;
