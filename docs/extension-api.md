@@ -672,6 +672,28 @@ If your host reclaims idle sessions, keep a session alive while it still has liv
 
 The symptom when this is missed is quiet and easy to misattribute: subagents appear never to report back, which looks like a fault in this extension rather than in the host that disposed the listener.
 
+### Recover a single async result from a fresh session
+
+For an already-launched top-level native single async child, **recover the original result, not another execution**. In a fresh parent with a different session header, the existing ordinary action is:
+
+```ts
+subagent({ action: "status", id: "<original-run-id>" })
+```
+
+Exact-id status resolves retained async artifacts across sessions. It reports the original logical state, acceptance status, process-terminal evidence, and `Result:` / `Output:` paths when available. Read those original files with the host's ordinary file reader; status is not an inline full-result fetch. If only the mission reference is known, use `mission.show` with `options: { missionId: "<original-mission-id>" }` from the original project/store, then inspect its linked run id. Mission refresh can update linked status, but does not change the run or mission owner, grant control, or constitute business acceptance. An explicitly requested mission whose successful child is still `review-required` remains `waiting`; a failed child remains failed.
+
+Do not confuse these lifetimes:
+
+- **Same-manager reload** preserves the session header and existing queued-wake ownership; it does not relaunch a direct single child.
+- **Reopening the original session file in another process** preserves its header/owner identity. Once the original completion-owner process is provably dead, the ordinary notifier can deliver the pending result to that original session. Notification delivery may retire the result envelope, but saved output and retained run artifacts remain subject to ordinary retention.
+- **A genuinely fresh session/header** does not inherit that completion wake or direct-child control. Untargeted status and `bg_wait` are session-scoped; a foreign `bg_wait({ id })` reporting no match does not prove the child never ran or finished. Exact-id status is the observation path. Foreign transcript view and direct `resume` remain refused. No ownership, permission, acceptance or session lease transfer is needed to read the returned result references.
+
+Logical completion is separate from process-close proof. Session shutdown stops notification delivery, but a still-running host process can retain its runner-close observer. If the **host process exits before the runner**, that observer is gone: the child can publish a complete/failed result while `process-terminal.json` remains `pending`. `reconcile` rereads the existing evidence; it does not manufacture an observed close. Treat pending/unknown process evidence as unproven, and use `reconcile` for UNKNOWN liveness before considering further execution. Never infer OS cleanup, external-effect settlement, business approval, or permission to replay the task from a result file alone.
+
+This path lets the new responsible parent inspect the original evidence and continue already-authorized parent work without launching or resuming another child. It does not provide automatic cross-session takeover, fresh-session completion subscriptions, or cross-process terminal certification. Missing/expired artifacts are not proof of non-execution; preserve uncertainty rather than redispatching.
+
+`test/integration/parent-result-continuity.test.ts` exercises the registered public tools and extension lifecycle with real session headers and the repository's scripted child factory, without a provider. It covers successful and failed late completion after parent-process exit, session-only shutdown with a surviving close observer, a fresh process/header, UNKNOWN reconciliation, refused foreign controls, original-owner reopening/reload, and exactly one child invocation. The fixture does not simulate OS effects or run a parent model turn.
+
 ## Component screens over RPC
 
 `/subagents-fleet`, `/subagents-stop` and the `/subagents` model and thinking pickers draw a `ctx.ui.custom()` component in the TUI. In every other mode they fall back to text or `ctx.ui.select`, because stock Pi RPC defines `custom()` as a no-op. A host that runs Pi in RPC mode and renders `custom()` components itself, such as pi-web, can set `PI_SUBAGENTS_COMPONENT_UI=1` in Pi's environment to get the component screens.
