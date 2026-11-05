@@ -41,7 +41,7 @@ async function until<T>(label: string, readValue: () => T | Promise<T>, predicat
 
 function host(cwd: string, agentDir: string) {
 	const child: ChildProcess = fork(fileURLToPath(new URL("../support/parent-result-continuity-host.mjs", import.meta.url)), [cwd, agentDir], {
-		execArgv: ["--experimental-strip-types", "--import", fileURLToPath(new URL("../support/register-loader.mjs", import.meta.url))],
+		execArgv: ["--experimental-strip-types", "--import", new URL("../support/register-loader.mjs", import.meta.url).href],
 		stdio: ["ignore", "pipe", "pipe", "ipc"],
 	});
 	let log = "";
@@ -57,25 +57,52 @@ function host(cwd: string, agentDir: string) {
 		if (message.error) request.reject(new Error(`${message.error}\n${log}`));
 		else request.resolve(message.value);
 	});
+	child.on("error", (error) => {
+		for (const request of pending.values()) request.reject(error);
+		pending.clear();
+	});
 	const exited = new Promise<void>((resolve) => child.once("exit", (code, signal) => {
 		for (const request of pending.values()) request.reject(new Error(`Test host exited: ${code}/${signal}\n${log}`));
 		pending.clear();
 		resolve();
 	}));
+	const waitForExit = async () => {
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		try {
+			await Promise.race([exited, new Promise<never>((_resolve, reject) => {
+				timer = setTimeout(() => reject(new Error(`Test host exit timed out\n${log}`)), 5_000);
+			})]);
+		} finally {
+			clearTimeout(timer);
+		}
+	};
 	const request = <T = HostSnapshot>(action: string, input: Record<string, unknown> = {}): Promise<T> => new Promise((resolve, reject) => {
+		if (!child.connected) { reject(new Error(`Test host IPC is closed\n${log}`)); return; }
 		const id = ++sequence;
-		const timer = setTimeout(() => { pending.delete(id); reject(new Error(`Test host ${action} timed out\n${log}`)); }, 30_000);
+		const timer = setTimeout(() => { pending.delete(id); reject(new Error(`Test host ${action} timed out\n${log}`)); }, action === "exit" ? 5_000 : 30_000);
 		pending.set(id, { resolve: (value) => { clearTimeout(timer); resolve(value as T); }, reject: (error) => { clearTimeout(timer); reject(error); } });
-		child.send({ id, action, ...input });
+		child.send({ id, action, ...input }, (error) => {
+			if (!error) return;
+			pending.get(id)?.reject(error);
+			pending.delete(id);
+		});
 	});
 	return {
 		request,
 		call: (params: Record<string, unknown>, tool = "subagent") => request<ToolResult>("call", { tool, params }),
 		log: () => log,
 		async exit() {
-			if (child.exitCode !== null || child.signalCode !== null) return;
-			await request("exit");
-			await exited;
+			if (!child.pid || child.exitCode !== null || child.signalCode !== null) return;
+			try {
+				await request("exit");
+				await waitForExit();
+			} finally {
+				if (child.exitCode === null && child.signalCode === null) {
+					// Only this fixture's ChildProcess handle is eligible for forced cleanup.
+					child.kill("SIGKILL");
+					await waitForExit();
+				}
+			}
 		},
 	};
 }
@@ -98,10 +125,8 @@ for (const { outcome, exitOwner } of [
 			toolActivation: "eager", completionBatch: { enabled: false }, intercomBridge: { mode: "off" },
 		}));
 		const mock = createMockPi();
-		mock.install();
 		const output = `Original ${outcome} evidence; not business approval.`;
-		mock.onCall({ waitForPath: release, output, ...(outcome === "failed" ? { exitCode: 1, stderr: "scripted child failure" } : {}) });
-		const owner = host(cwd, agentDir);
+		let owner: ReturnType<typeof host> | undefined;
 		let fresh: ReturnType<typeof host> | undefined;
 		let reopened: ReturnType<typeof host> | undefined;
 		let runId: string | undefined;
@@ -111,7 +136,11 @@ for (const { outcome, exitOwner } of [
 		const refused = async (name: string, call: Promise<unknown>, pattern: RegExp) => {
 			await assert.rejects(call, (error: Error) => { save(name, { error: error.message }); assert.match(error.message, pattern); return true; });
 		};
+		let scenarioFailed = false;
 		try {
+			mock.install();
+			mock.onCall({ waitForPath: release, output, ...(outcome === "failed" ? { exitCode: 1, stderr: "scripted child failure" } : {}) });
+			owner = host(cwd, agentDir);
 			const identity = save("owner", await owner.request<HostIdentity>("start"));
 			const reload = save("reload", await owner.request<HostIdentity>("reload"));
 			assert.equal(reload.sessionId, identity.sessionId, "reload keeps the same session header");
@@ -180,7 +209,8 @@ for (const { outcome, exitOwner } of [
 			const originalHash = hash(report);
 			const resultHash = hash(resultPath);
 			assert.equal(hash(preservedResult), resultHash, "preserve the exact delivery envelope before the owner can retire it");
-			const settled = save("settled-status", read<AsyncStatus>(statusPath));
+			const settled = save("settled-status", await until("the original terminal status", () => read<AsyncStatus>(statusPath),
+				(status) => status.state === outcome && typeof status.endedAt === "number"));
 			assert.equal(settled.state, outcome);
 			assert.ok(settled.endedAt! >= shutdown.shutdownAt!, "the child must finish after parent shutdown");
 			if (!exitOwner) await until("the still-live host's runner close observer", () => read<ProcessTerminal>(path.join(asyncDir, "process-terminal.json")), (proof) => proof.state === "observed");
@@ -237,22 +267,39 @@ for (const { outcome, exitOwner } of [
 			const scenarioOwners = new Set([identity.sessionFile, observer.sessionFile]);
 			const scenarioRuns = fs.readdirSync(DIRS.async).filter((entry) => {
 				const statusFile = path.join(DIRS.async, entry, "status.json");
-				if (!fs.existsSync(statusFile)) return false;
-				const status = read<AsyncStatus>(statusFile);
-				return status.sessionId !== undefined && scenarioOwners.has(status.sessionId);
+				try {
+					const status = read<AsyncStatus>(statusFile);
+					return status.sessionId !== undefined && scenarioOwners.has(status.sessionId);
+				} catch (error) {
+					if (entry !== runId && (error as NodeJS.ErrnoException).code === "ENOENT") return false;
+					throw error;
+				}
 			});
 			assert.deepEqual(scenarioRuns, [runId], "no replacement run may be allocated under either session owner");
 			save("summary", { runId, missionId: launch.details.missionId, report, outputSha256: originalHash, resultSha256: resultHash, childLaunches: mock.callCount(), processTerminal: reconciled.details.lifecycleStatus?.processTerminal, outcome, exitOwner });
 			t.diagnostic(`Continuity artifacts: ${root}`);
+		} catch (error) {
+			scenarioFailed = true;
+			throw error;
 		} finally {
-			fs.writeFileSync(release, "test cleanup: release only this scripted child");
-			for (const runtime of [owner, fresh, reopened]) {
-				if (!runtime) continue;
-				await runtime.exit();
+			const cleanupErrors: unknown[] = [];
+			try {
+				try { fs.writeFileSync(release, "test cleanup: release only this scripted child"); }
+				catch (error) { cleanupErrors.push(error); }
+				const exits = await Promise.allSettled([owner, fresh, reopened].map((runtime) => runtime?.exit()));
+				for (const exit of exits) if (exit.status === "rejected") cleanupErrors.push(exit.reason);
+				try { fs.writeFileSync(path.join(root, "hosts.log"), [owner?.log() ?? "", fresh?.log() ?? "", reopened?.log() ?? ""].join("\n")); }
+				catch (error) { cleanupErrors.push(error); }
+				try { fs.cpSync(mock.dir, path.join(root, "scripted-queue"), { recursive: true }); }
+				catch (error) { cleanupErrors.push(error); }
+			} finally {
+				try { mock.uninstall(); }
+				catch (error) { cleanupErrors.push(error); }
 			}
-			fs.writeFileSync(path.join(root, "hosts.log"), [owner.log(), fresh?.log() ?? "", reopened?.log() ?? ""].join("\n"));
-			fs.cpSync(mock.dir, path.join(root, "scripted-queue"), { recursive: true });
-			mock.uninstall();
+			if (cleanupErrors.length) {
+				if (!scenarioFailed) throw new AggregateError(cleanupErrors, "Continuity fixture cleanup failed");
+				for (const error of cleanupErrors) t.diagnostic(`Continuity fixture cleanup failed after the scenario error: ${String(error)}`);
+			}
 		}
 	});
 }
