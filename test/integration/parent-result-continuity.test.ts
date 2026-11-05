@@ -40,8 +40,13 @@ async function until<T>(label: string, readValue: () => T | Promise<T>, predicat
 }
 
 function host(cwd: string, agentDir: string) {
+	// The host fixture intentionally exits while its detached child continues.
+	// Keep the runner's test-parent monitor attached to the main test process,
+	// not this disposable host, on platforms where isolated-temp-root would
+	// otherwise stamp the host PID into PI_SUBAGENTS_TEST_PARENT_PID.
 	const child: ChildProcess = fork(fileURLToPath(new URL("../support/parent-result-continuity-host.mjs", import.meta.url)), [cwd, agentDir], {
 		execArgv: ["--experimental-strip-types", "--import", new URL("../support/register-loader.mjs", import.meta.url).href],
+		env: { ...process.env, PI_SUBAGENTS_TEST_PARENT_PID: String(process.pid), PI_SUBAGENTS_TEST_LOADER: "test-file" },
 		stdio: ["ignore", "pipe", "pipe", "ipc"],
 	});
 	let log = "";
