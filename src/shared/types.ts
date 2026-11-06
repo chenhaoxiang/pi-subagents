@@ -1,7 +1,3 @@
-/**
- * Type definitions for the subagent extension
- */
-
 import * as os from "node:os";
 import * as path from "node:path";
 import type { Message } from "@earendil-works/pi-ai";
@@ -22,10 +18,6 @@ import type { RequiredChildExtensionSnapshot } from "./required-child-extensions
 import type { RecordedPid } from "../runs/background/stale-run-reconciler.ts";
 import type { WorkflowStopCause } from "../workflows/workflow-stop-cause.ts";
 import type { AsyncRecoveryProjection } from "../runs/shared/async-recovery.ts";
-
-// ============================================================================
-// Basic Types
-// ============================================================================
 
 export interface MaxOutputConfig {
 	bytes?: number;
@@ -386,6 +378,8 @@ export interface WaitToolConfigObject {
 	enabled?: boolean;
 	/** Default blocking window and non-blocking subscription lifetime for bg_wait; unconfigured fallback is 60 minutes. */
 	defaultTimeoutMs?: number;
+	/** Registers the wait tool under this name instead of bg_wait, e.g. when another extension uses bg_wait. */
+	name?: string;
 }
 
 export type WaitToolConfig = boolean | WaitToolConfigObject;
@@ -851,14 +845,23 @@ export interface SteeringRecoveryDescriptor {
 	requiredExtensions?: RequiredChildExtensionSnapshot;
 	runFanoutBudget: RunFanoutBudgetDescriptor;
 	sourceRunId: string;
+	/** The session that launched the run; only it, or a session that replaced it, may resume the run. */
+	sessionId?: string;
 	agentContract?: AgentContract;
 	agent: string;
 	sessionFile?: string;
+	/**
+	 * The managed worktree the launch chose, so a resume never takes its cwd from the run's own
+	 * handoff.json alone: the native cwd the parent computed, or the Worktrunk branch it requested.
+	 */
+	managedWorktree?: { provider: "native"; cwd: string } | { provider: "worktrunk"; branch: string };
 	/** Git ref used to allocate managed worktrees for this run. */
 	baseRef?: string;
 	/** Launcher name the run was wrapped with, or null when it ran unwrapped; resume re-reads its argv from current user config.
 	 *  Absence (descriptors written before null was recorded) means unknown: resume uses the agent file's current launcher. */
 	launcher?: string | null;
+	/** The launcher and agent definition digest the launch required; a resume refuses unless both still hold. */
+	requiredLauncher?: RequiredRunnerLauncher;
 	cwd: string;
 	model?: string;
 	modelProvider?: string;
@@ -889,7 +892,6 @@ export interface SteeringRecoveryDescriptor {
 	structuredOutputSchema?: JsonSchemaObject;
 	acceptance?: AcceptanceInput;
 	controlConfig?: ResolvedControlConfig;
-	/** Resolved launch context for this async child. */
 	context?: "fresh" | "fork";
 	/** Raw per-run bridge override. Omitted descriptors continue to use global config. */
 	intercomBridge?: IntercomBridgeConfig;
@@ -965,10 +967,6 @@ export interface SubagentResultIntercomPayload {
 	sessionPath?: string;
 	parallelHandoff?: ParallelHandoffReference;
 }
-
-// ============================================================================
-// Progress Tracking
-// ============================================================================
 
 export interface ChildWatchdogWarningSummary extends Pick<WatchdogWarningDetails, "severity" | "importance" | "category" | "summary" | "evidence" | "recommendedAction" | "displayedAt"> {
 	/** True when a later assistant turn in the child followed the warning. */
@@ -1046,10 +1044,6 @@ interface ProgressSummary {
 	thinking?: string;
 	durationMs: number;
 }
-
-// ============================================================================
-// Results
-// ============================================================================
 
 export type AcceptanceLevel = "auto" | "none" | "attested" | "checked" | "verified";
 
@@ -1309,7 +1303,6 @@ export interface SingleResult {
 	/** Human-readable display name for the child's own session (agent + task
 	 *  excerpt), when the launcher derived one. Display metadata only. */
 	sessionName?: string;
-	/** Resolved launch context for this child. */
 	context?: "fresh" | "fork";
 	exitCode: number;
 	processSignal?: string | null;
@@ -1413,7 +1406,6 @@ export interface WaitCompletionChild {
 	runId?: string;
 	/** Bounded accounting projection used by /subagent-cost after async completion. */
 	usage?: Usage;
-	/** Persisted Pi child session when available. */
 	sessionFile?: string;
 	success?: boolean;
 	outputState?: SubagentOutputState;
@@ -1466,7 +1458,7 @@ export interface AgentCapabilityRow {
 	aliases?: string[];
 	runner: { type: "pi" } | { type: "external-cli"; adapter?: string; command: string; machine?: string; available: boolean; unavailableReason?: string; capabilities: ExternalCliCapabilities } | { type: "external-job"; provider: string; available?: boolean; capabilities: ExternalJobRunnerStatus["capabilities"] };
 	tools: { ambient: boolean; names: string[]; excludeTools?: string[]; mcpDirectTools: string[]; mutationTools?: string[] };
-	model?: { value?: string; fallbackModels?: string[]; thinking?: string | false };
+	model?: { value?: string; fallbackModels?: string[]; thinking?: string | false; unavailable?: true };
 	execution?: { defaultAsync?: boolean; timeoutMs?: number };
 	acceptance?: { policy?: AcceptanceInput; role?: AcceptanceRole };
 	output?: { path?: string; mode?: OutputMode };
@@ -1528,18 +1520,15 @@ export interface Details {
 		originalLines?: number;
 		artifactPath?: string;
 	};
-	// Chain metadata for observability
 	chainAgents?: string[];      // Agent names in order, e.g., ["scout", "planner"]
-	totalSteps?: number;         // Total steps in chain
+	totalSteps?: number;
 	currentStepIndex?: number;   // 0-indexed current step (for running chains)
 	workflowGraph?: WorkflowGraphSnapshot;
 	/** Validated, display-only fanout plan supplied with a workflow launch. */
 	preflight?: WorkflowPreflight;
 	preflightWarnings?: string[];
 	outputs?: ChainOutputMap;
-	// Aggregated child usage across all agents in the run
 	totalChildUsage?: Usage;
-	// Aggregated cost across all agents in the run
 	totalCost?: CostSummary;
 	spawnBudget?: SpawnBudgetSnapshot;
 	runFanoutBudget?: RunFanoutBudgetSnapshot;
@@ -1620,10 +1609,6 @@ export interface Details {
 	};
 }
 
-// ============================================================================
-// Artifacts
-// ============================================================================
-
 export interface ArtifactPaths {
 	inputPath: string;
 	outputPath: string;
@@ -1644,10 +1629,6 @@ export interface ArtifactConfig {
 	includeMetadata: boolean;
 	cleanupDays: number;
 }
-
-// ============================================================================
-// Async Execution
-// ============================================================================
 
 export interface AsyncParallelGroupStatus {
 	start: number;
@@ -1877,18 +1858,28 @@ export interface ExternalCliReceiptMetadata {
 	adapter: { id: "external-cli" | "codex-exec" | "codex-exec-writer" | "claude-code" | "claude-code-writer" | "cursor-agent" | "cursor-agent-writer" | "grok-build"; version: 1; executionMode: "one-shot-stdin" | "one-shot-prompt-file" };
 	capabilities: ExternalCliCapabilities;
 	machine?: ExternalCliMachineStatus;
-	safety?:
-		| { sandbox: "read-only"; approvalPolicy: "never"; ephemeral: true }
-		| { access: "workspace-write"; sandbox: "workspace-write"; approvalPolicy: "never"; ephemeral: true }
-		| { permissionMode: "plan"; tools: "none"; mcp: "empty-strict"; settingSources: "none"; sessionPersistence: false }
-		| { access: "read-only"; authentication: "existing-cli-required"; permissionMode: "plan"; tools: "none"; mcp: "empty-strict"; settingSources: "user"; userSettingsTrust: "required"; sessionPersistence: false }
-		| { access: "workspace-write"; authentication: "existing-cli-required"; permissionMode: "acceptEdits"; tools: "Read,Write,Edit,Glob,Grep"; mcp: "empty-strict"; settingSources: "user"; userSettingsTrust: "required"; sessionPersistence: false }
-		| { access: "read-only"; authentication: "cursor-api-key-or-existing-login"; mode: "ask"; sandbox: "enabled"; workspaceTrust: "existing-required"; sessionReuse: false }
-		| { access: "workspace-write"; authentication: "cursor-api-key-or-existing-login"; mode: "print"; sandbox: "enabled"; workspaceTrust: "existing-required"; sessionReuse: false };
+	safety?: ExternalCliProfileSafety;
+	/** Where `safety` came from. Nothing in it is measured from the launched process. */
+	safetySource?: ExternalCliSafetySource;
 	outputArtifacts?: { stdoutPath?: string; stderrPath?: string; finalOutputPath?: string };
 	handoff: { mode: "fresh" };
 	supervisor: { mode: "unsupported"; reason: string };
 	nonResumableReason: string;
+}
+
+export type ExternalCliProfileSafety =
+	| { sandbox: "read-only"; approvalPolicy: "never"; ephemeral: true }
+	| { access: "workspace-write"; sandbox: "workspace-write"; approvalPolicy: "never"; ephemeral: true }
+	| { permissionMode: "plan"; tools: "none"; mcp: "empty-strict"; settingSources: "none"; sessionPersistence: false }
+	| { access: "read-only"; authentication: "existing-cli-required"; permissionMode: "plan"; tools: "none"; mcp: "empty-strict"; settingSources: "user"; userSettingsTrust: "required"; sessionPersistence: false }
+	| { access: "workspace-write"; authentication: "existing-cli-required"; permissionMode: "acceptEdits"; tools: "Read,Write,Edit,Glob,Grep"; mcp: "empty-strict"; settingSources: "user"; userSettingsTrust: "required"; sessionPersistence: false }
+	| { access: "read-only"; authentication: "cursor-api-key-or-existing-login"; mode: "ask"; sandbox: "enabled"; workspaceTrust: "existing-required"; sessionReuse: false }
+	| { access: "workspace-write"; authentication: "cursor-api-key-or-existing-login"; mode: "print"; sandbox: "enabled"; workspaceTrust: "existing-required"; sessionReuse: false };
+
+export interface ExternalCliSafetySource {
+	measured: false;
+	/** The launch command, absent on a Herdr saved machine. A wrapper script here can grant more or less than the adapter profile. */
+	command?: string;
 }
 
 export interface ExternalCliRunnerStatus {
@@ -1898,6 +1889,7 @@ export interface ExternalCliRunnerStatus {
 	promptDelivery: "stdin" | "prompt-file";
 	adapter: ExternalCliReceiptMetadata["adapter"];
 	safety?: ExternalCliReceiptMetadata["safety"];
+	safetySource?: ExternalCliSafetySource;
 	capabilities: ExternalCliCapabilities;
 	unsupportedReasons: Record<Exclude<keyof ExternalCliCapabilities, "stop">, string>;
 	nonResumableReason: string;
@@ -2043,7 +2035,6 @@ export interface AsyncStatus {
 		runner?: ExternalCliRunnerStatus | ExternalJobRunnerStatus;
 		externalProcess?: ExternalProcessStatus;
 		externalJob?: ExternalJobStatus;
-		/** Resolved launch context for this child step. */
 		context?: "fresh" | "fork";
 		/** Short caller-facing task/goal shown in fleet surfaces when available. */
 		description?: string;
@@ -2490,17 +2481,9 @@ export interface HerdrProjectPaneSnapshot {
 	staleReason?: string;
 }
 
-// ============================================================================
-// Display
-// ============================================================================
-
 export type DisplayItem = 
 	| { type: "text"; text: string } 
 	| { type: "tool"; name: string; args: Record<string, unknown> };
-
-// ============================================================================
-// Error Handling
-// ============================================================================
 
 export interface ErrorInfo {
 	hasError: boolean;
@@ -2525,6 +2508,11 @@ export const RUNNER_LAUNCHER_NAME_RULE = "must start with a letter or digit and 
 export interface RunnerLauncher {
 	name: string;
 	argv: string[];
+}
+/** A call's requirement that its agent runs under this launcher with this agent definition digest. */
+export interface RequiredRunnerLauncher {
+	name: string;
+	definitionDigest: string;
 }
 export const SUBAGENT_ASYNC_COMPLETE_EVENT = "subagent:async-complete";
 export const SUBAGENT_PROCESS_TERMINAL_EVENT = "subagent:process-terminal";
@@ -2556,10 +2544,6 @@ export interface SubagentChildStatusEvent {
 	label?: string;
 }
 
-// ============================================================================
-// Execution Options
-// ============================================================================
-
 /** Live controls for one in-process foreground child session. */
 export interface ForegroundChildSessionControls {
 	steer: (text: string) => Promise<void>;
@@ -2587,7 +2571,6 @@ export interface RunSyncOptions {
 	parentSessionId?: string;
 	/** The parent session's file, recorded as a new child session's `parentSession` header. */
 	parentSessionFile?: string;
-	/** Resolved launch context for this child. */
 	context?: "fresh" | "fork";
 	cwd?: string;
 	/** Resolved pane-native saved-machine placement. */
@@ -2617,6 +2600,8 @@ export interface RunSyncOptions {
 	/** Internal structured-delegation transport optimization: skip unchanged live snapshots. */
 	suppressUnchangedDelegationUpdates?: boolean;
 	onControlEvent?: (event: ControlEvent) => void;
+	/** Reports a problem found by a timer callback, with a stable key to de-duplicate it; without it the message goes to stderr. */
+	onWarning?: (message: string, key: string) => void;
 	/** Exposes a non-terminating detach callback while the child is active. */
 	onDetachReady?: (detach: (reason?: string) => boolean) => void;
 	/** Internal foreground receipt proposal; returns true only when the outer waiter accepted it. */
@@ -2667,7 +2652,6 @@ export interface RunSyncOptions {
 	preferredModelProvider?: string;
 	/** Parent Pi event host used to snapshot runtime-registered MCP servers before child launch. */
 	runtimeSnapshotHost?: import("../runs/shared/mcp-direct-tool-allowlist.ts").McpRuntimeSnapshotHost;
-	/** Optional subagent model-scope enforcement. */
 	modelScope?: ModelScopeRule | ModelScopeRule[];
 	/** Skills to make available (overrides agent default if provided) */
 	skills?: string[];
@@ -2894,10 +2878,6 @@ export interface ExtensionConfig {
 	authorityPolicy?: AuthorityPolicyConfig;
 }
 
-// ============================================================================
-// Constants
-// ============================================================================
-
 export const DEFAULT_MAX_OUTPUT: Required<MaxOutputConfig> = {
 	bytes: 200 * 1024,
 	lines: 5000,
@@ -3038,10 +3018,6 @@ export function wrapForkTask(task: string, preamble?: string | false): string {
 	return `${wrappedPrefix}${task}`;
 }
 
-// ============================================================================
-// Recursion Depth Guard
-// ============================================================================
-
 function normalizeNonNegativeInteger(value: unknown): number | undefined {
 	const parsed = typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN;
 	if (!Number.isInteger(parsed) || parsed < 0) return undefined;
@@ -3117,10 +3093,6 @@ export function resolveMaxSubagentSpawnsPerRun(configMaxSpawns?: number): number
 		?? normalizeMaxSubagentSpawnsPerRun(configMaxSpawns)
 		?? DEFAULT_MAX_SUBAGENT_SPAWNS_PER_RUN;
 }
-
-// ============================================================================
-// Utility Functions
-// ============================================================================
 
 function formatBytes(bytes: number): string {
 	if (bytes < 1024) return `${bytes}B`;
