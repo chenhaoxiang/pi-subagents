@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [0.86.0-fork.4] - 2026-11-06
+
+- Require explicit `autoCreated: true` bindings matching the mission, store and project before `mission.show` bypasses recorded acceptance. Missing bindings, manually attached runs and older bindings without this field no longer imply automatic completion.
+- Preserve explicit automatic missions, accepted results, manual closure, terminal missions and serialized refresh calculations; malformed bindings remain errors. No historical terminal records are rewritten.
+
 ## [0.86.0-fork.3] - 2026-11-06
 
 - Serialize cooperating mission record read/modify/write and lifecycle calculations with the existing bounded file lease, preventing concurrent writers from dropping decisions, run evidence or derived status.

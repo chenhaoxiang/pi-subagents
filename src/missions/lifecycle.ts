@@ -297,8 +297,8 @@ function parsePersistedBinding(value: unknown, source: string): MissionLaunchBin
 	if (input.autoCreated !== undefined && typeof input.autoCreated !== "boolean") throw new Error(`${source}.autoCreated must be boolean`);
 	return {
 		missionId: validateMissionId(input.missionId, `${source}.missionId`),
-		// Bindings saved before this field existed belong to runs that completed their mission without an acceptance check.
-		autoCreated: input.autoCreated !== false,
+		// Missing provenance is not proof of an ordinary automatically created mission.
+		autoCreated: input.autoCreated === true,
 		location: {
 			projectRoot: input.projectRoot as string,
 			missionDir: input.missionDir as string,
