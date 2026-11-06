@@ -128,7 +128,9 @@ function missionResumeSourceArtifacts(source: Awaited<ReturnType<typeof launchMi
 	const files = [
 		source.report,
 		path.join(RESULTS_DIR, `${source.launch.details.asyncId}.json`),
-		...["status.json", "recovery-descriptor.json"].map((name) => path.join(source.launch.details.asyncDir!, name)),
+		path.join(source.launch.details.asyncDir!, "status.json"),
+		// Relaunch contracts now live beside the runs root, outside the child-writable run folder.
+		recoveryDescriptorPath(ASYNC_DIR, source.launch.details.asyncId!),
 	];
 	const bindingPath = path.join(source.launch.details.asyncDir!, MISSION_BINDING_FILE);
 	if (fs.existsSync(bindingPath)) files.push(bindingPath);
