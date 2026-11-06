@@ -74,7 +74,8 @@ jobs:
           if-no-files-found: ignore
 
   calendar-timezones:
-    runs-on: macos-latest
+    # Keep macOS 26 coverage on the standard Intel pool while arm64 capacity is constrained.
+    runs-on: macos-26-intel
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v5
@@ -86,7 +87,7 @@ jobs:
         run: node --experimental-strip-types --import ./test/support/isolated-temp-root.mjs --test test/unit/calendar-schedule.test.ts test/unit/scheduled-runs.test.ts
 
   worktree-cleanup-recovery:
-    runs-on: macos-latest
+    runs-on: macos-26-intel
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v5
@@ -98,7 +99,7 @@ jobs:
         run: node --experimental-strip-types --import ./test/support/isolated-temp-root.mjs --test test/unit/worktree-cleanup-plan.test.ts test/unit/worktree-lock.test.ts test/unit/parallel-handoff.test.ts
 
   schedule-claim-contention:
-    runs-on: macos-latest
+    runs-on: macos-26-intel
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v5

@@ -656,7 +656,7 @@ Each completion notice is a custom message with `customType: "subagent-notify"`.
 
 Entries can also carry other values the notice text is built from, such as `scheduleOrigin` and `watchdogBlockers`. The output previews are only in `content`.
 
-Detached children do not stop when the session does. They are the host process's children, not the session's, so the run keeps going, completes, and notifies nobody. What is lost is the notification, not the work.
+Async children are not stopped by session shutdown alone. If the host process remains alive, the run can keep going and finish without its disposed session receiving a notification. Host-process exit is a different boundary: on POSIX the native runner is detached and can outlive the parent; on Windows the current hidden-console policy uses `detached: false, windowsHide: true`, so the runner may terminate with its parent. Inspect the retained status/result/error rather than assuming that work survived.
 
 This matters because "is the parent busy?" is the wrong idle signal. A parent that launches a detached run and hands control back — which is what the async launch output tells it to do — is not prompting, streaming, compacting, or running a shell command. A host that reaps sessions on those signals alone will dispose exactly the session that was waiting to be woken.
 
@@ -671,6 +671,30 @@ If your host reclaims idle sessions, keep a session alive while it still has liv
 - Match `sessionId` in `status.json` against both forms. It is resolved as `getSessionFile() ?? getSessionId()`, so it is normally the parent's session *file path*, but a session that is not persisted records a bare session id instead.
 
 The symptom when this is missed is quiet and easy to misattribute: subagents appear never to report back, which looks like a fault in this extension rather than in the host that disposed the listener.
+
+### Recover a single async result from a fresh session
+
+For an already-launched top-level native single async child, **recover the original result, not another execution**. In a fresh parent with a different session header, the existing ordinary action is:
+
+```ts
+subagent({ action: "status", id: "<original-run-id>" })
+```
+
+Exact-id status resolves retained async artifacts across sessions. It reports the original logical state, acceptance status, process-terminal evidence, and `Result:` / `Output:` paths when available. Read those original files with the host's ordinary file reader; status is not an inline full-result fetch. If only the mission reference is known, use `mission.show` with `options: { missionId: "<original-mission-id>" }` from the original project/store, then inspect its linked run id. Mission refresh can update linked status, but does not change the run or mission owner, grant control, or constitute business acceptance. An explicitly requested mission whose successful child is still `review-required` remains `waiting`; a failed child remains failed.
+
+Do not confuse these lifetimes:
+
+- **Same-manager reload** preserves the session header and existing queued-wake ownership; it does not relaunch a direct single child.
+- **Reopening the original session file in another process** preserves its header/owner identity. Once the original completion-owner process is provably dead, the ordinary notifier can deliver the pending result to that original session. Notification delivery may retire the result envelope, but saved output and retained run artifacts remain subject to ordinary retention.
+- **A genuinely fresh session/header** does not inherit that completion wake or direct-child control. Untargeted status and `bg_wait` are session-scoped; a foreign `bg_wait({ id })` reporting no match does not prove the child never ran or finished. Exact-id status is the observation path. For an async run with retained status, foreign transcript view remains refused; a result-only fallback may return a bounded tail of the stored result output, not the private session transcript. Direct `resume` still requires ownership. No ownership, permission, acceptance or session lease transfer is needed to read the returned result references.
+
+Logical completion is separate from process-close proof. Session shutdown stops notification delivery, but a still-running host process can retain its runner-close observer. If the **host process exits before a surviving detached runner**, that observer is gone: the child can publish a complete/failed result while `process-terminal.json` remains `pending`. On Windows, the current non-detached runner may instead disappear before producing its result; existing status/reconcile can record a stale-run failure, not the child's intended output, while process-close evidence remains unproven. `reconcile` does not manufacture an observed close. Treat pending/unknown process evidence as unproven, and use `reconcile` for UNKNOWN liveness before considering further execution. Never infer OS cleanup, external-effect settlement, business approval, or permission to replay the task from a result file alone.
+
+This path lets the new responsible parent inspect the original evidence and continue already-authorized parent work without launching or resuming another child. It does not provide automatic cross-session takeover, fresh-session completion subscriptions, or cross-process terminal certification. Missing/expired artifacts are not proof of non-execution; preserve uncertainty rather than redispatching.
+
+`test/integration/parent-result-continuity.test.ts` exercises the registered public tools and extension lifecycle with real session headers and the repository's scripted child factory, without a provider. On POSIX it checks successful and failed late completion after parent-process exit; on Windows it runs negative cases for native attached-runner loss before either scripted result, with a correlated stale-run failure and no relaunch. All platforms keep the session-only shutdown positive case, fresh header, refused foreign controls, original-owner reopening/reload, and one child invocation. Live-run cases also exercise UNKNOWN liveness through the existing probe seam. A passing Windows negative case is not surviving-parent capability or external-effect settlement. The fixture does not run a parent model turn.
+
+The Windows distinction follows the existing hidden-console launch policy introduced by #1711, not a test override. In the CI host's [Node 24.22.2 libuv source](https://github.com/nodejs/node/blob/v24.22.2/deps/uv/src/win/process.c), non-detached children are assigned to a parent-held job with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`. Changing that production process strategy is outside this read/recovery contract. Preserve partial evidence and do not blindly replay the task when the runner is lost.
 
 ## Component screens over RPC
 
