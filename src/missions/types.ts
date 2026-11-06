@@ -36,6 +36,8 @@ export interface MissionRunLink {
 	status?: string;
 	startedAt?: string;
 	completedAt?: string;
+	/** Latest reported acceptance for this exact run, independent of other linked runs. */
+	acceptanceStatus?: string;
 	usage?: MissionTokenUsage;
 }
 

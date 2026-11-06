@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [0.86.0-fork.2] - 2026-11-06
+
+- Retain acceptance on each linked mission run so a later success or a late completion cannot accept another result still awaiting review. Missing fields do not erase an earlier reported acceptance.
+- Refresh and display exact-run acceptance through `mission.show`, including changes with unchanged execution state. Preserve terminal/manual-close, default-mission, owner, no-replay and raw-result contracts.
+
 ## [0.86.0-fork.1] - 2026-11-06
 
 - Integrate community v0.86.0 through fd6d45b31, retaining guarded model fallback, activity-based idle timeout, the 60-minute wait contract, host/runner compatibility, unknown recovery and same-owner mission continuity.

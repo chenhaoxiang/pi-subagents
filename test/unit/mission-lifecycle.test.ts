@@ -414,6 +414,57 @@ describe("mission launch lifecycle", () => {
 		}
 	});
 
+	it("preserves a newer run's review requirement when an older linked run completes late", () => {
+		const test = projectFixture();
+		try {
+			const binding = prepareMissionLaunch({ params: { mission: { title: "Continue without losing review" } }, projectRoot: test.projectRoot, config: test.missionConfig, ownerSessionId: "original-owner" });
+			assert.ok(binding);
+			const dirs = new Map<string, string>();
+			for (const runId of ["earlier", "continued"]) {
+				const asyncDir = path.join(test.root, runId);
+				fs.mkdirSync(asyncDir);
+				dirs.set(runId, asyncDir);
+				attachMissionToLaunchResult({ binding, result: { content: [{ type: "text", text: "Started" }], details: { mode: "single", runId, asyncId: runId, asyncDir, results: [] } } });
+			}
+			const settle = (runId: string, acceptance: string) => {
+				const asyncDir = dirs.get(runId)!;
+				fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({ runId, state: "complete", steps: [{ acceptance: { status: acceptance } }] }));
+				return syncMissionFromAsyncCompletion({ runId, asyncDir, mode: "single", state: "complete", results: [{ acceptance: { status: acceptance } }] });
+			};
+			assert.equal(settle("continued", "review-required")?.status, "active");
+			const late = settle("earlier", "verified");
+			assert.equal(late?.status, "waiting", "the last arriving success cannot accept another run");
+			assert.equal(late?.ownerSessionId, "original-owner");
+			assert.deepEqual(late?.runs.map(run => [run.runId, run.acceptanceStatus]), [["earlier", "verified"], ["continued", "review-required"]]);
+			assert.equal(syncMissionFromAsyncCompletion({ runId: "continued", asyncDir: dirs.get("continued"), mode: "single", state: "complete", results: [] })?.status, "waiting", "an incomplete repeat event cannot erase acceptance");
+			const ctx = { cwd: test.projectRoot, config: test.missionConfig };
+			const shown = handleMissionAction("mission.show", { missionId: binding.missionId }, ctx);
+			assert.equal(shown.details?.mission?.status, "waiting");
+			assert.match(shown.content[0]?.type === "text" ? shown.content[0].text : "", /continued .*; acceptance review-required/);
+			// Acceptance can change without execution state changing; show must consume the new original.
+			fs.writeFileSync(path.join(dirs.get("continued")!, "status.json"), JSON.stringify({ runId: "continued", state: "complete", steps: [{ acceptance: { status: "verified" } }] }));
+			assert.equal(handleMissionAction("mission.show", { missionId: binding.missionId }, ctx).details?.mission?.status, "completed");
+		} finally {
+			fs.rmSync(test.root, { recursive: true, force: true });
+		}
+	});
+
+	it("does not let another foreground run accept an earlier requested result", () => {
+		const test = projectFixture();
+		try {
+			const binding = prepareMissionLaunch({ params: { mission: { title: "Independent results" } }, projectRoot: test.projectRoot, config: test.missionConfig });
+			assert.ok(binding);
+			const usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 1 };
+			for (const acceptanceStatus of ["review-required", "verified"]) {
+				attachMissionToLaunchResult({ binding, result: { content: [{ type: "text", text: "Done" }], details: { mode: "single", runId: acceptanceStatus, results: [{ index: 0, agent: "worker", task: "Work", exitCode: 0, usage, acceptance: { status: acceptanceStatus } as never }] } } });
+				assert.equal(readMission(binding.location, binding.missionId).status, "waiting");
+			}
+			const closed = handleMissionAction("mission.close", { missionId: binding.missionId }, { cwd: test.projectRoot, config: test.missionConfig });
+			assert.equal(closed.details?.mission?.status, "completed", "ordinary owner close remains available after review");
+			assert.equal(closed.details?.mission?.runs[0]?.acceptanceStatus, "review-required", "explicit close does not rewrite original run evidence");
+		} finally { fs.rmSync(test.root, { recursive: true, force: true }); }
+	});
+
 	it("keeps an async workflow mission waiting when a child result needs review", () => {
 		const test = projectFixture();
 		try {
