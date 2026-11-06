@@ -235,7 +235,7 @@ function validateMissionUpdate(value: unknown): MissionUpdateInput {
 	return update;
 }
 
-function inspectLinkedRunStatus(record: MissionRecord): { update: MissionUpdateInput | undefined; warnings: string[] } {
+function inspectLinkedRunStatus(location: MissionStoreLocation, record: MissionRecord): { update: MissionUpdateInput | undefined; warnings: string[] } {
 	const warnings: string[] = [];
 	const runAcceptance: Array<{ runId: string; status: string | undefined }> = [];
 	const updates = record.runs.flatMap((run) => {
@@ -284,20 +284,25 @@ function inspectLinkedRunStatus(record: MissionRecord): { update: MissionUpdateI
 				: states.some((state) => state === "stopped" || state === "rejected" || state === "cancelled")
 					? "cancelled"
 					: states.length > 0 && states.every((state) => state === "complete" || state === "completed")
-						// A run without a binding counts as auto-created.
-						? finishedMissionStatus(record, !merged.some((run) => run.asyncDir && readMissionBinding(run.asyncDir)?.autoCreated === false), runAcceptance)
+						// Read every binding first so missing provenance cannot hide a malformed file.
+						// Only explicit provenance for this mission can bypass acceptance.
+						? finishedMissionStatus(record, merged.map((run) => run.asyncDir ? readMissionBinding(run.asyncDir) : undefined).every((binding) => {
+							return binding?.autoCreated === true && binding.missionId === record.id
+								&& path.resolve(binding.location.missionDir) === path.resolve(location.missionDir)
+								&& path.resolve(binding.location.projectRoot) === path.resolve(location.projectRoot);
+						}), runAcceptance)
 						: record.status;
 	return { update: { status, addRuns: updates }, warnings };
 }
 
 function refreshLinkedRunStatus(location: MissionStoreLocation, record: MissionRecord): { record: MissionRecord; warnings: string[] } {
-	const initial = inspectLinkedRunStatus(record);
+	const initial = inspectLinkedRunStatus(location, record);
 	// Unchanged reads remain lock-free. Only a real update enters the critical section.
 	if (!initial.update) return { record, warnings: initial.warnings };
 	let warnings = initial.warnings;
 	const refreshed = updateMission(location, record.id, (current) => {
 		// Re-read originals against the current locked record, never commit a stale computed status.
-		const result = inspectLinkedRunStatus(current);
+		const result = inspectLinkedRunStatus(location, current);
 		warnings = result.warnings;
 		return result.update;
 	});
