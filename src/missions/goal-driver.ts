@@ -59,10 +59,14 @@ function refreshGoalMission(location: MissionStoreLocation, record: MissionRecor
 	const runs = record.runs.map(readLinkedRun);
 	const changed = runs.some((run, index) => JSON.stringify(run) !== JSON.stringify(record.runs[index]));
 	if (!changed) return record;
-	const active = runs.some((run) => run.status && ACTIVE_RUN_STATUSES.has(run.status));
-	return updateMission(location, record.id, {
-		status: active ? "active" : record.goal ? "active" : record.status,
-		addRuns: runs,
+	return updateMission(location, record.id, (current) => {
+		const latestRuns = current.runs.map(readLinkedRun);
+		if (latestRuns.every((run, index) => JSON.stringify(run) === JSON.stringify(current.runs[index]))) return undefined;
+		const active = latestRuns.some((run) => run.status && ACTIVE_RUN_STATUSES.has(run.status));
+		return {
+			status: TERMINAL_MISSION_STATUSES.has(current.status) ? current.status : active || current.goal ? "active" : current.status,
+			addRuns: latestRuns,
+		};
 	});
 }
 
@@ -139,9 +143,9 @@ export function collectGoalContinuationNotices(input: {
 		if (listed.ownerSessionId !== input.ownerSessionId || !listed.goal || TERMINAL_MISSION_STATUSES.has(listed.status)) continue;
 		try {
 			let record = refreshGoalMission(input.location, readMission(input.location, listed.id));
-			if (!record.goal || record.goal.status !== "active" || !record.budget) continue;
+			if (TERMINAL_MISSION_STATUSES.has(record.status) || !record.goal || record.goal.status !== "active" || !record.budget) continue;
 			if ((record.usage?.tokens ?? 0) >= record.budget.tokens) {
-				record = updateMission(input.location, record.id, { usage: record.usage ?? { tokens: 0 } });
+				record = updateMission(input.location, record.id, (current) => ({ usage: current.usage ?? { tokens: 0 } }));
 				if (record.goal?.status === "budget-exhausted") continue;
 			}
 			if (record.runs.some((run) => run.status && ACTIVE_RUN_STATUSES.has(run.status))) continue;

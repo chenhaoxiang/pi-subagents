@@ -199,12 +199,11 @@ export function attachMissionToLaunchResult(input: {
 	const runId = input.result.details.runId ?? input.result.details.asyncId;
 	if (!runId) {
 		const current = readMission(input.binding.location, input.binding.missionId);
-		const activeRunExists = current.runs.some((run) => run.status === "active" || run.status === "queued" || run.status === "running");
 		const mission = toolResultIsError(input.result)
-			? updateMission(input.binding.location, input.binding.missionId, {
-					status: activeRunExists ? "active" : "failed",
+			? updateMission(input.binding.location, input.binding.missionId, (latest) => ["completed", "failed", "cancelled"].includes(latest.status) ? undefined : ({
+					status: latest.runs.some((run) => run.status === "active" || run.status === "queued" || run.status === "running") ? "active" : "failed",
 					...(firstText(input.result) ? { summary: firstText(input.result)! } : {}),
-				})
+				}))
 			: current;
 		return {
 			...input.result,
@@ -217,7 +216,6 @@ export function attachMissionToLaunchResult(input: {
 		};
 	}
 	const runStatus = runStatusForResult(input.result);
-	const current = readMission(input.binding.location, input.binding.missionId);
 	const startedAt = new Date().toISOString();
 	const usage = usageForResult(input.result);
 	const acceptanceStatus = missionAcceptanceStatus(input.result.details.results);
@@ -232,13 +230,13 @@ export function attachMissionToLaunchResult(input: {
 		...(usage ? { usage } : {}),
 		...(acceptanceStatus ? { acceptanceStatus } : {}),
 	};
-	let mission = updateMission(input.binding.location, input.binding.missionId, {
+	let mission = updateMission(input.binding.location, input.binding.missionId, (current) => ({
 		status: missionStatusForRun(current, runId, runStatus, acceptanceStatus, input.binding.autoCreated),
 		addRuns: [run],
 		addArtifacts: artifactsForResult(input.result),
 		...(firstText(input.result) && runStatus !== "active" ? { summary: firstText(input.result)! } : {}),
 		...(input.result.details.results.length === 1 && input.result.details.results[0]?.acceptance ? { acceptance: input.result.details.results[0].acceptance } : {}),
-	});
+	}));
 	if (input.result.details.asyncDir) {
 		writeMissionAsyncBinding(input.result.details.asyncDir, input.binding);
 		const statusPath = path.join(input.result.details.asyncDir, "status.json");
@@ -326,34 +324,12 @@ export function syncMissionFromAsyncCompletion(value: unknown): MissionRecord | 
 	if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
 	const event = value as Record<string, unknown>;
 	if (typeof event.asyncDir !== "string" || !event.asyncDir.trim()) return undefined;
-	const binding = readMissionBinding(event.asyncDir);
+	const asyncDir = event.asyncDir;
+	const binding = readMissionBinding(asyncDir);
 	if (!binding) return undefined;
 	const runId = typeof event.runId === "string" ? event.runId : typeof event.id === "string" ? event.id : undefined;
 	if (!runId) throw new Error("Async mission completion is missing runId");
 	const runStatus = typeof event.state === "string" ? event.state : event.success === true ? "completed" : "failed";
-	let current: MissionRecord;
-	try {
-		current = readMission(binding.location, binding.missionId);
-	} catch (error) {
-		if (!(error instanceof MissionNotFoundError)) throw error;
-		const reason = "mission-record-missing";
-		const markerId = createHash("sha256").update(JSON.stringify([runId, binding.missionId, reason])).digest("hex");
-		const markerPath = path.join(event.asyncDir, `.mission-sync-skipped-${markerId}.json`);
-		try {
-			fs.writeFileSync(markerPath, `${JSON.stringify({ runId, missionId: binding.missionId, reason })}\n`, { encoding: "utf-8", mode: 0o600, flag: "wx" });
-			fs.appendFileSync(path.join(event.asyncDir, "events.jsonl"), `${JSON.stringify({
-				type: "subagent.mission.sync.skipped",
-				ts: Date.now(),
-				runId,
-				missionId: binding.missionId,
-				reason,
-				missionPath: missionRecordPath(binding.location, binding.missionId),
-			})}\n`, "utf-8");
-		} catch {
-			// Mission bookkeeping is secondary to preserving the completed async result.
-		}
-		return undefined;
-	}
 	const completedAt = new Date().toISOString();
 	const artifacts: MissionArtifact[] = [
 		{ kind: "status", path: path.join(event.asyncDir, "status.json") },
@@ -391,9 +367,10 @@ export function syncMissionFromAsyncCompletion(value: unknown): MissionRecord | 
 				: "failed";
 	const workflowChildTerminal = !["running", "queued", "active", "paused"].includes(workflowChildStatus);
 	const acceptanceStatus = missionAcceptanceStatus(event.results);
-	return updateMission(binding.location, binding.missionId, {
+	try {
+		return updateMission(binding.location, binding.missionId, (current) => ({
 		status: missionStatusForRun(current, runId, runStatus, acceptanceStatus, binding.autoCreated),
-		addRuns: [{ runId, mode: typeof event.mode === "string" && ["single", "parallel", "chain", "workflow"].includes(event.mode) ? event.mode as SubagentRunMode : "external", asyncDir: event.asyncDir, status: runStatus, completedAt, ...(acceptanceStatus ? { acceptanceStatus } : {}), ...(usage && usage.tokens > 0 ? { usage } : {}) }],
+		addRuns: [{ runId, mode: typeof event.mode === "string" && ["single", "parallel", "chain", "workflow"].includes(event.mode) ? event.mode as SubagentRunMode : "external", asyncDir, status: runStatus, completedAt, ...(acceptanceStatus ? { acceptanceStatus } : {}), ...(usage && usage.tokens > 0 ? { usage } : {}) }],
 		addArtifacts: artifacts,
 		...(workflowRunId && workflowKey ? { upsertWorkflowChildren: [{
 			workflowRunId,
@@ -406,5 +383,25 @@ export function syncMissionFromAsyncCompletion(value: unknown): MissionRecord | 
 			heartbeat: { status: workflowChildStatus, ...(summary ? { message: summary } : {}) },
 		}] } : {}),
 		...(summary ? { summary } : {}),
-	});
+		}));
+	} catch (error) {
+		if (!(error instanceof MissionNotFoundError)) throw error;
+		const reason = "mission-record-missing";
+		const markerId = createHash("sha256").update(JSON.stringify([runId, binding.missionId, reason])).digest("hex");
+		const markerPath = path.join(event.asyncDir, `.mission-sync-skipped-${markerId}.json`);
+		try {
+			fs.writeFileSync(markerPath, `${JSON.stringify({ runId, missionId: binding.missionId, reason })}\n`, { encoding: "utf-8", mode: 0o600, flag: "wx" });
+			fs.appendFileSync(path.join(event.asyncDir, "events.jsonl"), `${JSON.stringify({
+				type: "subagent.mission.sync.skipped",
+				ts: Date.now(),
+				runId,
+				missionId: binding.missionId,
+				reason,
+				missionPath: missionRecordPath(binding.location, binding.missionId),
+			})}\n`, "utf-8");
+		} catch {
+			// Mission bookkeeping is secondary to preserving the completed async result.
+		}
+		return undefined;
+	}
 }

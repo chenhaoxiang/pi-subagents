@@ -18,7 +18,8 @@ function startIdentity(pid: number): string | undefined {
 function readOwner(lockPath: string): Owner | undefined {
 	try {
 		const owner = JSON.parse(fs.readFileSync(path.join(lockPath, "owner.json"), "utf-8"));
-		if ((typeof owner.token !== "string" || !/^[A-Za-z0-9-]{1,64}$/.test(owner.token)) || typeof owner.hostname !== "string" || !Number.isSafeInteger(owner.pid) || owner.pid <= 0) return undefined;
+		if ((typeof owner.token !== "string" || !/^[A-Za-z0-9-]{1,64}$/.test(owner.token)) || typeof owner.hostname !== "string" || !Number.isSafeInteger(owner.pid) || owner.pid <= 0 ||
+			(owner.processStart !== undefined && (typeof owner.processStart !== "string" || !/^[0-9]{1,32}$/.test(owner.processStart)))) return undefined;
 		return owner;
 	} catch { return undefined; }
 }

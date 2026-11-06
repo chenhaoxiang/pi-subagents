@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { writePrivateAtomicJson } from "../shared/atomic-json.ts";
+import { withFileLease } from "../shared/file-lease.ts";
 import { getAgentDir } from "../shared/utils.ts";
 import {
 	MISSION_STATUSES,
@@ -376,9 +377,14 @@ function pruneTerminalMissions(location: MissionStoreLocation, maxTerminal: numb
 		.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
 	for (const record of terminal.slice(maxTerminal)) {
 		try {
-			fs.rmSync(missionRecordPath(location, record.id), { force: true });
-			fs.rmSync(path.join(location.missionDir, record.id), { recursive: true, force: true });
-			if (location.writeGlobalIndex) fs.rmSync(indexPath(location, record), { force: true });
+			withFileLease(missionRecordPath(location, record.id), () => {
+				const current = readMission(location, record.id);
+				// A concurrent update/reopen after the retention snapshot wins.
+				if (!TERMINAL_MISSION_STATUSES.has(current.status) || JSON.stringify(current) !== JSON.stringify(record)) return;
+				fs.rmSync(missionRecordPath(location, record.id), { force: true });
+				fs.rmSync(path.join(location.missionDir, record.id), { recursive: true, force: true });
+				if (location.writeGlobalIndex) fs.rmSync(indexPath(location, record), { force: true });
+			}, 0);
 		} catch {
 			// Retention is best-effort and must never block a launch.
 		}
@@ -408,7 +414,8 @@ export function createMission(location: MissionStoreLocation, input: MissionCrea
 		...(input.labels ? { labels: stringArray(input.labels, "mission.labels") } : {}),
 	};
 	if (input.goal === true && !input.budget) throw new Error("mission.budget is required when mission.goal is true");
-	const created = writeMission(location, record);
+	fs.mkdirSync(location.missionDir, { recursive: true, mode: 0o700 });
+	const created = withFileLease(missionRecordPath(location, record.id), () => writeMission(location, record));
 	pruneTerminalMissions(location, retainTerminal);
 	return created;
 }
@@ -458,8 +465,31 @@ export function listMissions(location: MissionStoreLocation): MissionListResult 
 	return { records, warnings };
 }
 
-export function updateMission(location: MissionStoreLocation, missionId: string, update: MissionUpdateInput, now = new Date(), retainTerminal = location.retainTerminal ?? DEFAULT_TERMINAL_MISSION_RETENTION): MissionRecord {
-	const current = readMission(location, missionId);
+export type MissionUpdate = MissionUpdateInput | ((current: MissionRecord) => MissionUpdateInput | undefined);
+
+/** Cooperating writers compute and persist one exact record under its existing file-lease primitive.
+ * Undefined from an internal update callback is a read-only/no-change result.
+ */
+export function updateMission(location: MissionStoreLocation, missionId: string, update: MissionUpdate, now?: Date, retainTerminal = location.retainTerminal ?? DEFAULT_TERMINAL_MISSION_RETENTION): MissionRecord {
+	let result: { record: MissionRecord; changed: boolean };
+	try {
+		result = withFileLease(missionRecordPath(location, missionId), () => {
+			const current = readMission(location, missionId);
+			const patch = typeof update === "function" ? update(current) : update;
+			return patch === undefined ? { record: current, changed: false }
+				: { record: applyMissionUpdate(location, current, patch, now ?? new Date()), changed: true };
+		});
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "ENOENT" && !fs.existsSync(location.missionDir)) throw new MissionNotFoundError(missionId, location);
+		throw error;
+	}
+	// Never nest record leases, including when this record itself is prunable.
+	if (result.changed && TERMINAL_MISSION_STATUSES.has(result.record.status)) pruneTerminalMissions(location, retainTerminal);
+	return result.record;
+}
+
+function applyMissionUpdate(location: MissionStoreLocation, current: MissionRecord, update: MissionUpdateInput, now: Date): MissionRecord {
+	const missionId = current.id;
 	const runs = [...current.runs];
 	for (const candidate of update.addRuns ?? []) {
 		const run = parseRunLink(candidate, "mission.update.addRuns[]");
@@ -568,9 +598,7 @@ export function updateMission(location: MissionStoreLocation, missionId: string,
 		...(update.acceptance !== undefined ? { acceptance: update.acceptance } : {}),
 	};
 	if (!goal) delete next.goal;
-	const updated = writeMission(location, next);
-	if (TERMINAL_MISSION_STATUSES.has(updated.status)) pruneTerminalMissions(location, retainTerminal);
-	return updated;
+	return writeMission(location, next);
 }
 
 export function listGlobalMissions(globalIndexDir: string): GlobalMissionListResult {
