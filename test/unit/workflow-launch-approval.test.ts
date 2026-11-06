@@ -20,16 +20,18 @@ it("offers each workflow child start to tool_call handlers and does not start a 
 	const launches: Array<Record<string, unknown>> = [];
 	const completions = new Map<string, Completion>();
 	let completed: (() => void) | undefined;
-	const script = (task: string) => `return await runs.run("review", { agent: "reviewer", task: "${task}" });`;
+	const marker = path.join(root, "verify-ran");
+	const output = path.join(root, "review.md");
+	const verify = { id: "mark", command: `node -e "require('fs').writeFileSync(process.env.MARKER, 'x')"`, cwd: "sub", env: { MARKER: marker } };
+	const script = (task: string) => `return await runs.run("review", ${JSON.stringify({ agent: "reviewer", task, acceptance: { level: "verified", verify: [verify] }, output })});`;
 	const toolResults: string[] = [];
 	const faux = fauxProvider({ provider: "launch-approval", models: [{ id: "local" }], tokensPerSecond: 100_000 });
 	const respond = (context: { messages: Array<{ role: string; content: unknown }> }) => {
 		const last = context.messages.at(-1)!;
-		if (last.role === "user" && JSON.stringify(last.content).includes("background review")) {
-			return fauxAssistantMessage(fauxToolCall("subagent", { async: true, options: { script: script("Review in the background") } }), { stopReason: "toolUse" });
-		}
-		if (last.role === "user" && JSON.stringify(last.content).includes("foreground review")) {
-			return fauxAssistantMessage(fauxToolCall("subagent", { async: false, options: { script: script("Review now") } }), { stopReason: "toolUse" });
+		const text = JSON.stringify(last.content);
+		const background = text.includes("background review");
+		if (last.role === "user" && (background || text.includes("foreground review"))) {
+			return fauxAssistantMessage(fauxToolCall("subagent", { async: background, options: { script: script(background ? "Review in the background" : "Review now") } }), { stopReason: "toolUse" });
 		}
 		if (last.role === "toolResult") toolResults.push((last.content as Array<{ type: string; text?: string }>).flatMap((block) => block.type === "text" ? [block.text!] : []).join("\n"));
 		return fauxAssistantMessage("ok");
@@ -63,7 +65,11 @@ it("offers each workflow child start to tool_call handlers and does not start a 
 		await session.prompt("Run the background review.");
 		assert.equal(launches.length, 1);
 		const { workflowRunId, ...launch } = launches[0]!;
-		assert.deepEqual(launch, { key: "review", agent: "reviewer", task: "Review in the background", cwd: root });
+		assert.deepEqual(launch, {
+			key: "review", agent: "reviewer", task: "Review in the background", cwd: root,
+			commands: [{ command: verify.command, cwd: path.join(root, "sub"), env: { MARKER: marker } }],
+			output,
+		});
 		const backgroundRunId = String(workflowRunId);
 		while (!completions.has(backgroundRunId)) await new Promise<void>((resolve) => { completed = resolve; });
 		assert.equal(completions.get(backgroundRunId)!.success, false);
@@ -73,6 +79,8 @@ it("offers each workflow child start to tool_call handlers and does not start a 
 		assert.equal(launches.length, 2);
 		assert.equal(launches[1]!.task, "Review now");
 		assert.match(toolResults.at(-1)!, refusal);
+		assert.equal(fs.existsSync(marker), false);
+		assert.equal(fs.existsSync(output), false);
 	} finally {
 		if (session) {
 			await (session.extensionRunner as any).emit({ type: "session_shutdown", reason: "quit" });

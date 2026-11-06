@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { inspectSubagentStatus } from "../../src/runs/background/run-status.ts";
 import { checkRecordedPidLiveness } from "../../src/runs/background/stale-run-reconciler.ts";
+import { recoveryDescriptorPath } from "../../src/runs/shared/run-launch-folder.ts";
 import { DIRS, type AsyncStatus, type Details, type ProcessTerminal } from "../../src/shared/types.ts";
 import { createMockPi } from "../support/mock-pi.ts";
 
@@ -253,7 +254,8 @@ for (const { outcome, exitOwner } of [
 			assert.equal(settled.state, expectedState);
 			assert.ok(settled.endedAt! >= shutdown.shutdownAt!, "the child must finish after parent shutdown");
 			if (!exitOwner) await until("the still-live host's runner close observer", () => read<ProcessTerminal>(path.join(asyncDir, "process-terminal.json")), (proof) => proof.state === "observed");
-			const descriptorHash = hash(path.join(asyncDir, "recovery-descriptor.json"));
+			const descriptorPath = recoveryDescriptorPath(DIRS.async, runId);
+			const descriptorHash = hash(descriptorPath);
 			const bindingHash = hash(path.join(asyncDir, "mission.json"));
 			const terminalRead = save("fresh-terminal-status", await fresh.call({ action: "status", id: runId }));
 			assert.match(text(terminalRead), new RegExp(`State: ${expectedState}`));
@@ -317,7 +319,7 @@ for (const { outcome, exitOwner } of [
 			assert.equal(read<AsyncStatus>(statusPath).sessionId, identity.sessionFile);
 			assert.equal(read<AsyncStatus>(statusPath).completionOwnerId, active.completionOwnerId);
 			assert.deepEqual(read<AsyncStatus>(statusPath).steps?.[0]?.acceptance, settled.steps?.[0]?.acceptance);
-			assert.equal(hash(path.join(asyncDir, "recovery-descriptor.json")), descriptorHash, "observation cannot rewrite the retained launch contract");
+			assert.equal(hash(descriptorPath), descriptorHash, "observation cannot rewrite the retained launch contract");
 			assert.equal(hash(path.join(asyncDir, "mission.json")), bindingHash, "observation cannot rebind the mission");
 			assert.equal(mock.callCount(), 1, "all reads, reloads, refused resumes and owner return must keep one child invocation");
 			const scenarioOwners = new Set([identity.sessionFile, observer.sessionFile]);

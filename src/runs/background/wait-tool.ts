@@ -5,6 +5,7 @@ import { resolveWaitToolConfig, waitForSubagents } from "./subagent-wait.ts";
 import type { WaitSubscriptionManager } from "./wait-subscriptions.ts";
 import { finalizeToolResult } from "../../extension/tool-result.ts";
 import { registerPinnedTool } from "../../extension/declaration-pinning.ts";
+import { waitToolName } from "../../shared/wait-tool-name.ts";
 
 export function registerWaitTool(
 	pi: ExtensionAPI,
@@ -15,7 +16,8 @@ export function registerWaitTool(
 	child?: { nestedRootRunId?: string },
 	hasPendingSupervisorRequest?: () => boolean,
 ): void {
-	const description = `Collect background results. ${child ? "This child runtime has no native completion notifier: use blocking bg_wait to collect your owned descendants this turn and read their result references; agent_end draining does not synthesize results." : "Ordinary async subagent runs already wake this session natively; use bg_wait for provider/detached work without native notification when needed this turn."}
+	const name = waitToolName();
+	const description = `Collect background results. ${child ? `This child runtime has no native completion notifier: use blocking ${name} to collect your owned descendants this turn and read their result references; agent_end draining does not synthesize results.` : `Ordinary async subagent runs already wake this session natively; use ${name} for provider/detached work without native notification when needed this turn.`}
 {} — first active run or provider item to finish or need attention.
 {all:true} — all work active at call time.
 {id} — one run; a finished async run returns its result references.
@@ -48,7 +50,7 @@ Timeout/user input ends the wait without error; work keeps running.${enabled ? "
 		}
 	};
 	const primaryTool: ToolDefinition<typeof SubagentWaitParams, Details> = {
-		name: "bg_wait",
+		name,
 		label: "Background Wait",
 		description,
 		parameters: SubagentWaitParams,
