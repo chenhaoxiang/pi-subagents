@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [0.86.0-fork.3] - 2026-11-06
+
+- Serialize cooperating mission record read/modify/write and lifecycle calculations with the existing bounded file lease, preventing concurrent writers from dropping decisions, run evidence or derived status.
+- Recheck retention candidates under a non-waiting lease and keep unchanged observation reads lock-free. Recover only proven dead owners; unknown/live locks remain untouched. Old runtimes do not participate in this protection.
+
 ## [0.86.0-fork.2] - 2026-11-06
 
 - Retain acceptance on each linked mission run so a later success or a late completion cannot accept another result still awaiting review. Missing fields do not erase an earlier reported acceptance.
