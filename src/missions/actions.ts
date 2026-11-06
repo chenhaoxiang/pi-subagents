@@ -284,10 +284,9 @@ function inspectLinkedRunStatus(location: MissionStoreLocation, record: MissionR
 				: states.some((state) => state === "stopped" || state === "rejected" || state === "cancelled")
 					? "cancelled"
 					: states.length > 0 && states.every((state) => state === "complete" || state === "completed")
+						// Read every binding first so missing provenance cannot hide a malformed file.
 						// Only explicit provenance for this mission can bypass acceptance.
-						? finishedMissionStatus(record, merged.every((run) => {
-							if (!run.asyncDir) return false;
-							const binding = readMissionBinding(run.asyncDir);
+						? finishedMissionStatus(record, merged.map((run) => run.asyncDir ? readMissionBinding(run.asyncDir) : undefined).every((binding) => {
 							return binding?.autoCreated === true && binding.missionId === record.id
 								&& path.resolve(binding.location.missionDir) === path.resolve(location.missionDir)
 								&& path.resolve(binding.location.projectRoot) === path.resolve(location.projectRoot);

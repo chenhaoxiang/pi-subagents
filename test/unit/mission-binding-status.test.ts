@@ -121,6 +121,27 @@ for (const state of ["failed", "unknown"] as const) {
 	});
 }
 
+for (const first of ["missing-file", "missing-autoCreated", "explicit-request"] as const) {
+	it(`reads malformed bindings even after ${first} provenance`, (t) => {
+		const h = fixture(t);
+		if (first === "missing-file") fs.rmSync(h.bindingPath);
+		if (first === "missing-autoCreated") {
+			const persisted = JSON.parse(fs.readFileSync(h.bindingPath, "utf-8"));
+			delete persisted.autoCreated;
+			fs.writeFileSync(h.bindingPath, JSON.stringify(persisted));
+		}
+		const otherDir = path.join(h.root, "malformed-run");
+		fs.mkdirSync(otherDir);
+		fs.writeFileSync(path.join(otherDir, "mission.json"), "{broken");
+		fs.writeFileSync(path.join(otherDir, "status.json"), JSON.stringify({ state: "complete", steps: [] }));
+		handleMissionAction("mission.attach-run", { missionId: h.binding.missionId, runId: "malformed", dir: otherDir, runStatus: "running" }, h.ctx);
+		h.finish("complete", "");
+		const before = readMission(h.binding.location, h.binding.missionId);
+		assert.throws(h.show, /Invalid mission binding file/);
+		assert.deepEqual(readMission(h.binding.location, h.binding.missionId), before);
+	});
+}
+
 it("malformed binding remains an error, not successful completion", (t) => {
 	const h = fixture(t);
 	fs.writeFileSync(h.bindingPath, "{broken");
