@@ -200,7 +200,7 @@ export function attachMissionToLaunchResult(input: {
 	if (!runId) {
 		const current = readMission(input.binding.location, input.binding.missionId);
 		const mission = toolResultIsError(input.result)
-			? updateMission(input.binding.location, input.binding.missionId, (latest) => ({
+			? updateMission(input.binding.location, input.binding.missionId, (latest) => ["completed", "failed", "cancelled"].includes(latest.status) ? undefined : ({
 					status: latest.runs.some((run) => run.status === "active" || run.status === "queued" || run.status === "running") ? "active" : "failed",
 					...(firstText(input.result) ? { summary: firstText(input.result)! } : {}),
 				}))

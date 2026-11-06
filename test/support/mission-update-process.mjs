@@ -11,7 +11,7 @@ const moduleUrl = name => process.env.PI_SUBAGENTS_MISSION_SMOKE_BASELINE
   ? pathToFileURL(path.join(process.env.PI_SUBAGENTS_MISSION_SMOKE_BASELINE, "src/missions", name))
   : new URL("../../src/missions/" + name, import.meta.url);
 const { readMission, updateMission } = await import(moduleUrl("store.ts"));
-const { syncMissionFromAsyncCompletion } = await import(moduleUrl("lifecycle.ts"));
+const { syncMissionFromAsyncCompletion, attachMissionToLaunchResult } = await import(moduleUrl("lifecycle.ts"));
 
 const [configFile] = process.argv.slice(2);
 const config = JSON.parse(fs.readFileSync(configFile, "utf8"));
@@ -44,7 +44,9 @@ try {
   } else {
     const record = action === "complete"
       ? syncMissionFromAsyncCompletion(config.event)
-      : updateMission(location, missionId, config.update);
+      : action === "failed-launch"
+        ? attachMissionToLaunchResult({ binding: { location, missionId, autoCreated: false }, result: { isError: true, content: [{ type: "text", text: "Earlier synthetic launch failed" }], details: { mode: "single", results: [] } } }).details.mission
+        : updateMission(location, missionId, config.update);
     assert(record);
     console.log(JSON.stringify({ state: "written", record: readMission(location, missionId) }));
   }

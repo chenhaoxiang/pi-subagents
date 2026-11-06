@@ -81,6 +81,39 @@ it("computes a late completion's mission status from the locked current record",
 	} finally { await h.cleanup(); }
 });
 
+for (const status of ["completed", "failed", "cancelled"] as const) it(`preserves ${status} after a pre-existing failed launch resumes bookkeeping`, { timeout: 30_000 }, async () => {
+	const h = fixture();
+	try {
+		const gate = path.join(h.root, "failure-gate");
+		const oldFailure = h.launch({ action: "failed-launch", gate });
+		await until(() => fs.existsSync(gate + ".ready"));
+		const other = await h.launch({ action: "update", update: { addRuns: [{ runId: "new-run", mode: "single", status: "running" }], status, summary: "Explicit closure" } }).result();
+		assert.equal(other.state, "written");
+		fs.writeFileSync(gate + ".release", "go"); await oldFailure.result();
+		const record = readMission(h.location, h.mission.id);
+		assert.equal(record.status, status);
+		assert.equal(record.summary, "Explicit closure");
+	} finally { await h.cleanup(); }
+});
+
+it("keeps partially corrupt live lease identities unknown without entering a mutation", async () => {
+	const h = fixture();
+	try {
+		const record = missionRecordPath(h.location, h.mission.id), lock = record + ".write-lock";
+		for (const processStart of [null, 0, "", {}, [], "not-linux-ticks"]) {
+			fs.mkdirSync(lock);
+			fs.writeFileSync(path.join(lock, "owner.json"), JSON.stringify({ token: "synthetic-invalid-start", pid: process.pid, hostname: os.hostname(), processStart }));
+			const before = fs.readFileSync(record); let entered = false;
+			assert.throws(() => updateMission(h.location, h.mission.id, () => { entered = true; return { summary: "must not enter" }; }), /Timed out waiting/);
+			assert.equal(entered, false);
+			assert.deepEqual(fs.readFileSync(record), before);
+			assert.equal(fs.existsSync(lock), true);
+			assert.equal(fs.existsSync(lock + ".retired-synthetic-invalid-start"), false);
+			fs.rmSync(lock, { recursive: true });
+		}
+	} finally { await h.cleanup(); }
+});
+
 it("recovers a proven dead record lease but never evicts an unknown owner by age", { timeout: 30_000 }, async () => {
 	const h = fixture();
 	try {
