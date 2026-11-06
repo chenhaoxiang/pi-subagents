@@ -258,11 +258,13 @@ function refreshLinkedRunStatus(location: MissionStoreLocation, record: MissionR
 			warnings.push(`Linked run status '${statusPath}' is missing state`);
 			return [];
 		}
-		runAcceptance.push({ runId: run.runId, status: missionAcceptanceStatus((status as { steps?: unknown }).steps) });
-		if (state === run.status) return [];
+		const acceptanceStatus = missionAcceptanceStatus((status as { steps?: unknown }).steps) ?? run.acceptanceStatus;
+		runAcceptance.push({ runId: run.runId, status: acceptanceStatus });
+		if (state === run.status && acceptanceStatus === run.acceptanceStatus) return [];
 		return [{
 			...run,
 			status: state,
+			...(acceptanceStatus ? { acceptanceStatus } : {}),
 			...(!["queued", "running"].includes(state) && !run.completedAt ? { completedAt: new Date().toISOString() } : {}),
 		}];
 	});
@@ -301,7 +303,7 @@ function formatMission(record: MissionRecord): string {
 	if (record.labels?.length) lines.push(`Labels: ${record.labels.join(", ")}`);
 	if (record.runs.length) {
 		lines.push("Runs:");
-		for (const run of record.runs) lines.push(`  ${run.runId} (${run.mode}${run.status ? `, ${run.status}` : ""})${run.asyncDir ? ` — ${run.asyncDir}` : ""}`);
+		for (const run of record.runs) lines.push(`  ${run.runId} (${run.mode}${run.status ? `, ${run.status}` : ""})${run.asyncDir ? ` — ${run.asyncDir}` : ""}${run.acceptanceStatus ? `; acceptance ${run.acceptanceStatus}` : ""}`);
 	}
 	if (record.workflowChildren.length) {
 		lines.push("Workflow children:");

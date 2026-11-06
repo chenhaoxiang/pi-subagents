@@ -124,6 +124,7 @@ function parseRunLink(value: unknown, label: string): MissionRunLink {
 		...(optionalString(input.status, `${label}.status`) ? { status: input.status as string } : {}),
 		...(input.startedAt !== undefined ? { startedAt: timestamp(input.startedAt, `${label}.startedAt`) } : {}),
 		...(input.completedAt !== undefined ? { completedAt: timestamp(input.completedAt, `${label}.completedAt`) } : {}),
+		...(optionalString(input.acceptanceStatus, `${label}.acceptanceStatus`) ? { acceptanceStatus: input.acceptanceStatus as string } : {}),
 		...(input.usage !== undefined ? { usage: parseUsage(input.usage, `${label}.usage`) } : {}),
 	};
 }

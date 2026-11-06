@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [0.84.0-fork.5] - 2026-11-06
+
+- Retain acceptance on each linked mission run so a later success or a late completion cannot accept another result still awaiting review. Missing fields do not erase an earlier reported acceptance.
+- Refresh and display exact-run acceptance through `mission.show`, including changes with unchanged execution state. Preserve terminal/manual-close, default-mission, owner, no-replay and raw-result contracts.
+
 ## [0.84.0-fork.4] - 2026-11-05
 
 - Preserve an existing mission when the same native parent owner resumes a top-level single async run. The new run joins the original mission and returns its native binding without rewriting earlier results or acceptance.

@@ -12,11 +12,11 @@
 
 <https://github.com/chenhaoxiang/pi-subagents>
 
-本变更源码候选版本为 `0.84.0-fork.4`，基于社区 main 快照 `8520aeb788ca19479baa852b5a7884a86bed813e`（社区 v0.84.0），补齐同一 owner 的单异步续跑 mission 关联；已发布的上一版 `0.84.0-fork.3` 保留供回退。fork 专属行为继续保留在 fork 的 `main` 上。
+本变更源码候选版本为 `0.84.0-fork.5`，基于社区 main 快照 `8520aeb788ca19479baa852b5a7884a86bed813e`（社区 v0.84.0），修复 mission 多个关联 run 的验收状态互相覆盖；已发布的上一版 `0.84.0-fork.4` 保留供回退。fork 专属行为继续保留在 fork 的 `main` 上。
 
 ## 发布版本与分支约定
 
-本变更源码候选版本为 **0.84.0-fork.4**，基于社区 **0.84.0** 及上述固定 main 快照；上一版为 **0.84.0-fork.3**。fork 版本统一使用 `<社区版本>-fork.<修订号>`，本地修订不冒充社区新版本。
+本变更源码候选版本为 **0.84.0-fork.5**，基于社区 **0.84.0** 及上述固定 main 快照；上一版为 **0.84.0-fork.4**。fork 版本统一使用 `<社区版本>-fork.<修订号>`，本地修订不冒充社区新版本。
 
 - `main`：我们的维护、整合与发布主线，保留 fork 修复。
 - `upstream-main`：仅镜像社区 `main`，不加入 fork 提交，也不作为安装来源。
@@ -25,7 +25,7 @@
 固定版本安装：
 
 ```bash
-pi install git:github.com/chenhaoxiang/pi-subagents@v0.84.0-fork.4
+pi install git:github.com/chenhaoxiang/pi-subagents@v0.84.0-fork.5
 ```
 
 [GitHub Releases](https://github.com/chenhaoxiang/pi-subagents/releases) 提供可安装的包、来源清单和 `SHA256SUMS` 校验文件；这不是向上游作者的 npm 命名空间发布。发布及制品安装流程见[维护说明](docs/releasing.md)。

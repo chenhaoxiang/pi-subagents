@@ -119,9 +119,12 @@ export function missionAcceptanceStatus(results: unknown): string | undefined {
 export function finishedMissionStatus(record: MissionRecord, autoCreated: boolean, runAcceptance: ReadonlyArray<{ runId: string; status: string | undefined }>): "completed" | "waiting" {
 	// Nobody is expected to close a mission made by default for an ordinary launch.
 	if (autoCreated) return "completed";
-	if (runAcceptance.some((run) => UNACCEPTED_ACCEPTANCE_STATUSES.has(run.status))) return "waiting";
-	// A run reported here supersedes its older workflow child record.
-	const reported = new Set<string | undefined>(runAcceptance.map((run) => run.runId));
+	const acceptance = new Map(record.runs.filter((run) => run.acceptanceStatus !== undefined).map((run) => [run.runId, run.acceptanceStatus]));
+	// A missing field is not a new acceptance decision. Keep earlier exact-run evidence.
+	for (const run of runAcceptance) if (run.status !== undefined) acceptance.set(run.runId, run.status);
+	if ([...acceptance.values()].some((status) => UNACCEPTED_ACCEPTANCE_STATUSES.has(status))) return "waiting";
+	// Only a reported acceptance supersedes its older workflow child record.
+	const reported = new Set<string | undefined>(acceptance.keys());
 	return record.workflowChildren.some((child) => !reported.has(child.runId) && UNACCEPTED_ACCEPTANCE_STATUSES.has(child.acceptanceStatus)) ? "waiting" : "completed";
 }
 
@@ -217,6 +220,7 @@ export function attachMissionToLaunchResult(input: {
 	const current = readMission(input.binding.location, input.binding.missionId);
 	const startedAt = new Date().toISOString();
 	const usage = usageForResult(input.result);
+	const acceptanceStatus = missionAcceptanceStatus(input.result.details.results);
 	const run: MissionRunLink = {
 		runId,
 		mode: missionRunModeForResult(input.result.details.mode),
@@ -226,9 +230,10 @@ export function attachMissionToLaunchResult(input: {
 		...(input.result.details.results.length === 1 && input.result.details.results[0]?.agent ? { agent: input.result.details.results[0].agent } : {}),
 		...(runStatus !== "active" ? { completedAt: startedAt } : {}),
 		...(usage ? { usage } : {}),
+		...(acceptanceStatus ? { acceptanceStatus } : {}),
 	};
 	let mission = updateMission(input.binding.location, input.binding.missionId, {
-		status: missionStatusForRun(current, runId, runStatus, missionAcceptanceStatus(input.result.details.results), input.binding.autoCreated),
+		status: missionStatusForRun(current, runId, runStatus, acceptanceStatus, input.binding.autoCreated),
 		addRuns: [run],
 		addArtifacts: artifactsForResult(input.result),
 		...(firstText(input.result) && runStatus !== "active" ? { summary: firstText(input.result)! } : {}),
@@ -388,7 +393,7 @@ export function syncMissionFromAsyncCompletion(value: unknown): MissionRecord | 
 	const acceptanceStatus = missionAcceptanceStatus(event.results);
 	return updateMission(binding.location, binding.missionId, {
 		status: missionStatusForRun(current, runId, runStatus, acceptanceStatus, binding.autoCreated),
-		addRuns: [{ runId, mode: typeof event.mode === "string" && ["single", "parallel", "chain", "workflow"].includes(event.mode) ? event.mode as SubagentRunMode : "external", asyncDir: event.asyncDir, status: runStatus, completedAt, ...(usage && usage.tokens > 0 ? { usage } : {}) }],
+		addRuns: [{ runId, mode: typeof event.mode === "string" && ["single", "parallel", "chain", "workflow"].includes(event.mode) ? event.mode as SubagentRunMode : "external", asyncDir: event.asyncDir, status: runStatus, completedAt, ...(acceptanceStatus ? { acceptanceStatus } : {}), ...(usage && usage.tokens > 0 ? { usage } : {}) }],
 		addArtifacts: artifacts,
 		...(workflowRunId && workflowKey ? { upsertWorkflowChildren: [{
 			workflowRunId,

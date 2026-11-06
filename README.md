@@ -12,11 +12,11 @@ This repository is the maintained fork at:
 
 <https://github.com/chenhaoxiang/pi-subagents>
 
-It tracks the community project selectively and keeps fork-specific behavior on the fork's `main` line. The current source candidate is `0.84.0-fork.4`, based on community `main` through `8520aeb788ca19479baa852b5a7884a86bed813e` (community v0.84.0), adding same-owner single-async resume mission continuity. The previous published rollback release is `0.84.0-fork.3`.
+It tracks the community project selectively and keeps fork-specific behavior on the fork's `main` line. The current source candidate is `0.84.0-fork.5`, based on community `main` through `8520aeb788ca19479baa852b5a7884a86bed813e` (community v0.84.0), preserving per-run acceptance across linked mission results. The previous published rollback release is `0.84.0-fork.4`.
 
 ## Releases and branch policy
 
-The source candidate is **0.84.0-fork.4**, based on community **0.84.0** and the exact main snapshot above; **0.84.0-fork.3** remains available for rollback. Fork releases use `<community-version>-fork.<revision>`; the fork revision increases without pretending to be a new upstream release.
+The source candidate is **0.84.0-fork.5**, based on community **0.84.0** and the exact main snapshot above; **0.84.0-fork.4** remains available for rollback. Fork releases use `<community-version>-fork.<revision>`; the fork revision increases without pretending to be a new upstream release.
 
 - `main`: our maintained integration and release branch, including fork fixes.
 - `upstream-main`: an exact mirror of the community's `main`, with no fork commits. Never install from this branch.
@@ -25,7 +25,7 @@ The source candidate is **0.84.0-fork.4**, based on community **0.84.0** and the
 Install a reproducible release:
 
 ```bash
-pi install git:github.com/chenhaoxiang/pi-subagents@v0.84.0-fork.4
+pi install git:github.com/chenhaoxiang/pi-subagents@v0.84.0-fork.5
 ```
 
 [GitHub Releases](https://github.com/chenhaoxiang/pi-subagents/releases) include the installable package tarball, a provenance manifest, and `SHA256SUMS`. These GitHub releases are not npm publications under the upstream author's namespace. See [release maintenance](docs/releasing.md) for asset installation and future releases.
