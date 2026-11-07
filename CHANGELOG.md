@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [0.86.0-fork.5] - 2026-11-07
+
+- Add explicit same-mission decision replacement intent and separate typed supersession/withdrawal closure through existing mission updates. Keep the two-write gap, exact-ID late-answer refusal, and unknown legacy closure reasons.
+- Preserve original decision states, record leases, private content boundaries and open-decision lifecycle; no new action, tool schema, task store, approval or automatic answer-validity inference.
+
 ## [0.86.0-fork.4] - 2026-11-06
 
 - Require explicit `autoCreated: true` bindings matching the mission, store and project before `mission.show` bypasses recorded acceptance. Missing bindings, manually attached runs and older bindings without this field no longer imply automatic completion.
