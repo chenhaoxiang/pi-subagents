@@ -14,6 +14,8 @@ export type MissionArtifactKind = "status" | "output" | "patch" | "manifest" | "
 export type MissionReceiptKind = "pull_request" | "ci" | "deployment" | "release";
 export type MissionReceiptStatus = "pending" | "ready" | "succeeded" | "failed";
 export type MissionGoalStatus = "active" | "paused" | "budget-exhausted";
+export const MISSION_DECISION_CLOSE_REASONS = ["answered", "withdrawn", "superseded"] as const;
+export type MissionDecisionCloseReason = typeof MISSION_DECISION_CLOSE_REASONS[number];
 
 export interface MissionGoal {
 	status: MissionGoalStatus;
@@ -51,6 +53,11 @@ export interface MissionDecision {
 	createdAt: string;
 	resolvedAt?: string;
 	resolution?: string;
+	closeReason?: MissionDecisionCloseReason;
+	/** This decision explicitly replaces the referenced open decision. */
+	supersedes?: string;
+	/** Set only when this decision is closed as superseded. */
+	supersededBy?: string;
 }
 
 export interface MissionChildHeartbeat {
@@ -188,7 +195,7 @@ export interface MissionUpdateInput {
 	addRuns?: MissionRunLink[];
 	upsertWorkflowChildren?: MissionWorkflowChildUpdate[];
 	addArtifacts?: MissionArtifact[];
-	addDecisions?: Array<Omit<MissionDecision, "id" | "status" | "createdAt">>;
-	resolveDecision?: { id: string; resolution: string };
+	addDecisions?: Array<Pick<MissionDecision, "title" | "prompt" | "options" | "recommendation" | "supersedes">>;
+	resolveDecision?: { id: string; resolution: string; closeReason?: MissionDecisionCloseReason; supersededBy?: string };
 	addReceipts?: Array<Omit<MissionReceipt, "createdAt">>;
 }
