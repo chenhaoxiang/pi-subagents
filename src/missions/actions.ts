@@ -65,7 +65,9 @@ export interface MissionUpdateToolInput {
 		prompt?: string;
 		options?: string[];
 		recommendation?: string;
+		supersedes?: string;
 	}>;
+	closeDecision?: { id: string; reason: "withdrawn" | "superseded"; resolution: string; supersededBy?: string };
 }
 
 export interface MissionActionParams {
@@ -179,7 +181,7 @@ function validateMissionUpdate(value: unknown): MissionUpdateInput {
 	if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("missionUpdate must be an object");
 	const input = value as Record<string, unknown>;
 	for (const key of Object.keys(input)) {
-		if (!["title", "objective", "goal", "budget", "status", "summary", "labels", "artifacts", "receipts", "decisions"].includes(key)) throw new Error(`missionUpdate.${key} is unknown`);
+		if (!["title", "objective", "goal", "budget", "status", "summary", "labels", "artifacts", "receipts", "decisions", "closeDecision"].includes(key)) throw new Error(`missionUpdate.${key} is unknown`);
 	}
 	const update: MissionUpdateInput = {};
 	for (const field of ["title", "objective", "summary"] as const) {
@@ -221,6 +223,7 @@ function validateMissionUpdate(value: unknown): MissionUpdateInput {
 		update.addDecisions = input.decisions.map((value, index) => {
 			if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`missionUpdate.decisions[${index}] must be an object`);
 			const decision = value as Record<string, unknown>;
+			if (decision.closeReason !== undefined || decision.supersededBy !== undefined || decision.resolvedAt !== undefined || decision.resolution !== undefined || decision.status !== undefined || decision.id !== undefined) throw new Error(`missionUpdate.decisions[${index}] cannot supply generated or closure fields`);
 			if (typeof decision.title !== "string" || !decision.title.trim()) throw new Error(`missionUpdate.decisions[${index}].title must be a non-empty string`);
 			if (decision.options !== undefined && (!Array.isArray(decision.options) || decision.options.some((option) => typeof option !== "string" || !option.trim()))) throw new Error(`missionUpdate.decisions[${index}].options must contain only non-empty strings`);
 			return {
@@ -228,8 +231,18 @@ function validateMissionUpdate(value: unknown): MissionUpdateInput {
 				...(typeof decision.prompt === "string" && decision.prompt.trim() ? { prompt: decision.prompt } : {}),
 				...(Array.isArray(decision.options) ? { options: decision.options as string[] } : {}),
 				...(typeof decision.recommendation === "string" && decision.recommendation.trim() ? { recommendation: decision.recommendation } : {}),
+				...(decision.supersedes === undefined ? {} : { supersedes: validateMissionId(decision.supersedes, `missionUpdate.decisions[${index}].supersedes`) }),
 			};
 		});
+	}
+	if (input.closeDecision !== undefined) {
+		if (!input.closeDecision || typeof input.closeDecision !== "object" || Array.isArray(input.closeDecision)) throw new Error("missionUpdate.closeDecision must be an object");
+		const closure = input.closeDecision as Record<string, unknown>;
+		if (Object.keys(closure).some(key => !["id", "reason", "resolution", "supersededBy"].includes(key))) throw new Error("missionUpdate.closeDecision contains an unknown field");
+		if (closure.reason !== "withdrawn" && closure.reason !== "superseded") throw new Error("missionUpdate.closeDecision.reason must be withdrawn or superseded");
+		if (typeof closure.resolution !== "string" || !closure.resolution.trim()) throw new Error("missionUpdate.closeDecision.resolution must be a non-empty string");
+		update.resolveDecision = { id: validateMissionId(closure.id, "missionUpdate.closeDecision.id"), closeReason: closure.reason, resolution: closure.resolution.trim(),
+			...(closure.supersededBy === undefined ? {} : { supersededBy: validateMissionId(closure.supersededBy, "missionUpdate.closeDecision.supersededBy") }) };
 	}
 	if (Object.keys(update).length === 0) throw new Error("missionUpdate must include at least one supported field");
 	return update;
@@ -337,7 +350,7 @@ function formatMission(record: MissionRecord): string {
 	if (record.decisions.length) {
 		lines.push("Decisions:");
 		for (const decision of record.decisions) {
-			lines.push(`  ${decision.id}: ${decision.status} — ${decision.title}${decision.resolution ? `; resolution: ${decision.resolution}` : ""}`);
+			lines.push(`  ${decision.id}: ${decision.status} — ${decision.title}${decision.resolution ? `; resolution: ${decision.resolution}` : ""}${decision.closeReason ? `; closeReason: ${decision.closeReason}` : ""}${decision.supersedes ? `; replacement intent for: ${decision.supersedes}` : ""}${decision.supersededBy ? `; supersededBy: ${decision.supersededBy}` : ""}`);
 		}
 	}
 	if (record.artifacts.length) {

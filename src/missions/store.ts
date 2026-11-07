@@ -6,6 +6,7 @@ import { writePrivateAtomicJson } from "../shared/atomic-json.ts";
 import { withFileLease } from "../shared/file-lease.ts";
 import { getAgentDir } from "../shared/utils.ts";
 import {
+	MISSION_DECISION_CLOSE_REASONS,
 	MISSION_STATUSES,
 	type GlobalMissionIndexRecord,
 	type GlobalMissionListResult,
@@ -13,6 +14,7 @@ import {
 	type MissionArtifactKind,
 	type MissionCreateInput,
 	type MissionDecision,
+	type MissionDecisionCloseReason,
 	type MissionGoal,
 	type MissionIndexEntry,
 	type MissionListResult,
@@ -130,10 +132,41 @@ function parseRunLink(value: unknown, label: string): MissionRunLink {
 	};
 }
 
+function validateDecisionRelations(decisions: MissionDecision[], label: string): void {
+	if (!decisions.some(decision => decision.supersedes !== undefined || decision.supersededBy !== undefined)) return;
+	const byId = new Map<string, { decision: MissionDecision; index: number }>();
+	for (const [index, decision] of decisions.entries()) {
+		if (byId.has(decision.id)) throw new Error(`${label} contains duplicate decision '${decision.id}'`);
+		byId.set(decision.id, { decision, index });
+	}
+	for (const [index, decision] of decisions.entries()) {
+		if (decision.supersedes !== undefined) {
+			const target = byId.get(decision.supersedes);
+			if (!target || target.index >= index) throw new Error(`${label}.${decision.id}.supersedes must reference an earlier decision in this mission`);
+			// This is append intent. During the two-write gap the old decision
+			// can still receive a real answer, so do not require a closed backlink.
+		}
+		if (decision.supersededBy !== undefined) {
+			const replacement = byId.get(decision.supersededBy)?.decision;
+			if (!replacement || replacement.supersedes !== decision.id) throw new Error(`${label}.${decision.id}.supersededBy does not point to its replacement`);
+			if (decision.closeReason !== "superseded") throw new Error(`${label}.${decision.id}.supersededBy requires closeReason superseded`);
+		}
+		if (decision.closeReason === "superseded" && decision.supersededBy === undefined) throw new Error(`${label}.${decision.id}.superseded requires supersededBy`);
+	}
+}
+
 function parseDecision(value: unknown, label: string): MissionDecision {
 	const input = asObject(value, label);
 	const status = input.status;
 	if (status !== "open" && status !== "resolved") throw new Error(`${label}.status must be "open" or "resolved"`);
+	const closeReason = input.closeReason;
+	if (closeReason !== undefined && !(MISSION_DECISION_CLOSE_REASONS as readonly unknown[]).includes(closeReason)) throw new Error(`${label}.closeReason is invalid`);
+	const supersedes = input.supersedes === undefined ? undefined : validateMissionId(input.supersedes, `${label}.supersedes`);
+	const supersededBy = input.supersededBy === undefined ? undefined : validateMissionId(input.supersededBy, `${label}.supersededBy`);
+	if (closeReason === "superseded" && supersededBy === undefined) throw new Error(`${label}.supersededBy is required when closeReason is superseded`);
+	if (closeReason !== "superseded" && supersededBy !== undefined) throw new Error(`${label}.supersededBy is only valid when closeReason is superseded`);
+	if (status === "open" && (closeReason !== undefined || supersededBy !== undefined)) throw new Error(`${label}.open decisions cannot carry closure fields`);
+	if (closeReason !== undefined && (input.resolvedAt === undefined || input.resolution === undefined)) throw new Error(`${label}.typed closure requires resolvedAt and resolution`);
 	return {
 		id: validateMissionId(input.id, `${label}.id`),
 		status,
@@ -144,6 +177,9 @@ function parseDecision(value: unknown, label: string): MissionDecision {
 		...(optionalString(input.recommendation, `${label}.recommendation`) ? { recommendation: input.recommendation as string } : {}),
 		...(input.resolvedAt !== undefined ? { resolvedAt: timestamp(input.resolvedAt, `${label}.resolvedAt`) } : {}),
 		...(optionalString(input.resolution, `${label}.resolution`) ? { resolution: input.resolution as string } : {}),
+		...(closeReason === undefined ? {} : { closeReason: closeReason as MissionDecisionCloseReason }),
+		...(supersedes === undefined ? {} : { supersedes }),
+		...(supersededBy === undefined ? {} : { supersededBy }),
 	};
 }
 
@@ -227,6 +263,8 @@ export function parseMissionRecord(value: unknown, source = "mission record"): M
 	const objective = optionalString(input.objective, `${source}.objective`)?.trim();
 	if (!objective) throw new Error(`${source}.objective must be a non-empty string`);
 	if (goal && !budget) throw new Error(`${source}.budget is required for a goal mission`);
+	const parsedDecisions = decisions.map((item, index) => parseDecision(item, `${source}.decisions[${index}]`));
+	validateDecisionRelations(parsedDecisions, `${source}.decisions`);
 	return {
 		schemaVersion: 1,
 		id: validateMissionId(input.id, `${source}.id`),
@@ -240,7 +278,7 @@ export function parseMissionRecord(value: unknown, source = "mission record"): M
 		updatedAt: timestamp(input.updatedAt, `${source}.updatedAt`),
 		runs: runs.map((item, index) => parseRunLink(item, `${source}.runs[${index}]`)),
 		workflowChildren: workflowChildren.map((item, index) => parseWorkflowChild(item, `${source}.workflowChildren[${index}]`)),
-		decisions: decisions.map((item, index) => parseDecision(item, `${source}.decisions[${index}]`)),
+		decisions: parsedDecisions,
 		artifacts: artifacts.map((item, index) => parseArtifact(item, `${source}.artifacts[${index}]`)),
 		receipts: receipts.map((item, index) => parseReceipt(item, `${source}.receipts[${index}]`)),
 		...(optionalString(input.cwd, `${source}.cwd`) ? { cwd: input.cwd as string } : {}),
@@ -534,28 +572,56 @@ function applyMissionUpdate(location: MissionStoreLocation, current: MissionReco
 		if (existingIndex === -1) receipts.push(receipt);
 		else receipts[existingIndex] = { ...receipt, createdAt: receipts[existingIndex]!.createdAt };
 	}
+	if ((update.addDecisions ?? []).some((decision) => decision.supersedes !== undefined) && update.resolveDecision !== undefined) {
+		throw new Error("A replacement decision must be appended and the superseded decision closed in separate operations");
+	}
 	const decisions = [
 		...current.decisions,
-		...(update.addDecisions ?? []).map((decision): MissionDecision => ({
-			id: randomUUID(),
-			status: "open",
-			title: requiredString(decision.title, "mission.update.addDecisions[].title"),
-			createdAt,
-			...(decision.prompt ? { prompt: requiredString(decision.prompt, "mission.update.addDecisions[].prompt") } : {}),
-			...(decision.options ? { options: stringArray(decision.options, "mission.update.addDecisions[].options") } : {}),
-			...(decision.recommendation ? { recommendation: requiredString(decision.recommendation, "mission.update.addDecisions[].recommendation") } : {}),
-		})),
+		...(update.addDecisions ?? []).map((decision): MissionDecision => {
+			const raw = decision as unknown as Record<string, unknown>;
+			if (["id", "status", "createdAt", "resolvedAt", "resolution", "closeReason", "supersededBy"].some(key => raw[key] !== undefined)) throw new Error("New decisions cannot supply generated or closure fields");
+			const supersedes = decision.supersedes === undefined ? undefined : validateMissionId(decision.supersedes, "mission.update.addDecisions[].supersedes");
+			if (supersedes !== undefined) {
+				const target = current.decisions.find((existing) => existing.id === supersedes);
+				if (!target) throw new Error(`Decision '${supersedes}' was not found for supersession`);
+				if (target.status !== "open") throw new Error(`Decision '${supersedes}' is not open and cannot be superseded`);
+				if (target.supersededBy !== undefined) throw new Error(`Decision '${supersedes}' is already superseded`);
+			}
+			return {
+				id: randomUUID(),
+				status: "open",
+				title: requiredString(decision.title, "mission.update.addDecisions[].title"),
+				createdAt,
+				...(decision.prompt ? { prompt: requiredString(decision.prompt, "mission.update.addDecisions[].prompt") } : {}),
+				...(decision.options ? { options: stringArray(decision.options, "mission.update.addDecisions[].options") } : {}),
+				...(decision.recommendation ? { recommendation: requiredString(decision.recommendation, "mission.update.addDecisions[].recommendation") } : {}),
+				...(supersedes === undefined ? {} : { supersedes }),
+			};
+		}),
 	];
 	if (update.resolveDecision) {
 		const decisionId = validateMissionId(update.resolveDecision.id, "mission.update.resolveDecision.id");
 		const decisionIndex = decisions.findIndex((decision) => decision.id === decisionId);
 		if (decisionIndex === -1) throw new Error(`Decision '${decisionId}' was not found in mission '${missionId}'`);
 		if (decisions[decisionIndex]!.status === "resolved") throw new Error(`Decision '${decisionId}' is already resolved`);
+		const closeReason = update.resolveDecision.closeReason === undefined ? "answered" : update.resolveDecision.closeReason;
+		if (!(MISSION_DECISION_CLOSE_REASONS as readonly string[]).includes(closeReason)) throw new Error("mission.update.resolveDecision.closeReason is invalid");
+		const supersededBy = update.resolveDecision.supersededBy === undefined ? undefined : validateMissionId(update.resolveDecision.supersededBy, "mission.update.resolveDecision.supersededBy");
+		if (closeReason === "superseded") {
+			if (supersededBy === undefined) throw new Error("mission.update.resolveDecision.supersededBy is required when closeReason is superseded");
+			const replacement = decisions.find((decision) => decision.id === supersededBy);
+			if (!replacement || replacement.status !== "open" || replacement.supersedes !== decisionId) throw new Error(`Decision '${supersededBy}' is not an open replacement for '${decisionId}'`);
+			if (replacement.supersededBy !== undefined) throw new Error(`Decision '${supersededBy}' is already superseded`);
+		} else if (supersededBy !== undefined) {
+			throw new Error("mission.update.resolveDecision.supersededBy is only valid when closeReason is superseded");
+		}
 		decisions[decisionIndex] = {
 			...decisions[decisionIndex]!,
 			status: "resolved",
 			resolvedAt: createdAt,
 			resolution: requiredString(update.resolveDecision.resolution, "mission.update.resolveDecision.resolution").trim(),
+			closeReason,
+			...(supersededBy === undefined ? {} : { supersededBy }),
 		};
 	}
 	const budget = update.budget !== undefined ? parseBudget(update.budget, "mission.update.budget") : current.budget;

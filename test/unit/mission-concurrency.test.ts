@@ -61,6 +61,33 @@ it("serializes two processes updating the same mission without losing runs or de
 	} finally { await h.cleanup(); }
 });
 
+for (const firstKind of ["answered", "superseded", "withdrawn"] as const) it(`serializes ${firstKind} closure against a competing exact-ID answer`, { timeout: 30_000 }, async () => {
+	const h = fixture();
+	try {
+		const opened = updateMission(h.location, h.mission.id, { addDecisions: [{ title: "Original" }] });
+		const oldId = opened.decisions[0]!.id;
+		const appended = updateMission(h.location, h.mission.id, { addDecisions: [{ title: "Replacement", supersedes: oldId }] });
+		const replacementId = appended.decisions[1]!.id;
+		const gate = path.join(h.root, "decision-close-gate");
+		const closure = { id: oldId, resolution: "First exact owner result", closeReason: firstKind, ...(firstKind === "superseded" ? { supersededBy: replacementId } : {}) };
+		const first = h.launch({ action: "update", gate, update: { resolveDecision: closure } });
+		await until(() => fs.existsSync(gate + ".ready"));
+		const competing = { resolveDecision: { id: oldId, resolution: "Competing answer" } };
+		const second = await h.launch({ action: "update", update: competing }).result();
+		assert.equal(second.state, "busy", "the first writer still holds its native record lease");
+		fs.writeFileSync(gate + ".release", "go");
+		assert.equal((await first.result()).state, "written");
+		const before = fs.readFileSync(missionRecordPath(h.location, h.mission.id));
+		assert.throws(() => updateMission(h.location, h.mission.id, competing), /already resolved/);
+		assert.deepEqual(fs.readFileSync(missionRecordPath(h.location, h.mission.id)), before);
+		const current = readMission(h.location, h.mission.id);
+		assert.equal(current.decisions[0]!.closeReason, firstKind);
+		assert.equal(current.decisions[1]!.status, "open");
+		assert.equal(current.decisions[1]!.supersedes, oldId);
+		assert.equal(current.status, "needs_decision");
+	} finally { await h.cleanup(); }
+});
+
 it("computes a late completion's mission status from the locked current record", { timeout: 30_000 }, async () => {
 	const h = fixture();
 	try {

@@ -260,6 +260,37 @@ describe("mission store", () => {
 		}
 	});
 
+	it("records typed decision replacement in two non-atomic operations and supports withdrawal", () => {
+		const test = fixture();
+		try {
+			const ctx = { cwd: test.projectRoot, agentDir: test.agentDir };
+			const mission = createMission(test.location, { title: "Typed decisions", objective: "Keep replacement identity explicit", status: "active" });
+			const first = handleMissionAction("mission.update", { missionId: mission.id, missionUpdate: { decisions: [{ title: "Original question", options: ["keep", "change"] }] } }, ctx);
+			const originalId = first.details?.mission?.decisions[0]?.id;
+			assert.ok(originalId);
+			const replacement = handleMissionAction("mission.update", { missionId: mission.id, missionUpdate: { decisions: [{ title: "Replacement question", supersedes: originalId }] } }, ctx);
+			const replacementId = replacement.details?.mission?.decisions.find((decision) => decision.id !== originalId)?.id;
+			assert.ok(replacementId);
+			assert.equal(replacement.details?.mission?.decisions.find((decision) => decision.id === replacementId)?.supersedes, originalId);
+			assert.equal(replacement.details?.mission?.decisions.find((decision) => decision.id === originalId)?.status, "open");
+			assert.throws(() => handleMissionAction("mission.update", { missionId: mission.id, missionUpdate: { closeDecision: { id: originalId, reason: "superseded", resolution: "Use replacement", supersededBy: "missing-replacement" } } }, ctx), /not an open replacement/);
+			const closed = handleMissionAction("mission.update", { missionId: mission.id, missionUpdate: { closeDecision: { id: originalId, reason: "superseded", resolution: "Use replacement", supersededBy: replacementId } } }, ctx);
+			const old = closed.details?.mission?.decisions.find((decision) => decision.id === originalId);
+			const next = closed.details?.mission?.decisions.find((decision) => decision.id === replacementId);
+			assert.equal(old?.status, "resolved"); assert.equal(old?.closeReason, "superseded"); assert.equal(old?.supersededBy, replacementId);
+			assert.equal(next?.status, "open"); assert.equal(next?.supersedes, originalId);
+			assert.throws(() => handleMissionAction("mission.update", { missionId: mission.id, missionUpdate: { closeDecision: { id: originalId, reason: "withdrawn", resolution: "Again" } } }, ctx), /already resolved/);
+			const third = handleMissionAction("mission.update", { missionId: mission.id, missionUpdate: { decisions: [{ title: "Withdrawn question" }] } }, ctx);
+			const thirdId = third.details?.mission?.decisions.find((decision) => decision.title === "Withdrawn question")?.id;
+			assert.ok(thirdId);
+			const withdrawn = handleMissionAction("mission.update", { missionId: mission.id, missionUpdate: { closeDecision: { id: thirdId, reason: "withdrawn", resolution: "No longer needed" } } }, ctx);
+			const withdrawnDecision = withdrawn.details?.mission?.decisions.find((decision) => decision.id === thirdId);
+			assert.equal(withdrawnDecision?.status, "resolved"); assert.equal(withdrawnDecision?.closeReason, "withdrawn"); assert.equal(withdrawnDecision?.supersededBy, undefined);
+		} finally {
+			fs.rmSync(test.root, { recursive: true, force: true });
+		}
+	});
+
 	it("keeps planned and waiting missions in their lifecycle state while decisions are resolved", () => {
 		const test = fixture();
 		try {
