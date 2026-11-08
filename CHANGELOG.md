@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [0.86.0-fork.6] - 2026-11-08
+
+- Promote mission records containing typed decision metadata to schema 2 on an actual write, so schema-1-only runtimes reject them instead of silently erasing closure and replacement fields. Untyped missions keep schema 1; existing typed schema-1 records remain read-only byte-stable until updated by a supporting writer.
+- Keep schema-2 records at that version, preserve record/index and lease contracts, and reject unsupported versions before mutation. Older package rollback cannot read or downgrade promoted records; no historical migration, forced reload or lost-metadata reconstruction is performed.
+
 ## [0.86.0-fork.5] - 2026-11-07
 
 - Add explicit same-mission decision replacement intent and separate typed supersession/withdrawal closure through existing mission updates. Keep the two-write gap, exact-ID late-answer refusal, and unknown legacy closure reasons.
