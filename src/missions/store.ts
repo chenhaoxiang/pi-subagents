@@ -246,7 +246,9 @@ function parseReceipt(value: unknown, label: string): MissionReceipt {
 
 export function parseMissionRecord(value: unknown, source = "mission record"): MissionRecord {
 	const input = asObject(value, source);
-	if (input.schemaVersion !== 1) throw new Error(`${source}.schemaVersion must be 1`);
+	if (input.schemaVersion !== 1 && input.schemaVersion !== 2) {
+		throw new Error(`${source}.schemaVersion must be 1 or 2`);
+	}
 	if (!Array.isArray(input.runs)) throw new Error(`${source}.runs must be an array`);
 	if (input.workflowChildren !== undefined && !Array.isArray(input.workflowChildren)) throw new Error(`${source}.workflowChildren must be an array`);
 	if (!Array.isArray(input.decisions)) throw new Error(`${source}.decisions must be an array`);
@@ -266,7 +268,7 @@ export function parseMissionRecord(value: unknown, source = "mission record"): M
 	const parsedDecisions = decisions.map((item, index) => parseDecision(item, `${source}.decisions[${index}]`));
 	validateDecisionRelations(parsedDecisions, `${source}.decisions`);
 	return {
-		schemaVersion: 1,
+		schemaVersion: input.schemaVersion,
 		id: validateMissionId(input.id, `${source}.id`),
 		title: requiredString(input.title, `${source}.title`),
 		objective,
@@ -390,7 +392,13 @@ function indexPath(location: MissionStoreLocation, record: MissionRecord): strin
 }
 
 function writeMission(location: MissionStoreLocation, record: MissionRecord): MissionRecord {
-	const validated = parseMissionRecord(record);
+	const parsed = parseMissionRecord(record);
+	const hasTypedDecisionMetadata = parsed.decisions.some((decision) => decision.closeReason !== undefined || decision.supersedes !== undefined || decision.supersededBy !== undefined);
+	// Schema 2 is a write fence: fork.4 must reject this record instead of parsing
+	// it and silently dropping typed fields during an unrelated update.
+	const validated = parsed.schemaVersion === 2 || hasTypedDecisionMetadata
+		? { ...parsed, schemaVersion: 2 as const }
+		: parsed;
 	writePrivateAtomicJson(missionRecordPath(location, validated.id), validated);
 	if (location.writeGlobalIndex) {
 		const lastRunId = validated.runs.at(-1)?.runId;

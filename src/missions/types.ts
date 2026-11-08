@@ -108,7 +108,8 @@ export interface MissionReceipt {
 }
 
 export interface MissionRecord {
-	schemaVersion: 1;
+	/** Typed decision metadata requires schema 2 so schema-1-only writers reject it. */
+	schemaVersion: 1 | 2;
 	id: string;
 	title: string;
 	objective: string;
