@@ -232,12 +232,21 @@ jobs:
           sudo apt-get -o Dir::Etc::sourceparts=- install -y bubblewrap
       - name: Provision the checksum-pinned official binary
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           url="$(node -p 'require("./test/smoke/standalone-release.json").url')"
           sha="$(node -p 'require("./test/smoke/standalone-release.json").archiveSha256')"
           mkdir -p "$RUNNER_TEMP/pi-official"
-          curl --fail --location --retry 3 "$url" --output "$RUNNER_TEMP/pi-official/release.tar.gz"
+          # The web download can return repeated gateway errors before tests start.
+          # Both transports fetch the same pinned official asset; only transport failure falls back.
+          if ! curl --fail --location --connect-timeout 30 --max-time 180 --retry 3 --retry-delay 15 --retry-max-time 300 "$url" --output "$RUNNER_TEMP/pi-official/release.tar.gz"; then
+            timeout --kill-after=10s 180s gh release download "v$(node -p 'require("./test/smoke/standalone-release.json").version')" \
+              --repo earendil-works/pi --pattern pi-linux-x64.tar.gz \
+              --output "$RUNNER_TEMP/pi-official/release-api.tar.gz"
+            mv "$RUNNER_TEMP/pi-official/release-api.tar.gz" "$RUNNER_TEMP/pi-official/release.tar.gz"
+          fi
           printf '%s  %s\n' "$sha" "$RUNNER_TEMP/pi-official/release.tar.gz" | sha256sum --check -
           tar -xzf "$RUNNER_TEMP/pi-official/release.tar.gz" -C "$RUNNER_TEMP/pi-official"
       - name: Complete isolated official binary matrix
