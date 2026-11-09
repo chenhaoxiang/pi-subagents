@@ -172,5 +172,27 @@ async function startPlacedPiSession<C extends PlacementSockets>(launch: ChildSes
 function createPlacedPiSession(launch: ChildSessionLaunch): Promise<ChildSession> { return launch.machine?.provider === "rex" ? createRexPiSession(launch) : createHerdrPiSession(launch); }
 
 export function createPlacementAwareChildSessionFactory(local: ChildSessionFactory, createRemote: (launch: ChildSessionLaunch) => Promise<ChildSession> = createPlacedPiSession): ChildSessionFactory {
-	const remote = new Map<ChildSession, string | undefined>(); return { async create(launch) { if (!launch.machine) return local.create(launch); serializeHerdrPiLaunch(launch); const child = await createRemote(launch); remote.set(child, launch.parentSessionFile); return child; }, async dispose() { await Promise.allSettled([...remote.keys()].map((child) => child.dispose())); remote.clear(); await local.dispose(); }, async disposeForParent(parentSessionFile: string | undefined) { const matching = [...remote].filter(([, parent]) => parent === parentSessionFile).map(([child]) => child); await Promise.allSettled(matching.map((child) => child.dispose())); for (const child of matching) remote.delete(child); await local.disposeForParent(parentSessionFile); } };
+	const remote = new Map<ChildSession, string | undefined>();
+	const disposeRemote = async (matches: (parent: string | undefined) => boolean) => {
+		const attached = [...remote].filter(([child, parent]) => !child.detached && matches(parent)).map(([child]) => child);
+		await Promise.allSettled(attached.map((child) => child.dispose()));
+		for (const child of attached) remote.delete(child);
+	};
+	return {
+		async create(launch) {
+			if (!launch.machine) return local.create(launch);
+			serializeHerdrPiLaunch(launch);
+			const child = await createRemote(launch);
+			remote.set(child, launch.parentSessionFile);
+			return child;
+		},
+		async dispose() {
+			await disposeRemote(() => true);
+			await local.dispose();
+		},
+		async disposeForParent(parentSessionFile: string | undefined) {
+			await disposeRemote((parent) => parent === parentSessionFile);
+			await local.disposeForParent(parentSessionFile);
+		},
+	};
 }

@@ -25,7 +25,7 @@ const script = String.raw`
 	const { setChildSessionFactory } = await import("./src/runs/shared/child-session.ts");
 	const { createEventBus } = await import("@earendil-works/pi-coding-agent");
 	const events = createEventBus();
-	const parentSessionFile = path.join(projectRoot, "parent-session.jsonl");
+	const parentSessionFile = process.env.PI_SUBAGENTS_TEST_FILELESS === "1" ? undefined : path.join(projectRoot, "parent-session.jsonl");
 	const scripted = {
 		async create() { throw new Error("scripted factory: create must not run in this test"); },
 		async dispose() { calls.push(["dispose"]); },
@@ -47,7 +47,7 @@ const script = String.raw`
 				getSessionFile() { return parentSessionFile; },
 				getEntries() { return []; },
 			},
-			modelRegistry: { getAvailable() { return []; } },
+			modelRegistry: { getAvailable() { return []; }, getAll() { return []; } },
 		};
 		registerSubagentExtension(pi);
 		for (const handler of handlers.get("session_start") ?? []) await handler({ reason: "startup" }, ctx);
@@ -58,7 +58,7 @@ const script = String.raw`
 	}
 `;
 
-function runScript(root: string): Array<[string, unknown?]> {
+function runScript(root: string, fileless = false): Array<[string, unknown?]> {
 	const result = spawnSync(process.execPath, ["--experimental-strip-types", "--input-type=module", "--eval", script], {
 		cwd: process.cwd(),
 		encoding: "utf-8",
@@ -69,6 +69,7 @@ function runScript(root: string): Array<[string, unknown?]> {
 			TMPDIR: root, TMP: root, TEMP: root,
 			PI_SUBAGENT_CHILD: undefined,
 			PI_SUBAGENTS_TEST_NO_OWNER: "1",
+			PI_SUBAGENTS_TEST_FILELESS: fileless ? "1" : "0",
 		},
 		timeout: 10_000,
 	});
@@ -85,5 +86,10 @@ describe("session_shutdown disposal scope", () => {
 		assert.equal(scoped.length, 1, `exactly one scoped dispose, got: ${JSON.stringify(calls)}`);
 		assert.ok(String(scoped[0]?.[1]).endsWith("parent-session.jsonl"), `scoped to this session's file, got: ${scoped[0]?.[1]}`);
 		assert.equal(global.length, 0, "the whole-process dispose must not run on session_shutdown");
+	});
+
+	it("passes an explicit file-less scope instead of escalating it to whole-process disposal", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-shutdown-fileless-fixture-"));
+		assert.deepEqual(runScript(root, true), [["disposeForParent", null]], "undefined stays the file-less scope (serialized as null)");
 	});
 });
