@@ -12,11 +12,11 @@ This repository is the maintained fork at:
 
 <https://github.com/chenhaoxiang/pi-subagents>
 
-It tracks the community project selectively and keeps fork-specific behavior on the fork's `main` line. The current source candidate is `0.86.0-fork.6`, based on community `main` through `fd6d45b31bcc2412d3aca9f4230be979e95b0a96` (community v0.86.0), retaining same-owner mission continuity and serialized mission updates while requiring explicit matching provenance for automatic mission completion. The previous published release is `0.86.0-fork.5`. Typed mission decisions now use a schema-2 write fence; previous releases cannot read or rewrite promoted records, so package rollback is not a record downgrade (see [missions](docs/missions.md)).
+It tracks the community project selectively and keeps fork-specific behavior on the fork's `main` line. The current source candidate is `0.86.0-fork.7`, based on community `main` through `fd6d45b31bcc2412d3aca9f4230be979e95b0a96` (community v0.86.0), retaining same-owner mission continuity and serialized mission updates while requiring explicit matching provenance for automatic mission completion. This revision also ports the provider-identity fix from published community v0.87.0 without importing that release wholesale. The previous published release is `0.86.0-fork.6`. Mission schema-2 records remain supported; packages older than fork.6 cannot read or rewrite them. Rolling back to fork.6 retains record-format support but loses the provider-identity fix (see [missions](docs/missions.md)).
 
 ## Releases and branch policy
 
-The source candidate is **0.86.0-fork.6**, based on community **0.86.0** and the exact main snapshot above; **0.86.0-fork.5** remains available with the record-format limitation above. Fork releases use `<community-version>-fork.<revision>`; the fork revision increases without pretending to be a new upstream release.
+The source candidate is **0.86.0-fork.7**, based on community **0.86.0** and the exact main snapshot above, plus the scoped provider-identity repair; **0.86.0-fork.6** remains available with the rollback limitation above. Fork releases use `<community-version>-fork.<revision>`; the fork revision increases without pretending to be a new upstream release.
 
 - `main`: our maintained integration and release branch, including fork fixes.
 - `upstream-main`: an exact mirror of the community's `main`, with no fork commits. Never install from this branch.
@@ -25,7 +25,7 @@ The source candidate is **0.86.0-fork.6**, based on community **0.86.0** and the
 Install a reproducible release:
 
 ```bash
-pi install git:github.com/chenhaoxiang/pi-subagents@v0.86.0-fork.6
+pi install git:github.com/chenhaoxiang/pi-subagents@v0.86.0-fork.7
 ```
 
 [GitHub Releases](https://github.com/chenhaoxiang/pi-subagents/releases) include the installable package tarball, a provenance manifest, and `SHA256SUMS`. These GitHub releases are not npm publications under the upstream author's namespace. See [release maintenance](docs/releasing.md) for asset installation and future releases.
