@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+- Bind durable wait subscriptions to their arming process, allow proven-dead-owner takeover through exclusive claims, and let only the record-removal winner deliver a wake. Ported from community #3205 by [@MidoriKurage](https://github.com/MidoriKurage).
+- Fence owner-bound waits as record version 2. Older readers ignore them; supporting readers leave legacy v1 records untouched instead of competing with old in-memory writers. Native ownership is required before arming, with no history migration or underlying operation replay.
+
 ## [0.86.0-fork.8] - 2026-11-09
 
 - Keep detached remote children out of factory disposal and release their factory reference after individual terminal disposal; existing runtime-owned control cleanup remains unchanged.
