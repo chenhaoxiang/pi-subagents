@@ -1,3 +1,14 @@
+---
+doc_type: reference
+project: workspace
+status: active
+truth_mode: maintained
+created: 2026-08-06
+verified: 2026-11-09
+verified_by: manual
+verification_scope: Parent-scoped child shutdown and provider-free regressions; unrelated API sections not revalidated
+---
+
 # Extension and integration APIs
 
 Public seams for other Pi extensions and host integrations: the in-process RPC, the structured delegation API, launch preflight, capability ceilings, the background-work provider contract, and the Herdr integration.
@@ -496,6 +507,8 @@ Local foreground children never load the parent's ambient extensions: they share
 The runner hosts many child sessions in one process and keeps working after each one ends: a background child's extensions see `session_shutdown` with reason `"quit"` in print mode, but the process does not exit with it. An extension that acts on process exit at that point (for example by force-exiting a headless run) should first check `process.env.PI_SUBAGENT_RUNNER_PID === String(process.pid)`, which is true only inside the runner. `PI_SUBAGENT_CHILD=1` cannot make that distinction: processes spawned from a child, such as a headless `pi` started by its bash tool, inherit both variables but have their own pid.
 
 A local foreground child ends the same way, but it runs inside the parent Pi process, which is not a runner and sets no marker. An extension configured into a foreground child (through the agent's `extensions` or `subagentOnlyExtensions`) must not act on process exit at `session_shutdown`.
+
+In a multi-session host, pi-subagents scopes `session_shutdown` to attached children launched by that parent's exact session file, captured before its runtime cleanup clears the file. An absent file is an explicit file-less scope, not permission to dispose every parent's children. The injectable child factory's `disposeForParent(parentSessionFile)` preserves this scope through local sessions, MCP startup waits and placement wrappers; whole-process `dispose()` remains separate for runner exit. Detached children are excluded from both factory disposal scopes, including remote bridge wrappers; their own terminal disposal releases the factory reference. Existing runtime-owned control cleanup is unchanged. This does not guarantee survival of runtime replacement or an actual host-process exit, or authorize replaying an interrupted run.
 
 ## External job provider bridge
 
