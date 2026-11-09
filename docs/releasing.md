@@ -4,8 +4,9 @@ project: workspace
 status: active
 truth_mode: maintained
 created: 2026-10-06
-verified: 2026-10-06
+verified: 2026-11-09
 verified_by: manual
+verification_scope: Candidate identity and release contract; publication and active-session loading require separate acceptance
 ---
 
 # Release maintenance
@@ -22,7 +23,7 @@ Applies only to chenhaoxiang/pi-subagents. The community project remains [nicoba
 
 ## Baseline for this release
 
-The current source candidate is **0.86.0-fork.7**, based on community version **0.86.0** through `fd6d45b31bcc2412d3aca9f4230be979e95b0a96`, retaining same-owner mission continuity and serialized record updates while requiring explicit matching provenance for automatic mission completion. Typed decision writes now promote mission records to schema 2 so older writers reject rather than erase them. This revision ports only the provider-identity repair from published v0.87.0 (`5c9d743ee8d5db9a4af05ef9b2c7afe26caf9656`); it is not a full community-version upgrade. Previous published **0.86.0-fork.6** remains available and supports schema 2, but rollback loses this provider-identity guard. Versions older than fork.6 cannot read or update promoted records; package rollback does not downgrade those records. Unchanged reads do not migrate existing records. See [missions](missions.md) for this narrow format boundary. Community support starts at Pi 1.2.0; the fork retains guarded model fallback, idle-timeout, runner/host compatibility, native-child evidence and unknown async-run recovery while carrying the 0.84 workflow-script security and retention fixes. See [the 0.84 synchronization report](maintenance/2026-10-30-community-0.84.0.md) for retained contracts and provider-free validation. Exact publication, fresh-download and installed-byte acceptance are recorded by the matching immutable Release; source metadata alone is not proof of runtime activation.
+The current source candidate is **0.86.0-fork.8**, based on community version **0.86.0** through `fd6d45b31bcc2412d3aca9f4230be979e95b0a96`, retaining same-owner mission continuity, serialized record updates, explicit acceptance provenance and schema-2 typed decisions. It retains the provider-identity repair (`5c9d743ee8d5db9a4af05ef9b2c7afe26caf9656`) and ports parent-scoped shutdown (`7ec2765b65b9ae109678e82d17b0df629d627267`) from published v0.87.0, with detached-placement preservation and completed-child reference cleanup. This is not a full community-version upgrade. Previous published **0.86.0-fork.7** remains available; rollback retains schema-2 and provider-identity support but loses the parent-shutdown and placement-cleanup fixes. Versions older than fork.6 cannot read or update promoted records; package rollback does not downgrade them. Unchanged reads do not migrate existing records. See [missions](missions.md) for the format boundary and [extension APIs](extension-api.md) for the factory-versus-runtime shutdown boundary. Community support starts at Pi 1.2.0; guarded model fallback, idle timeout, runner/host compatibility, native-child evidence and unknown async-run recovery remain. Exact publication, fresh-download and installed-source acceptance are recorded by the matching immutable Release; source metadata is not proof of runtime activation.
 
 ## Publish every version
 
