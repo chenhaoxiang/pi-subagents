@@ -12,11 +12,11 @@ This repository is the maintained fork at:
 
 <https://github.com/chenhaoxiang/pi-subagents>
 
-It tracks the community project selectively and keeps fork-specific behavior on the fork's `main` line. The current source candidate is `0.86.0-fork.9`, based on community `main` through `fd6d45b31bcc2412d3aca9f4230be979e95b0a96` (community v0.86.0). It retains mission/schema-2, provider-identity and parent-shutdown repairs, and ports durable wait ownership from published v0.87.0 with an explicit record-v2 fence, conservative claim recovery and batched cleanup; this is not a full v0.87.0 synchronization. New explicit waits require native process ownership. Supporting readers leave legacy v1 waits untouched; no in-place migration is performed. The previous published release is `0.86.0-fork.8`, which retains prior repairs but cannot consume pending v2 wait subscriptions. Rollback does not downgrade records; inspect exact run status rather than replaying the task. See [waitTool](docs/configuration.md#waittool) and [missions](docs/missions.md) for separate format boundaries.
+It tracks the community project selectively and keeps fork-specific behavior on the fork's `main` line. The current source candidate is `0.86.0-fork.10`, based on community `main` through `fd6d45b31bcc2412d3aca9f4230be979e95b0a96` (community v0.86.0), retaining the selected published v0.87.0 repairs without claiming a full synchronization. This revision isolates individual wait-claim unlink failures: later files in the same snapshot are still cleaned before the first error is reported. Native process ownership, strict wait-record v2, mission/schema-2, provider and parent-shutdown repairs remain unchanged. Previous release `0.86.0-fork.9` supports the same formats but lacks this cleanup-error isolation. Fork.8 and earlier cannot consume v2 waits; supporting readers leave legacy v1 waits untouched. No record downgrade, migration or underlying task replay occurs. See [waitTool](docs/configuration.md#waittool) and [missions](docs/missions.md) for the distinct format boundaries.
 
 ## Releases and branch policy
 
-The source candidate is **0.86.0-fork.9**, based on community **0.86.0** and the exact snapshot above, plus selected published stable repairs; **0.86.0-fork.8** remains available with the wait-record rollback limitation above. Fork releases use `<community-version>-fork.<revision>`; the fork revision increases without pretending to be a new upstream release.
+The source candidate is **0.86.0-fork.10**, based on community **0.86.0** and the exact snapshot above, plus selected stable repairs; **0.86.0-fork.9** remains available with the cleanup-error limitation above. Fork releases use `<community-version>-fork.<revision>`; the fork revision increases without pretending to be a new upstream release.
 
 - `main`: our maintained integration and release branch, including fork fixes.
 - `upstream-main`: an exact mirror of the community's `main`, with no fork commits. Never install from this branch.
@@ -25,7 +25,7 @@ The source candidate is **0.86.0-fork.9**, based on community **0.86.0** and the
 Install a reproducible release:
 
 ```bash
-pi install git:github.com/chenhaoxiang/pi-subagents@v0.86.0-fork.9
+pi install git:github.com/chenhaoxiang/pi-subagents@v0.86.0-fork.10
 ```
 
 [GitHub Releases](https://github.com/chenhaoxiang/pi-subagents/releases) include the installable package tarball, a provenance manifest, and `SHA256SUMS`. These GitHub releases are not npm publications under the upstream author's namespace. See [release maintenance](docs/releasing.md) for asset installation and future releases.

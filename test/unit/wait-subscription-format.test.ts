@@ -153,6 +153,62 @@ describe("wait subscription record format fence", () => {
 		} finally { f.dispose(); }
 	});
 
+	for (const mode of ["settled", "foreign-expiry"] as const) {
+		it(`isolates a claim unlink failure from later claims during ${mode}`, (t) => {
+			const f = fixture();
+			try {
+				const owner = f.open("owner-a");
+				const first = owner.manager.arm(input);
+				const second = owner.manager.arm(input);
+				const claimNames = [first.token + ".claim-a.1", first.token + ".claim-b.1", second.token + ".claim-a.1"];
+				const claimFiles = claimNames.map(name => path.join(f.subscriptionsDir, name));
+				for (const file of claimFiles) fs.writeFileSync(file, "{}");
+				const legacyFile = path.join(f.subscriptionsDir, "11111111-1111-4111-8111-111111111111.json");
+				const legacyBytes = JSON.stringify({ version: 1, token: path.basename(legacyFile, ".json"), sessionId: "legacy-session", ...input, createdAt: 0, expiresAt: 1 });
+				fs.writeFileSync(legacyFile, legacyBytes);
+				if (mode === "foreign-expiry") owner.state.currentSessionId = "other-session";
+				f.setNow(mode === "foreign-expiry" ? 2 * 86400000 : 2_000);
+				const readdir = fsDefault.readdirSync, unlink = fsDefault.unlinkSync;
+				const failure = Object.assign(new Error("injected first claim unlink denied"), { code: "EACCES" });
+				const attempts: string[] = [], errors: unknown[][] = [];
+				let scans = 0;
+				t.mock.method(fsDefault, "readdirSync", (dir: fs.PathLike, ...rest: unknown[]) => {
+					const files = (readdir as (...args: unknown[]) => string[])(dir, ...rest);
+					if (dir !== f.subscriptionsDir) return files;
+					scans++;
+					return [...claimNames.filter(name => files.includes(name)), ...files.filter(name => !claimNames.includes(name))];
+				});
+				t.mock.method(fsDefault, "unlinkSync", (file: fs.PathLike) => {
+					if (typeof file === "string" && file.includes(".claim-")) {
+						const token = path.basename(file).split(".claim-")[0]!;
+						assert.equal(fs.existsSync(path.join(f.subscriptionsDir, token + ".json")), false, "record removal must precede claim cleanup");
+						attempts.push(file);
+						if (file === claimFiles[0]) throw failure;
+					}
+					return unlink(file);
+				});
+				t.mock.method(console, "error", (...args: unknown[]) => { errors.push(args); });
+				syncBuiltinESMExports();
+				try { owner.manager.reconcile(); }
+				finally { t.mock.restoreAll(); syncBuiltinESMExports(); }
+				t.diagnostic(JSON.stringify({ mode, claimAttempts: attempts.length, scans, notices: f.sent.length, loggedErrors: errors.length }));
+				assert.equal(fs.existsSync(claimFiles[0]!), true, "the failed file is retained, not silently removed");
+				assert.equal(fs.existsSync(claimFiles[1]!), false, "later same-token claims still get cleaned");
+				assert.equal(fs.existsSync(claimFiles[2]!), false, "unrelated removed-token claims still get cleaned");
+				assert.deepEqual(attempts, claimFiles, "one attempt per claim, with no added retry loop");
+				assert.equal(scans, 1, "keep a single batch snapshot, including the error path");
+				assert.equal(errors.length, 1);
+				assert.ok(errors[0]?.includes(failure), "the original cleanup error remains observable");
+				assert.equal(f.sent.length, mode === "settled" ? 2 : 0);
+				assert.equal(fs.existsSync(path.join(f.subscriptionsDir, first.token + ".json")), false);
+				assert.equal(fs.existsSync(path.join(f.subscriptionsDir, second.token + ".json")), false);
+				assert.equal(fs.readFileSync(legacyFile, "utf8"), legacyBytes);
+				owner.manager.reconcile();
+				assert.equal(f.sent.length, mode === "settled" ? 2 : 0, "cleanup failure must not add duplicate wakes");
+			} finally { f.dispose(); }
+		});
+	}
+
 	it("does not infer death from an unreadable process state", () => {
 		const f = fixture();
 		try {

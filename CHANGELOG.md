@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+## [0.86.0-fork.10] - 2026-11-09
+
+- Continue cleaning later wait-subscription claim files after an individual unlink failure, then report the first error. Preserve the existing single-snapshot batch, record-before-claim ordering, notification count and legacy-v1 boundary; no retry worker is added.
+
 ## [0.86.0-fork.9] - 2026-11-09
 
 - Bind durable wait subscriptions to their arming process, allow proven-dead-owner takeover through exclusive claims, and let only the record-removal winner deliver a wake. Ported from community #3205 by [@MidoriKurage](https://github.com/MidoriKurage).

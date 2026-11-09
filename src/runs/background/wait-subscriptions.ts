@@ -124,15 +124,18 @@ function removeClaimFiles(dir: string, tokens: ReadonlySet<string>, files?: read
 		try { snapshot = fs.readdirSync(dir); }
 		catch (error) { if (isNotFound(error)) return; throw error; }
 	}
+	let failure: { error: unknown } | undefined;
 	for (const file of snapshot) {
 		const separator = file.indexOf(".claim-");
 		if (separator < 0 || !tokens.has(file.slice(0, separator))) continue;
 		try {
 			fs.unlinkSync(path.join(dir, file));
 		} catch (error) {
-			if (!isNotFound(error)) throw error;
+			if (!isNotFound(error)) failure ??= { error };
 		}
 	}
+	// Finish the snapshot, then report the first error without retaining an unbounded error list.
+	if (failure) throw failure.error;
 }
 
 export function formatWaitSubscriptions(state: Pick<SubagentState, "waitSubscriptions">, now = Date.now()): string | undefined {
