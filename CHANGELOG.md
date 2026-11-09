@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+## [0.86.0-fork.8] - 2026-11-09
+
+- Keep detached remote children out of factory disposal and release their factory reference after individual terminal disposal; existing runtime-owned control cleanup remains unchanged.
+- Make the official standalone CI asset fetch resilient to bounded gateway failures by falling back to the same pinned GitHub Release asset through the API, with mandatory SHA-256 verification before extraction.
 - Scope in-process child shutdown to the exact launching parent's session file, including an explicit file-less scope; preserve detached children and whole-process disposal. Ported from community #3204 by [@Jarcis-cy](https://github.com/Jarcis-cy).
 
 ## [0.86.0-fork.7] - 2026-11-09
