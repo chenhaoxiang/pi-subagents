@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
+import { runInNewContext } from "node:vm";
 import { afterEach, test } from "node:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -73,8 +74,31 @@ function captureCommand(command: string, cwd: string): Promise<string> {
 }
 
 function writeCaptureOrca(dir: string): string {
-	return writeNodeCommand(dir, "orca", "require('fs').writeFileSync(process.env.ORCA_TEST_CAPTURE, JSON.stringify(process.argv.slice(2)))");
+	return writeNodeCommand(dir, "orca", "const fs=require('fs'),capture=process.env.ORCA_TEST_CAPTURE,temp=capture+'.tmp';fs.writeFileSync(temp,JSON.stringify(process.argv.slice(2)));fs.renameSync(temp,capture)");
 }
+
+test("capture fixture publishes complete JSON before the target becomes visible", { skip: process.platform === "win32" ? "Orca progress tabs are not supported on Windows" : undefined }, () => {
+	const dir = tempDir();
+	const capture = path.join(dir, "capture.json");
+	const fakeOrca = writeCaptureOrca(dir);
+	let incompleteVisible = false;
+	const fixtureFs = {
+		writeFileSync(file: string, content: string) {
+			// Hold the writer at the create/truncate boundary deterministically,
+			// where a different process's waitForFile can already observe the path.
+			fs.writeFileSync(file, "");
+			incompleteVisible ||= fs.existsSync(capture);
+			fs.writeFileSync(file, content);
+		},
+		renameSync: fs.renameSync,
+	};
+	runInNewContext(fs.readFileSync(fakeOrca, "utf8").replace(/^#![^\n]*\n/, ""), {
+		require: (name: string) => { assert.equal(name, "fs"); return fixtureFs; },
+		process: { env: { ORCA_TEST_CAPTURE: capture }, argv: ["node", fakeOrca, "terminal", "create"] },
+	});
+	assert.equal(incompleteVisible, false, "the ready path must not expose an empty/incomplete capture");
+	assert.deepEqual(JSON.parse(fs.readFileSync(capture, "utf8")), ["terminal", "create"]);
+});
 
 function shellQuote(value: string): string {
 	return `'${value.replace(/'/g, `'"'"'`)}'`;
@@ -513,6 +537,8 @@ test("queued same-worktree creates start their timeout when the predecessor beco
 	assert.ok(second);
 	assert.ok(third);
 	await waitForFile(thirdCapture, 35_000);
+	// The capture is written before the final order entry and lock removal.
+	await Promise.all([first.creationSettled, second.creationSettled, third.creationSettled]);
 	assert.equal(fs.existsSync(overlap), false, "same-worktree Orca create invocations overlapped");
 	const events = fs.readFileSync(order, "utf-8").trim().split("\n");
 	assert.deepEqual(events, [
