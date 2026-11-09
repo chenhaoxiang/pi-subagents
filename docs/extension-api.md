@@ -6,7 +6,7 @@ truth_mode: maintained
 created: 2026-08-06
 verified: 2026-11-09
 verified_by: manual
-verification_scope: Parent-scoped child shutdown and provider-free regressions; unrelated API sections not revalidated
+verification_scope: Parent-scoped shutdown and durable wait ownership/record cutover; unrelated API sections not revalidated
 ---
 
 # Extension and integration APIs
@@ -675,6 +675,8 @@ The API returns discriminated structured results with canonical project root, bi
 A host that embeds this extension owns whether completion wakes can be delivered at all.
 
 Ordinary async and foreground completion wakes use `registerSubagentNotify` and `sendCompletion`. They listen for completion events and deliver through `pi.sendMessage(..., { triggerTurn })`. When the parent is idle, every pi-subagents notice that should start a turn (completions, supervisor asks, control and steering notices, wait subscriptions) starts the run itself with `triggerTurn: true`; Pi runs `before_agent_start` for that run, so extension-set system prompt sections stay in it. Each such notice ends with what the parent should do (for completions, `Parent action: ...`), and no separate user message is sent. If another extension's wake (pi-intercom's, through the shared `Symbol.for("pi.idle-wake.v1")` reservation) is already starting the run, the notice is appended without a turn and that run picks it up. A busy parent still gets the notice as a steering message. After the user aborts a parent run in a host with a UI, these notices are only appended, with no turn, until the next parent run starts. Session shutdown stops the result watcher and disposes this completion notifier. `createWaitSubscriptionManager` is separate: it is the explicit non-blocking `bg_wait` subscription path for work without native notification, not the ordinary completion wake path.
+
+Explicit durable waits use process-owned record v2, proven-dead-only takeover and an exclusive-removal wake. Legacy v1 records are not migrated or consumed by supporting readers. See [waitTool ownership and rollback boundaries](configuration.md#waittool); this never authorizes replaying the underlying task.
 
 Each completion notice is a custom message with `customType: "subagent-notify"`. Its `content` is the text the model reads. Pi does not send `details` to the model, so hosts can use it to match a notice to its runs by id without parsing the text. `details.runs` has one entry per finished run, in the order of the notice. A grouped notice has several entries. Each entry has `agent` and `status` (`completed`, `failed`, `paused` or `stopped`). When known, an entry also has these fields:
 

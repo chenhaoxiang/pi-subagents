@@ -1,3 +1,14 @@
+---
+doc_type: reference
+project: workspace
+status: active
+truth_mode: maintained
+created: 2026-08-06
+verified: 2026-11-09
+verified_by: manual
+verification_scope: Durable wait ownership and record-format cutover; unrelated configuration sections not revalidated
+---
+
 # Configuration
 
 `pi-subagents` reads optional JSON config from `~/.pi/agent/extensions/subagent/config.json`. This page lists every key, plus the environment variables and the settings-file keys that affect config resolution.
@@ -403,6 +414,10 @@ Blocking `bg_wait({ id: "..." })` keeps the current tool call open until that ru
 `nonBlocking: true` cannot be combined with `timeoutMs`. It already returns immediately; a short `timeoutMs` is not a return-time budget. The runtime rejects that combination before arming any subscription, rather than creating a short-lived subscription that wakes the parent again with an expiry notice. To subscribe, call `bg_wait({ id: "...", nonBlocking: true })`; its lifetime comes from the configured/default window above. The registration result shows the actual subscription window. If the window expires, the subscription ends but the targeted run is not stopped or marked failed. Inspect its status before taking any follow-up action; do not re-arm short subscriptions as a polling loop.
 
 This is different from `waitTool.enabled=false`, which returns immediately without registering any future wake. Provider items remain available only to blocking fleet-wide waits; non-blocking subscriptions require one async or remembered detached foreground run id.
+
+Owner-bound subscriptions use **record version 2**, with the native completion-owner id and recorded process identity. A second Pi process on the same saved session does not adopt a live or unknown owner's subscription; a proven-dead owner can be replaced through an exclusive generation claim. Only the process that removes the record sends its wake. Arming without a native completion-owner identity is rejected before any record is written.
+
+**Mixed-version boundary:** fork.8 and earlier readers understand only version 1 and leave version-2 records alone. This supporting runtime does not restore, migrate, deliver or prune legacy version-1 subscriptions: an old runtime may already hold one in memory, so adding fields or rewriting its version cannot safely establish ownership. Old runtimes can finish their own legacy waits. If that runtime is gone, inspect the exact run status and explicitly re-arm an authorized wait if needed; do not replay the underlying operation. Rolling back to a version-1-only package does not consume pending version-2 waits. No real subscription migration or forced session reload is performed.
 
 Regression coverage is in `test/unit/bg-wait-timeout-contract.test.ts`: synthetic clocks verify the unconfigured 60-minute window without waiting an hour; conflicting non-blocking arguments are rejected before arming, and config/environment overrides and explicit short blocking windows remain supported. Local candidate validation on 2026-10-05 (Node 26.9.0): 9 wait/schema/auto-drain test files had 166 passes, 1 existing skip, and 0 failures; native tool-activation smoke, typecheck, package build, and the new test's lint check passed. An optional whole-file lint check still reported the same 74 findings as the unchanged base, with no added findings; this is not a claim that the repository-wide lint or full test suite passes. Candidate validation does not update the installed extension or active Pi sessions: after integrating/installing the change, reload or restart the parent before relying on the new contract.
 

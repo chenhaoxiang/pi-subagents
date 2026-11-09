@@ -2375,9 +2375,14 @@ export interface ForegroundRunControl {
 }
 
 export interface WaitSubscriptionRecord {
-	version: 1;
+	/** Version 2 fences owner-bound records from legacy version-1-only readers. */
+	version: 2;
 	token: string;
 	sessionId: string;
+	/** Native process identity of the arming runtime; legacy records are not promoted on restore. */
+	completionOwnerId: string;
+	/** A different owner may claim the subscription only after this process is proven dead. */
+	completionOwnerProcess: RecordedPid;
 	targetKind: "async" | "foreground";
 	runId: string;
 	requestedId: string;

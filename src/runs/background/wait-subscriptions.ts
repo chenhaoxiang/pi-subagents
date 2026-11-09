@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { listAsyncRuns, type AsyncRunSummary } from "./async-status.ts";
 import { formatResumeFirstFailedRunDetail } from "./resume-guidance.ts";
@@ -19,8 +19,12 @@ import {
 	type WaitCompletion,
 	type WaitSubscriptionRecord,
 } from "../../shared/types.ts";
+import { currentBootId, currentRecordedPid } from "./boot-id.ts";
+import { currentPidNamespaceScope } from "./pid-namespace.ts";
+import { checkRecordedPidLiveness, isRecordedPid } from "./stale-run-reconciler.ts";
+import { createClaimFile } from "../../workflows/workflow-resume-claim.ts";
 
-const SUBSCRIPTION_VERSION = 1;
+const OWNED_SUBSCRIPTION_VERSION = 2;
 // Outcomes that report no saved results, so the notice points the parent at the run status instead.
 const STATUS_OUTCOMES = new Set(["timed out", "could not be reconciled", "needs attention", "reconciliation failed"]);
 const RECONCILE_INTERVAL_MS = 1_000;
@@ -70,10 +74,12 @@ function isNotFound(error: unknown): boolean {
 function parseRecord(value: unknown): WaitSubscriptionRecord | undefined {
 	if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
 	const record = value as Partial<WaitSubscriptionRecord>;
-	if (record.version !== SUBSCRIPTION_VERSION
+	if (record.version !== OWNED_SUBSCRIPTION_VERSION
 		|| typeof record.token !== "string"
 		|| !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(record.token)
 		|| typeof record.sessionId !== "string"
+		|| typeof record.completionOwnerId !== "string" || record.completionOwnerId.length === 0
+		|| !isRecordedPid(record.completionOwnerProcess)
 		|| (record.targetKind !== "async" && record.targetKind !== "foreground")
 		|| typeof record.runId !== "string"
 		|| typeof record.requestedId !== "string"
@@ -88,6 +94,45 @@ function needsAttention(run: AsyncRunSummary): boolean {
 
 function subscriptionFile(dir: string, token: string): string {
 	return path.join(dir, `${token}.json`);
+}
+
+/**
+ * Takeover claims are `<token>.claim-<owner hash>.<generation>`, not `.json`, so record scans skip them.
+ * Each generation is created exclusively, so one process takes over from a dead owner per generation;
+ * a dead claimant's generation is superseded by the next one.
+ */
+function claimPrefix(token: string, replacedOwnerId: string): string {
+	return `${token}.claim-${createHash("sha256").update(replacedOwnerId).digest("hex").slice(0, 16)}.`;
+}
+
+function latestClaimGeneration(files: readonly string[], prefix: string): number {
+	let latest = 0;
+	for (const file of files) {
+		const generation = file.startsWith(prefix) ? file.slice(prefix.length) : "";
+		// Exact digits only: leftover `<claim>.<pid>.<uuid>.tmp` files from a crashed create are not generations.
+		if (/^[1-9][0-9]*$/.test(generation)) latest = Math.max(latest, Number(generation));
+	}
+	return latest;
+}
+
+/** Call only after the record file is gone, so a late claimer that wins a freed claim finds no record to bring back. */
+function removeClaimFiles(dir: string, tokens: ReadonlySet<string>, files?: readonly string[]): void {
+	if (tokens.size === 0) return;
+	let snapshot: readonly string[];
+	if (files) snapshot = files;
+	else {
+		try { snapshot = fs.readdirSync(dir); }
+		catch (error) { if (isNotFound(error)) return; throw error; }
+	}
+	for (const file of snapshot) {
+		const separator = file.indexOf(".claim-");
+		if (separator < 0 || !tokens.has(file.slice(0, separator))) continue;
+		try {
+			fs.unlinkSync(path.join(dir, file));
+		} catch (error) {
+			if (!isNotFound(error)) throw error;
+		}
+	}
 }
 
 export function formatWaitSubscriptions(state: Pick<SubagentState, "waitSubscriptions">, now = Date.now()): string | undefined {
@@ -112,9 +157,70 @@ export function createWaitSubscriptionManager(
 	const subscriptions = state.waitSubscriptions ?? new Map<string, WaitSubscriptionRecord>();
 	state.waitSubscriptions = subscriptions;
 	const unresolvedRestoredForegroundTokens = new Set<string>();
+	const pendingClaimCleanup = new Set<string>();
 	let disposed = false;
 	let interval: ReturnType<typeof setInterval> | undefined;
 	let lastForeignSweepAt = 0;
+	// Two Pi processes can share one session (two tree branches).
+	// The arming process owns the wake while it lives.
+	// Only its death hands the record to whichever process opens the session next,
+	// which wins an exclusive claim on the dead owner and writes itself in as the new owner.
+	const readRecordFile = (filePath: string): WaitSubscriptionRecord | undefined => {
+		try {
+			return parseRecord(JSON.parse(fs.readFileSync(filePath, "utf-8")));
+		} catch (error) {
+			if (isNotFound(error)) return undefined;
+			throw error;
+		}
+	};
+	const flushClaimCleanup = (files?: readonly string[]) => {
+		if (pendingClaimCleanup.size === 0) return;
+		const tokens = new Set(pendingClaimCleanup);
+		pendingClaimCleanup.clear();
+		try { removeClaimFiles(subscriptionsDir, tokens, files); }
+		catch (error) { console.error("Failed to remove claims of settled wait subscriptions:", error); }
+	};
+	const isDead = (recorded: unknown): boolean => isRecordedPid(recorded) && checkRecordedPidLiveness(recorded, {
+		observedScope: currentPidNamespaceScope(),
+		observedBootId: currentBootId(),
+		...(options.kill ? { kill: options.kill } : {}),
+	}) === "dead";
+	// Only a valid claimant proven dead releases its generation. Corruption is unknown, not death.
+	const latestClaimantHolds = (claimPath: string): boolean => {
+		let body: unknown;
+		try {
+			body = JSON.parse(fs.readFileSync(claimPath, "utf-8"));
+		} catch {
+			return true;
+		}
+		const claimant = body as { ownerId?: unknown; process?: unknown } | null;
+		if (!claimant || typeof claimant !== "object" || typeof claimant.ownerId !== "string" || claimant.ownerId.length === 0 || !isRecordedPid(claimant.process)) return true;
+		return !isDead(claimant.process);
+	};
+	const claimRecord = (filePath: string, record: WaitSubscriptionRecord): WaitSubscriptionRecord | undefined => {
+		if (record.completionOwnerId === state.completionOwnerId) return record;
+		if (!isDead(record.completionOwnerProcess)) return undefined;
+		if (!state.completionOwnerId) return undefined;
+		const prefix = claimPrefix(record.token, record.completionOwnerId);
+		const latest = latestClaimGeneration(fs.readdirSync(subscriptionsDir), prefix);
+		if (latest > 0 && latestClaimantHolds(path.join(subscriptionsDir, `${prefix}${latest}`))) return undefined;
+		const claimPath = path.join(subscriptionsDir, `${prefix}${latest + 1}`);
+		if (!createClaimFile(claimPath, { ownerId: state.completionOwnerId, process: currentRecordedPid() })) return undefined;
+		// Any failure from here on releases the claim, so it cannot block the next process.
+		try {
+			// The record may have been settled (and its claims removed) after this process first read it.
+			if (readRecordFile(filePath)?.completionOwnerId !== record.completionOwnerId) {
+				fs.rmSync(claimPath, { force: true });
+				return undefined;
+			}
+			const claimed = { ...record, completionOwnerId: state.completionOwnerId, completionOwnerProcess: currentRecordedPid() };
+			writeAtomicJson(filePath, claimed);
+			return claimed;
+		} catch (error) {
+			fs.rmSync(claimPath, { force: true });
+			throw error;
+		}
+	};
 
 	/**
 	 * Remove expired records armed by another session.
@@ -142,12 +248,14 @@ export function createWaitSubscriptionManager(
 		lastForeignSweepAt = sweptAt;
 		let files: string[];
 		try {
-			files = fs.readdirSync(subscriptionsDir).filter((file) => file.endsWith(".json"));
+			files = fs.readdirSync(subscriptionsDir);
 		} catch (error) {
 			if (!isNotFound(error)) console.error(`Failed to scan wait subscriptions in '${subscriptionsDir}':`, error);
 			return;
 		}
+		const removedForeign = new Set<string>();
 		for (const file of files) {
+			if (!file.endsWith(".json")) continue;
 			const filePath = path.join(subscriptionsDir, file);
 			let record: WaitSubscriptionRecord | undefined;
 			try {
@@ -167,25 +275,38 @@ export function createWaitSubscriptionManager(
 				// Losing this race is harmless: another session may have swept the
 				// same expired record. Anything else is reported and retried on the
 				// next sweep rather than interrupting the caller.
-				if (!isNotFound(error)) console.error(`Failed to remove expired wait subscription '${filePath}':`, error);
+				if (!isNotFound(error)) {
+					console.error(`Failed to remove expired wait subscription '${filePath}':`, error);
+					continue;
+				}
 			}
+			removedForeign.add(record.token);
 		}
+		try { removeClaimFiles(subscriptionsDir, removedForeign, files); }
+		catch (error) { console.error("Failed to remove claims of expired wait subscriptions:", error); }
+		return files;
 	};
 
-	const remove = (record: WaitSubscriptionRecord) => {
+	const remove = (record: WaitSubscriptionRecord): boolean => {
+		let removed = true;
 		try {
 			fs.unlinkSync(subscriptionFile(subscriptionsDir, record.token));
 		} catch (error) {
 			if (!isNotFound(error)) throw error;
+			removed = false;
 		}
 		subscriptions.delete(record.token);
 		unresolvedRestoredForegroundTokens.delete(record.token);
+		// The record is already gone; batch its claim cleanup after reconciliation.
+		pendingClaimCleanup.add(record.token);
+		return removed;
 	};
 
 	const settle = (record: WaitSubscriptionRecord, outcome: string, detail: string, completion?: WaitCompletion) => {
 		if (disposed || state.currentSessionId !== record.sessionId) return;
 		try {
-			remove(record);
+			// Only the process that removes the record may deliver its wake.
+			if (!remove(record)) return;
 		} catch (error) {
 			console.error(`Failed to clear wait subscription '${record.token}'; it remains armed:`, error);
 			return;
@@ -267,8 +388,8 @@ export function createWaitSubscriptionManager(
 		if (disposed) return;
 		// Before the session check: with no current session every record is
 		// foreign, and expired ones should still be cleaned up.
-		sweepExpiredForeignSubscriptions();
-		if (!state.currentSessionId) return;
+		const scannedFiles = sweepExpiredForeignSubscriptions();
+		if (!state.currentSessionId) { flushClaimCleanup(scannedFiles); return; }
 		for (const record of [...subscriptions.values()]) {
 			try {
 				reconcileRecord(record);
@@ -277,6 +398,7 @@ export function createWaitSubscriptionManager(
 				settle(record, "reconciliation failed", "The targeted run could not be reconciled. Inspect its status before taking follow-up action.");
 			}
 		}
+		flushClaimCleanup(scannedFiles);
 	};
 
 	const wakeChannels = [
@@ -298,11 +420,15 @@ export function createWaitSubscriptionManager(
 		arm(input) {
 			const sessionId = state.currentSessionId;
 			if (!sessionId) throw new Error("A wait subscription requires an active session identity.");
+			if (!state.completionOwnerId) throw new Error("A wait subscription requires a native completion owner identity.");
 			const createdAt = now();
 			const record: WaitSubscriptionRecord = {
-				version: SUBSCRIPTION_VERSION,
+				// Never promote an existing record in place: an old reader may already hold it.
+				version: OWNED_SUBSCRIPTION_VERSION,
 				token: randomUUID(),
 				sessionId,
+				completionOwnerId: state.completionOwnerId,
+				completionOwnerProcess: currentRecordedPid(),
 				targetKind: input.targetKind,
 				runId: input.runId,
 				requestedId: input.requestedId,
@@ -330,9 +456,11 @@ export function createWaitSubscriptionManager(
 			}
 			for (const file of files) {
 				try {
-					const record = parseRecord(JSON.parse(fs.readFileSync(path.join(subscriptionsDir, file), "utf-8")));
-					if (!record || file !== `${record.token}.json`) continue;
-					if (record.sessionId === state.currentSessionId) {
+					const filePath = path.join(subscriptionsDir, file);
+					const found = readRecordFile(filePath);
+					if (!found || file !== `${found.token}.json` || found.sessionId !== state.currentSessionId) continue;
+					const record = claimRecord(filePath, found);
+					if (record) {
 						subscriptions.set(record.token, record);
 						if (record.targetKind === "foreground" && !state.foregroundRuns?.has(record.runId)) unresolvedRestoredForegroundTokens.add(record.token);
 					}
