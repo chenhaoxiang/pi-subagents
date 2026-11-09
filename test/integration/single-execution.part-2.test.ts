@@ -777,6 +777,7 @@ if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
 			...makeMinimalCtx(tempDir),
 			model: gpt,
 			modelRegistry: {
+				getAll: () => models,
 				getAvailable: () => models,
 				find: (provider: string, id: string) => models.find((model) => model.provider === provider && model.id === id),
 				hasConfiguredAuth: (model: unknown) => Boolean(model),
@@ -1064,6 +1065,7 @@ if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
 			...makeMinimalCtx(tempDir),
 			isIdle: () => false,
 			modelRegistry: {
+				getAll() { return this.getAvailable(); },
 				getAvailable: () => [{ provider: "mock", id: "test-model", reasoning: true }],
 			},
 			sessionManager: {

@@ -2,7 +2,7 @@ import type { ModelInfo as AvailableModelInfo } from "../../shared/model-info.ts
 import { splitKnownThinkingSuffix as splitThinkingSuffix } from "../../shared/model-info.ts";
 import type { ModelScopeCheckRule, ModelScopeViolation, ModelSource } from "./model-scope.ts";
 import { checkModelScope } from "./model-scope.ts";
-import { resolveModelCandidate } from "./model-resolution.ts";
+import { resolveModelCandidate, type KnownProviders } from "./model-resolution.ts";
 import type { Usage } from "../../shared/types.ts";
 
 /**
@@ -44,6 +44,7 @@ export interface BuildModelCandidatesOptions {
 	primaryModelFromParent?: boolean;
 	/** How the primary model was selected. */
 	origin?: ModelSource | "configured";
+	knownProviders?: KnownProviders;
 }
 
 function scopesOf(scope: ModelScopeCheckRule | ModelScopeCheckRule[] | undefined): ModelScopeCheckRule[] {
@@ -77,10 +78,11 @@ function canonicalFallbackModel(
 	raw: string,
 	availableModels: AvailableModelInfo[] | undefined,
 	preferredProvider: string | undefined,
+	knownProviders?: KnownProviders,
 ): string | undefined {
 	const trimmed = raw.trim();
 	if (!trimmed) return undefined;
-	const resolved = resolveModelCandidate(trimmed, availableModels, preferredProvider);
+	const resolved = resolveModelCandidate(trimmed, availableModels, preferredProvider, knownProviders);
 	if (!availableModels || availableModels.length === 0) return resolved;
 	const base = splitThinkingSuffix(resolved ?? trimmed).baseModel;
 	return availableModels.some((entry) => entry.fullId === base) ? resolved : undefined;
@@ -119,7 +121,7 @@ export function buildModelCandidates(
 	const addCandidate = (raw: string, index: number): void => {
 		const normalized = index === 0 && primaryModel === raw
 			? raw.trim()
-			: canonicalFallbackModel(raw, availableModels, preferredProvider);
+			: canonicalFallbackModel(raw, availableModels, preferredProvider, options?.knownProviders);
 		if (!normalized) {
 			if (index > 0) skippedModels.push({ model: raw.trim(), reason: "unavailable in the active model registry" });
 			return;

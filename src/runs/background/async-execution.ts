@@ -28,7 +28,7 @@ import { resolveRuntimeModulePath } from "../../shared/runtime-module-path.ts";
 import { backgroundProcessOptions } from "../shared/background-process-options.ts";
 import { normalizeSkillInput, resolveSkillsWithFallback } from "../../agents/skills.ts";
 import { PI_CODING_AGENT_PACKAGE_ROOT_ENV, PROMPT_REDACTED, resolveChildCwd } from "../../shared/utils.ts";
-import { resolveEffectiveSubagentModel, resolveModelOrigin, resolveModelSelection, resolveSubagentModelOverride, type AvailableModelInfo, type ModelOrigin, type ParentModel } from "../shared/model-resolution.ts";
+import { resolveEffectiveSubagentModel, resolveModelOrigin, resolveModelSelection, resolveSubagentModelOverride, type AvailableModelInfo, type KnownProviders, type ModelOrigin, type ParentModel } from "../shared/model-resolution.ts";
 import { buildModelCandidates } from "../shared/model-fallback.ts";
 import { resolveToolTimeoutMs, toolTimeoutFromEnv } from "../shared/tool-timeout.ts";
 import { resolveModelScopesForAgent, type ModelScopeConfig } from "../shared/model-scope.ts";
@@ -180,6 +180,7 @@ interface AsyncExecutionContext {
 	currentModelProvider?: string;
 	currentModel?: ParentModel;
 	scopedModelIds?: string[];
+	knownModelProviders?: KnownProviders;
 	/** Optional model-scope enforcement resolved from subagent settings. */
 	modelScope?: ModelScopeConfig;
 	modelResponseAliases?: Record<string, string[]>;
@@ -1219,7 +1220,7 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 					ctx.currentModel,
 					availableModels,
 					a.modelProvider ?? ctx.currentModelProvider,
-					{ scope: modelScopes, source: modelOrigin === "explicit" ? "explicit" : "inherited" },
+					{ scope: modelScopes, source: modelOrigin === "explicit" ? "explicit" : "inherited", knownProviders: ctx.knownModelProviders },
 				);
 			} catch (error) {
 				const message = error instanceof Error ? error.message : String(error);
@@ -1253,7 +1254,7 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 			a.fallbackModels,
 			availableModels,
 			a.modelProvider ?? ctx.currentModelProvider,
-			{ scope: modelScopes, primaryModelFromParent, origin: modelOrigin },
+			{ scope: modelScopes, primaryModelFromParent, origin: modelOrigin, knownProviders: ctx.knownModelProviders },
 		);
 		const modelCandidates = fallbackEvidence.candidates.map((candidate) => applyThinkingSuffix(candidate, effectiveThinking, thinkingOverride !== undefined));
 		if (unresolvedPrimaryModelError && modelCandidates.length <= 1) throw new AsyncStartValidationError(unresolvedPrimaryModelError);
@@ -2082,7 +2083,7 @@ export function executeAsyncSingle(
 				ctx.currentModel,
 				availableModels,
 				ctx.currentModelProvider,
-				{ scope: modelScopes, source: modelOrigin === "explicit" ? "explicit" : "inherited" },
+				{ scope: modelScopes, source: modelOrigin === "explicit" ? "explicit" : "inherited", knownProviders: ctx.knownModelProviders },
 			);
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
@@ -2114,7 +2115,7 @@ export function executeAsyncSingle(
 		agentConfig.fallbackModels,
 		availableModels,
 		agentConfig.modelProvider ?? ctx.currentModelProvider,
-		{ scope: modelScopes, primaryModelFromParent: modelOrigin === "inherited", origin: modelOrigin },
+		{ scope: modelScopes, primaryModelFromParent: modelOrigin === "inherited", origin: modelOrigin, knownProviders: ctx.knownModelProviders },
 	);
 	const modelCandidates = fallbackEvidence.candidates.map((candidate) => applyThinkingSuffix(candidate, effectiveThinking, params.thinkingOverride !== undefined));
 	if (unresolvedPrimaryModelError && modelCandidates.length <= 1) return formatAsyncStartError("single", unresolvedPrimaryModelError);

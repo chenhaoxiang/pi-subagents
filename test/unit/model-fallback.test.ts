@@ -28,6 +28,20 @@ describe("model fallback", () => {
 		assert.deepEqual(evidence.skippedModels, [{ model: "missing/model", reason: "unavailable in the active model registry" }]);
 	});
 
+	it("does not redirect a known unavailable provider inside an explicit fallback chain", () => {
+		const available = [
+			{ provider: "primary", id: "main", fullId: "primary/main" },
+			{ provider: "router", id: "vendor/model-example", fullId: "router/vendor/model-example" },
+			{ provider: "huggingface", id: "org/model-v1", fullId: "huggingface/org/model-v1" },
+		];
+		const knownProviders = () => ["primary", "router", "vendor", "huggingface"];
+		const evidence = buildModelCandidates("primary/main", ["vendor/model-example:high", "org/model-v1"], available, undefined, { knownProviders });
+		assert.deepEqual(evidence.candidates, ["primary/main", "huggingface/org/model-v1"]);
+		assert.deepEqual(evidence.skippedModels, [{ model: "vendor/model-example:high", reason: "unavailable in the active model registry" }]);
+		assert.deepEqual(buildModelCandidates("primary/main", ["router/vendor/model-example:high"], available, undefined, { knownProviders }).candidates,
+			["primary/main", "router/vendor/model-example:high"], "a deliberately named alternate provider remains allowed");
+	});
+
 	it("uses the global heterogeneous pool when no explicit chain is configured", () => {
 		const evidence = buildModelCandidates("codex-local/gpt-6-sol", undefined, [
 			...poolModels,
