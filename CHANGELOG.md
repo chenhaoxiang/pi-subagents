@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.86.0-fork.7] - 2026-11-09
+
 - Protect explicit `provider/id` model requests from resolving under another provider when that provider is known in Pi's full catalog but not currently available/authenticated. Keep parent-aware fallback, scope and response verification semantics; no real provider call is made by the resolver check.
 
 ## [0.86.0-fork.6] - 2026-11-08
