@@ -428,6 +428,45 @@ describe("non-blocking wait subscriptions", () => {
 		}
 	});
 
+	it("treats damaged claims as unknown while the first live claimant is publishing", (t) => {
+		for (const damaged of ["{", JSON.stringify({ process: { pid: process.pid } })]) {
+			const fixture = deadOwnerFixture("pi-wait-subscribe-damaged-claim-");
+			try {
+				const first = fixture.open("owner-b");
+				const later = fixture.open("owner-c");
+				fixture.complete();
+				const rename = fsDefault.renameSync;
+				let interleaved = false;
+				let ownerAtPause: string | undefined;
+				let noticesAtPause: string[] = [];
+				t.mock.method(fsDefault, "renameSync", (from: fs.PathLike, to: fs.PathLike) => {
+					if (to === fixture.recordPath && !interleaved) {
+						// B has re-read A's record and is about to publish its replacement.
+						interleaved = true;
+						fs.writeFileSync(fixture.claimPath("owner-a", 1), damaged);
+						later.manager.restore();
+						ownerAtPause = fs.existsSync(fixture.recordPath) ? fixture.recordOwner() : undefined;
+						noticesAtPause = [...fixture.sent];
+					}
+					return rename(from, to);
+				});
+				syncBuiltinESMExports();
+				try { first.manager.restore(); }
+				finally { t.mock.restoreAll(); syncBuiltinESMExports(); }
+				assert.equal(interleaved, true);
+				t.diagnostic(JSON.stringify({ damaged, wakeCount: fixture.sent.length, noticesAtPause }));
+				assert.equal(fixture.sent.length, 1);
+				assert.equal(ownerAtPause, "owner-a", "damage does not prove B dead");
+				assert.deepEqual(noticesAtPause, []);
+				assert.equal(later.state.waitSubscriptions?.has(fixture.token), false);
+				assert.match(fixture.sent[0] ?? "", /^owner-b:/);
+				later.manager.restore();
+				assert.equal(fixture.sent.length, 1, "no second wake after settlement");
+				assert.deepEqual(fs.readdirSync(fixture.subscriptionsDir), [], "no settled record is recreated");
+			} finally { fixture.dispose(); }
+		}
+	});
+
 	it("does not take a dead owner's subscription while its latest claimant is alive", () => {
 		const fixture = deadOwnerFixture("pi-wait-subscribe-claimed-");
 		try {

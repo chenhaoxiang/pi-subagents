@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
+import fsDefault from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
@@ -11,15 +13,16 @@ function fixture() {
 	const subscriptionsDir = path.join(root, "subscriptions");
 	const managers: Array<{ dispose(): void }> = [];
 	const sent: unknown[] = [];
+	let now = 100;
 	const open = (owner?: string, kill: (pid: number) => boolean = () => true) => {
 		const state = { currentSessionId: "synthetic-shared-session", completionOwnerId: owner, waitSubscriptions: new Map(), foregroundRuns: new Map() } as unknown as SubagentState;
 		const manager = createWaitSubscriptionManager({ events: { on: () => () => {} }, sendMessage: (message: unknown) => sent.push(message) } as never, state, {
-			subscriptionsDir, asyncDirRoot: path.join(root, "runs"), resultsDir: path.join(root, "results"), now: () => 100, kill,
+			subscriptionsDir, asyncDirRoot: path.join(root, "runs"), resultsDir: path.join(root, "results"), now: () => now, kill,
 		});
 		managers.push(manager);
 		return { manager, state };
 	};
-	return { root, subscriptionsDir, sent, open, dispose() { for (const manager of managers) manager.dispose(); fs.rmSync(root, { recursive: true, force: true }); } };
+	return { root, subscriptionsDir, sent, open, setNow(value: number) { now = value; }, dispose() { for (const manager of managers) manager.dispose(); fs.rmSync(root, { recursive: true, force: true }); } };
 }
 
 const input = { targetKind: "foreground" as const, runId: "synthetic-run", requestedId: "synthetic-run", timeoutMs: 1_000 };
@@ -55,6 +58,7 @@ describe("wait subscription record format fence", () => {
 			const reader = f.open("owner-b");
 			reader.manager.restore();
 			reader.manager.reconcile();
+			f.setNow(2 * 86400000);
 			reader.state.currentSessionId = "synthetic-foreign-session";
 			reader.manager.restore();
 			assert.equal(reader.state.waitSubscriptions?.has(record.token), false);
@@ -98,6 +102,54 @@ describe("wait subscription record format fence", () => {
 			assert.equal(reader.state.waitSubscriptions?.size, 0);
 			assert.equal(fs.readFileSync(file, "utf8"), bytes);
 			assert.deepEqual(f.sent, []);
+		} finally { f.dispose(); }
+	});
+
+	it("bounds cleanup scans for expired and settled batches while preserving legacy records", (t) => {
+		const f = fixture();
+		try {
+			const owner = f.open("owner-a");
+			const foreign = f.open("owner-foreign");
+			foreign.state.currentSessionId = "foreign-session";
+			const legacyFiles: string[] = [];
+			for (let index = 0; index < 10; index++) {
+				for (const manager of [owner.manager, foreign.manager]) {
+					const record = manager.arm(input);
+					fs.writeFileSync(path.join(f.subscriptionsDir, record.token + ".claim-test.1"), "{}");
+				}
+				const legacy = { version: 1, token: String(index).padStart(8, "0") + "-1111-4111-8111-111111111111", sessionId: "legacy-session", ...input, createdAt: 0, expiresAt: 1 };
+				const file = path.join(f.subscriptionsDir, legacy.token + ".json");
+				fs.writeFileSync(file, JSON.stringify(legacy)); legacyFiles.push(file);
+			}
+			f.setNow(2 * 86400000);
+			const readdir = fsDefault.readdirSync;
+			const unlink = fsDefault.unlinkSync;
+			let scans = 0, entries = 0, claimDeletes = 0;
+			t.mock.method(fsDefault, "readdirSync", (dir: fs.PathLike, ...rest: unknown[]) => {
+				const files = (readdir as (...args: unknown[]) => string[])(dir, ...rest);
+				if (dir === f.subscriptionsDir) { scans++; entries += files.length; }
+				return files;
+			});
+			t.mock.method(fsDefault, "unlinkSync", (file: fs.PathLike) => {
+				if (typeof file === "string" && file.includes(".claim-")) {
+					const token = path.basename(file).split(".claim-")[0]!;
+					assert.equal(fs.existsSync(path.join(f.subscriptionsDir, token + ".json")), false, "remove each record before its claims");
+					claimDeletes++;
+				}
+				return unlink(file);
+			});
+			syncBuiltinESMExports();
+			try {
+				owner.manager.reconcile();
+				t.diagnostic(JSON.stringify({ owned: 10, foreign: 10, legacy: 10, scans, entries }));
+				assert.ok(scans <= 2, "cleanup must not scan once per settled/expired record: " + scans);
+				assert.ok(entries <= 100, "directory entry work must be bounded per batch: " + entries);
+				assert.equal(f.sent.length, 10, "foreign expiry does not notify this session");
+				assert.equal(claimDeletes, 20, "all deleted records have their claims cleaned after removal");
+				scans = 0; owner.manager.reconcile();
+				assert.equal(scans, 0, "an unchanged idle tick adds no directory scan");
+			} finally { t.mock.restoreAll(); syncBuiltinESMExports(); }
+			assert.deepEqual(fs.readdirSync(f.subscriptionsDir).sort(), legacyFiles.map(file => path.basename(file)).sort());
 		} finally { f.dispose(); }
 	});
 

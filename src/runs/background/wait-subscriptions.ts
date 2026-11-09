@@ -116,16 +116,17 @@ function latestClaimGeneration(files: readonly string[], prefix: string): number
 }
 
 /** Call only after the record file is gone, so a late claimer that wins a freed claim finds no record to bring back. */
-function removeClaimFiles(dir: string, token: string): void {
-	let files: string[];
-	try {
-		files = fs.readdirSync(dir);
-	} catch (error) {
-		if (isNotFound(error)) return;
-		throw error;
+function removeClaimFiles(dir: string, tokens: ReadonlySet<string>, files?: readonly string[]): void {
+	if (tokens.size === 0) return;
+	let snapshot: readonly string[];
+	if (files) snapshot = files;
+	else {
+		try { snapshot = fs.readdirSync(dir); }
+		catch (error) { if (isNotFound(error)) return; throw error; }
 	}
-	for (const file of files) {
-		if (!file.startsWith(`${token}.claim-`)) continue;
+	for (const file of snapshot) {
+		const separator = file.indexOf(".claim-");
+		if (separator < 0 || !tokens.has(file.slice(0, separator))) continue;
 		try {
 			fs.unlinkSync(path.join(dir, file));
 		} catch (error) {
@@ -156,6 +157,7 @@ export function createWaitSubscriptionManager(
 	const subscriptions = state.waitSubscriptions ?? new Map<string, WaitSubscriptionRecord>();
 	state.waitSubscriptions = subscriptions;
 	const unresolvedRestoredForegroundTokens = new Set<string>();
+	const pendingClaimCleanup = new Set<string>();
 	let disposed = false;
 	let interval: ReturnType<typeof setInterval> | undefined;
 	let lastForeignSweepAt = 0;
@@ -171,23 +173,28 @@ export function createWaitSubscriptionManager(
 			throw error;
 		}
 	};
+	const flushClaimCleanup = (files?: readonly string[]) => {
+		if (pendingClaimCleanup.size === 0) return;
+		const tokens = new Set(pendingClaimCleanup);
+		pendingClaimCleanup.clear();
+		try { removeClaimFiles(subscriptionsDir, tokens, files); }
+		catch (error) { console.error("Failed to remove claims of settled wait subscriptions:", error); }
+	};
 	const isDead = (recorded: unknown): boolean => isRecordedPid(recorded) && checkRecordedPidLiveness(recorded, {
 		observedScope: currentPidNamespaceScope(),
 		observedBootId: currentBootId(),
 		...(options.kill ? { kill: options.kill } : {}),
 	}) === "dead";
-	// A live or unknown claimant holds its generation; a dead claimant, or a body that is not a claim, does not.
+	// Only a valid claimant proven dead releases its generation. Corruption is unknown, not death.
 	const latestClaimantHolds = (claimPath: string): boolean => {
 		let body: unknown;
 		try {
 			body = JSON.parse(fs.readFileSync(claimPath, "utf-8"));
-		} catch (error) {
-			// Claims are created whole, so a body that does not parse is damage, not a claimant mid-write.
-			if (error instanceof SyntaxError) return false;
+		} catch {
 			return true;
 		}
 		const claimant = body as { ownerId?: unknown; process?: unknown } | null;
-		if (!claimant || typeof claimant !== "object" || typeof claimant.ownerId !== "string" || !isRecordedPid(claimant.process)) return false;
+		if (!claimant || typeof claimant !== "object" || typeof claimant.ownerId !== "string" || claimant.ownerId.length === 0 || !isRecordedPid(claimant.process)) return true;
 		return !isDead(claimant.process);
 	};
 	const claimRecord = (filePath: string, record: WaitSubscriptionRecord): WaitSubscriptionRecord | undefined => {
@@ -241,12 +248,14 @@ export function createWaitSubscriptionManager(
 		lastForeignSweepAt = sweptAt;
 		let files: string[];
 		try {
-			files = fs.readdirSync(subscriptionsDir).filter((file) => file.endsWith(".json"));
+			files = fs.readdirSync(subscriptionsDir);
 		} catch (error) {
 			if (!isNotFound(error)) console.error(`Failed to scan wait subscriptions in '${subscriptionsDir}':`, error);
 			return;
 		}
+		const removedForeign = new Set<string>();
 		for (const file of files) {
+			if (!file.endsWith(".json")) continue;
 			const filePath = path.join(subscriptionsDir, file);
 			let record: WaitSubscriptionRecord | undefined;
 			try {
@@ -271,12 +280,11 @@ export function createWaitSubscriptionManager(
 					continue;
 				}
 			}
-			try {
-				removeClaimFiles(subscriptionsDir, record.token);
-			} catch (error) {
-				console.error(`Failed to remove claims of expired wait subscription '${filePath}':`, error);
-			}
+			removedForeign.add(record.token);
 		}
+		try { removeClaimFiles(subscriptionsDir, removedForeign, files); }
+		catch (error) { console.error("Failed to remove claims of expired wait subscriptions:", error); }
+		return files;
 	};
 
 	const remove = (record: WaitSubscriptionRecord): boolean => {
@@ -289,12 +297,8 @@ export function createWaitSubscriptionManager(
 		}
 		subscriptions.delete(record.token);
 		unresolvedRestoredForegroundTokens.delete(record.token);
-		try {
-			removeClaimFiles(subscriptionsDir, record.token);
-		} catch (error) {
-			// The record is already gone, so a leftover claim can no longer bring it back.
-			console.error(`Failed to remove claims of wait subscription '${record.token}':`, error);
-		}
+		// The record is already gone; batch its claim cleanup after reconciliation.
+		pendingClaimCleanup.add(record.token);
 		return removed;
 	};
 
@@ -384,8 +388,8 @@ export function createWaitSubscriptionManager(
 		if (disposed) return;
 		// Before the session check: with no current session every record is
 		// foreign, and expired ones should still be cleaned up.
-		sweepExpiredForeignSubscriptions();
-		if (!state.currentSessionId) return;
+		const scannedFiles = sweepExpiredForeignSubscriptions();
+		if (!state.currentSessionId) { flushClaimCleanup(scannedFiles); return; }
 		for (const record of [...subscriptions.values()]) {
 			try {
 				reconcileRecord(record);
@@ -394,6 +398,7 @@ export function createWaitSubscriptionManager(
 				settle(record, "reconciliation failed", "The targeted run could not be reconciled. Inspect its status before taking follow-up action.");
 			}
 		}
+		flushClaimCleanup(scannedFiles);
 	};
 
 	const wakeChannels = [
