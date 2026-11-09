@@ -12,11 +12,11 @@
 
 <https://github.com/chenhaoxiang/pi-subagents>
 
-本变更源码候选版本为 `0.86.0-fork.8`，基于社区 main 快照 `fd6d45b31bcc2412d3aca9f4230be979e95b0a96`（社区 v0.86.0），保留同一 owner 接续、明确验收来源和 schema 2 决策记录。本修订保留 provider 身份修复，另移植社区已发布 v0.87.0 的父会话隔离关闭修复，并补齐远程 detached 保留及已结束子会话的引用清理；不冒充 v0.87.0 整版同步。上一已发布版本为 `0.86.0-fork.7`：回退保留 schema 2 和 provider 身份保护，但会失去父会话关闭隔离及远程引用清理修复。fork.6 之前的版本不能读写已升级的 schema 2 记录（见 [missions](docs/missions.md)）。fork 专属行为继续保留在 fork 的 `main` 上。
+本变更源码候选版本为 `0.86.0-fork.9`，基于社区 main 快照 `fd6d45b31bcc2412d3aca9f4230be979e95b0a96`（社区 v0.86.0）。保留 mission/schema 2、provider 身份与父会话关闭隔离修复，另移植已发布 v0.87.0 的持久等待归属，并加入明确的 v2 记录隔离、保守接手和批量清理；不冒充 v0.87.0 整版同步。新建显式等待要求原生进程归属；新版不消费或原地迁移旧 v1 等待。上一已发布版本 `0.86.0-fork.8` 保留既有修复，但不能消费待处理的 v2 等待订阅，回退不会降级记录；应查看精确 run 状态，不重放底层任务。等待记录与 mission 记录的不同边界见 [waitTool](docs/configuration.md#waittool) 和 [missions](docs/missions.md)。
 
 ## 发布版本与分支约定
 
-本变更源码候选版本为 **0.86.0-fork.8**，基于社区 **0.86.0** 及上述固定快照，加上选定的 provider 身份与父会话关闭修复；上一版为 **0.86.0-fork.7**，回退时须遵守上述限制。fork 版本统一使用 `<社区版本>-fork.<修订号>`，本地修订不冒充社区新版本。
+本变更源码候选版本为 **0.86.0-fork.9**，基于社区 **0.86.0** 及上述固定快照，加上选定的已发布稳定修复；上一版为 **0.86.0-fork.8**，回退时须遵守上述等待记录限制。fork 版本统一使用 `<社区版本>-fork.<修订号>`，本地修订不冒充社区新版本。
 
 - `main`：我们的维护、整合与发布主线，保留 fork 修复。
 - `upstream-main`：仅镜像社区 `main`，不加入 fork 提交，也不作为安装来源。
@@ -25,7 +25,7 @@
 固定版本安装：
 
 ```bash
-pi install git:github.com/chenhaoxiang/pi-subagents@v0.86.0-fork.8
+pi install git:github.com/chenhaoxiang/pi-subagents@v0.86.0-fork.9
 ```
 
 [GitHub Releases](https://github.com/chenhaoxiang/pi-subagents/releases) 提供可安装的包、来源清单和 `SHA256SUMS` 校验文件；这不是向上游作者的 npm 命名空间发布。发布及制品安装流程见[维护说明](docs/releasing.md)。

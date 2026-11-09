@@ -12,11 +12,11 @@ This repository is the maintained fork at:
 
 <https://github.com/chenhaoxiang/pi-subagents>
 
-It tracks the community project selectively and keeps fork-specific behavior on the fork's `main` line. The current source candidate is `0.86.0-fork.8`, based on community `main` through `fd6d45b31bcc2412d3aca9f4230be979e95b0a96` (community v0.86.0), retaining same-owner mission continuity, explicit acceptance provenance and schema-2 typed decisions. It retains the provider-identity repair and ports parent-scoped child shutdown from published community v0.87.0, with detached-placement preservation and completed-child reference cleanup; this is not a full v0.87.0 synchronization. The previous published release is `0.86.0-fork.7`: rollback retains schema-2 and provider-identity support but loses the parent-shutdown and placement-cleanup fixes. Packages older than fork.6 cannot read or rewrite promoted schema-2 records (see [missions](docs/missions.md)).
+It tracks the community project selectively and keeps fork-specific behavior on the fork's `main` line. The current source candidate is `0.86.0-fork.9`, based on community `main` through `fd6d45b31bcc2412d3aca9f4230be979e95b0a96` (community v0.86.0). It retains mission/schema-2, provider-identity and parent-shutdown repairs, and ports durable wait ownership from published v0.87.0 with an explicit record-v2 fence, conservative claim recovery and batched cleanup; this is not a full v0.87.0 synchronization. New explicit waits require native process ownership. Supporting readers leave legacy v1 waits untouched; no in-place migration is performed. The previous published release is `0.86.0-fork.8`, which retains prior repairs but cannot consume pending v2 wait subscriptions. Rollback does not downgrade records; inspect exact run status rather than replaying the task. See [waitTool](docs/configuration.md#waittool) and [missions](docs/missions.md) for separate format boundaries.
 
 ## Releases and branch policy
 
-The source candidate is **0.86.0-fork.8**, based on community **0.86.0** and the exact snapshot above, plus selected provider-identity and parent-shutdown repairs; **0.86.0-fork.7** remains available with the rollback limitation above. Fork releases use `<community-version>-fork.<revision>`; the fork revision increases without pretending to be a new upstream release.
+The source candidate is **0.86.0-fork.9**, based on community **0.86.0** and the exact snapshot above, plus selected published stable repairs; **0.86.0-fork.8** remains available with the wait-record rollback limitation above. Fork releases use `<community-version>-fork.<revision>`; the fork revision increases without pretending to be a new upstream release.
 
 - `main`: our maintained integration and release branch, including fork fixes.
 - `upstream-main`: an exact mirror of the community's `main`, with no fork commits. Never install from this branch.
@@ -25,7 +25,7 @@ The source candidate is **0.86.0-fork.8**, based on community **0.86.0** and the
 Install a reproducible release:
 
 ```bash
-pi install git:github.com/chenhaoxiang/pi-subagents@v0.86.0-fork.8
+pi install git:github.com/chenhaoxiang/pi-subagents@v0.86.0-fork.9
 ```
 
 [GitHub Releases](https://github.com/chenhaoxiang/pi-subagents/releases) include the installable package tarball, a provenance manifest, and `SHA256SUMS`. These GitHub releases are not npm publications under the upstream author's namespace. See [release maintenance](docs/releasing.md) for asset installation and future releases.
