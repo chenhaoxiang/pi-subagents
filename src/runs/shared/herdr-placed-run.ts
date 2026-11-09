@@ -183,6 +183,11 @@ export function createPlacementAwareChildSessionFactory(local: ChildSessionFacto
 			if (!launch.machine) return local.create(launch);
 			serializeHerdrPiLaunch(launch);
 			const child = await createRemote(launch);
+			const dispose = child.dispose.bind(child);
+			child.dispose = async () => {
+				await dispose();
+				remote.delete(child);
+			};
 			remote.set(child, launch.parentSessionFile);
 			return child;
 		},

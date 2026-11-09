@@ -11,7 +11,10 @@ function trackedChild() {
 		steer: async () => {},
 		followUp: async () => {},
 		abort: async () => { events.push("abort"); },
-		dispose: async () => { events.push("dispose"); },
+		async dispose() {
+			assert.equal(this.sessionId, "synthetic-placed-child", "disposal must retain the original receiver");
+			events.push("dispose");
+		},
 		messages: [], sessionFile: undefined, sessionId: "synthetic-placed-child", modelId: undefined,
 	};
 	return { child, events };
@@ -84,6 +87,18 @@ describe("placement wrapper child shutdown scopes", () => {
 			detached.detached = false;
 			await factory.dispose();
 		}
+	});
+
+	it("forgets a detached child after its individual terminal disposal without reattaching it", async () => {
+		const { factory, remote } = fixture();
+		const detached = await factory.create(launch("parent-a"));
+		let inspections = 0;
+		Object.defineProperty(detached, "detached", { get() { inspections++; return true; } });
+		await detached.dispose();
+		await factory.disposeForParent("parent-a");
+		await factory.dispose();
+		assert.deepEqual(remote[0]?.events, ["dispose"], "terminal disposal occurs once");
+		assert.equal(inspections, 0, "a disposed child must no longer be retained or inspected by the factory");
 	});
 
 	it("does not route an ordinary local child through the placed factory", async () => {
