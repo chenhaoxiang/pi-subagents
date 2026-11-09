@@ -4,6 +4,7 @@ import {
 	formatSubagentModelVerificationError,
 	fuzzyResolveModel,
 	isContextOverflow,
+	knownModelProviders,
 	normalizeModelSegment,
 	normalizeParentModel,
 	resolveEffectiveSubagentModel,
@@ -72,6 +73,39 @@ describe("single model resolution", () => {
 		assert.equal(normalizeModelSegment("GPT_5--MINI"), "gpt-5-mini");
 		assert.equal(fuzzyResolveModel("GPT_5_MINI", models), "openai/gpt-5-mini");
 		assert.equal(resolveModelCandidate("openai/claude-sonnet-4", models), "openai/claude-sonnet-4");
+	});
+
+	it("never resolves a provider the user is not signed in to under another provider", () => {
+		// Pi knows anthropic but has no auth for it; OpenRouter re-lists the same model as `anthropic/...`.
+		const registry = [
+			{ provider: "llama-cpp", id: "qwen", fullId: "llama-cpp/qwen" },
+			{ provider: "openrouter", id: "anthropic/claude-opus-4.8", fullId: "openrouter/anthropic/claude-opus-4.8" },
+		];
+		const knownProviders = () => ["anthropic", "llama-cpp", "openrouter"];
+		const parent = { provider: "llama-cpp", id: "qwen" };
+		for (const requested of ["anthropic/claude-opus-4-8", "anthropic/claude-opus-4.8"]) {
+			assert.throws(
+				() => resolveSubagentModelOverride(requested, parent, registry, undefined, { source: "explicit", knownProviders }),
+				new RegExp(`Unknown subagent model '${requested.replace(/[./]/g, "\\$&")}'.*Did you mean 'openrouter/anthropic/claude-opus-4\\.8'`),
+			);
+			assert.throws(() => resolveModelSelection(requested, registry, undefined, { knownProviders }), /Unknown subagent model/);
+		}
+		assert.equal(resolveSubagentModelOverride("openrouter/anthropic/claude-opus-4.8", parent, registry, undefined, { source: "explicit", knownProviders }), "openrouter/anthropic/claude-opus-4.8");
+		assert.equal(resolveModelCandidate("org/model-v1", models, undefined, () => ["openai", "anthropic", "huggingface"]), "huggingface/org/model-v1");
+	});
+
+	it("reads the full catalog lazily once without changing available provider resolution", () => {
+		let reads = 0;
+		const knownProviders = knownModelProviders({ getAll: () => { reads++; return [{ provider: "vendor" }, { provider: "vendor" }, { provider: "router" }]; } });
+		const available = [
+			{ provider: "router", id: "vendor/model", fullId: "router/vendor/model" },
+		];
+		assert.equal(reads, 0);
+		assert.equal(resolveModelSelection("router/vendor/model", available, undefined, { knownProviders }).model, "router/vendor/model");
+		assert.equal(reads, 0, "an available provider needs no full-catalog read");
+		assert.throws(() => resolveModelSelection("vendor/model", available, undefined, { knownProviders }), /Unknown subagent model/);
+		assert.throws(() => resolveModelSelection("vendor/model:high", available, undefined, { knownProviders }), /Unknown subagent model/);
+		assert.equal(reads, 1, "the same launch helper reuses its read-only provider snapshot");
 	});
 
 	it("resolves ids that already carry their provider prefix within that provider", () => {

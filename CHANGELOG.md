@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Protect explicit `provider/id` model requests from resolving under another provider when that provider is known in Pi's full catalog but not currently available/authenticated. Keep parent-aware fallback, scope and response verification semantics; no real provider call is made by the resolver check.
+
 ## [0.86.0-fork.6] - 2026-11-08
 
 - Promote mission records containing typed decision metadata to schema 2 on an actual write, so schema-1-only runtimes reject them instead of silently erasing closure and replacement fields. Untyped missions keep schema 1; existing typed schema-1 records remain read-only byte-stable until updated by a supporting writer.
