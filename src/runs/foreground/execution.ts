@@ -1919,7 +1919,7 @@ async function runSyncCompletionInner(
 				scope: options.modelScope,
 				primaryModelFromParent: options.modelOverrideFromParent,
 				origin: modelOrigin,
-				knownProviders: options.knownModelProviders,
+				knownProviders: options.knownProviders,
 			},
 		);
 		selectedModel = selection.model;
@@ -1942,7 +1942,7 @@ async function runSyncCompletionInner(
 			scope: options.modelScope,
 			primaryModelFromParent: options.modelOverrideFromParent,
 			origin: modelOrigin,
-			knownProviders: options.knownModelProviders,
+			knownProviders: options.knownProviders,
 		},
 	);
 	if (unresolvedPrimaryModelError && modelEvidence.candidates.length <= 1) throw unresolvedPrimaryModelError;

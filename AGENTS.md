@@ -6,6 +6,8 @@ This file intentionally does not duplicate user-global or tool-level instruction
 
 ## Documentation map
 
+- [0.87.0-fork.1 community synchronization](docs/maintenance/2026-11-10-community-0.87.0.md): exact published community tag, deduplicated backports, retained fork safety/format contracts and source-only validation boundaries.
+
 - [0.84.0-fork.1 community synchronization](docs/maintenance/2026-10-30-community-0.84.0.md): exact main snapshot, retained fork behavior, validation and release/install boundaries.
 
 - [0.83.0-fork.1 community synchronization](docs/maintenance/2026-10-28-community-0.83.0.md): exact main snapshot, retained fork behavior, validation and installed acceptance boundaries.

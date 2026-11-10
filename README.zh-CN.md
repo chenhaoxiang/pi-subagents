@@ -12,17 +12,17 @@
 
 <https://github.com/chenhaoxiang/pi-subagents>
 
-本变更源码候选版本为 `0.86.0-fork.10`，基于社区 main 快照 `fd6d45b31bcc2412d3aca9f4230be979e95b0a96`（社区 v0.86.0），保留选定的已发布 v0.87.0 修复，不冒充整版同步。本修订隔离等待声明清理错误：单个文件删除失败后继续清理同批后续文件，结束后报告首个原始错误。原生进程归属、严格等待记录 v2、mission/schema 2、provider 与父会话关闭修复均不改变。上一版 `0.86.0-fork.9` 支持相同格式，但缺少这项清理错误隔离。fork.8 及更早版本不能消费 v2 等待，新版不处理旧 v1；不降级或迁移记录，不重放底层任务。不同记录边界见 [waitTool](docs/configuration.md#waittool) 和 [missions](docs/missions.md)。
+本变更源码候选版本为 `0.87.0-fork.1`，整合已发布社区 `v0.87.0` 的精确提交 `52e68e9ef0e563d5c97b28519f9999f1b5fbbbea`（相较 v0.86.0 共 16 提交、58 文件），不混入之后未发布的社区 main 功能。新增工作流 drain、显式启用的全局上下文默认项、MCP selector 和嵌套制品清理修复，以及 Pi 1.5 schema 预检。此前精选的 provider、等待归属及会话关闭修复逐项去重，保留受保护 fallback、idle timeout、unknown recovery、原生 parent wake、mission schema 2 和严格 wait-record v2。等待清理仍先删除 record，再清理 claim；单个 unlink 失败不会拖累同批后续 claim。fork.8 及更早版本不能消费 v2 等待，新版不处理旧 v1；不降级或迁移记录，不重放底层任务。边界见 [waitTool](docs/configuration.md#waittool)、[missions](docs/missions.md) 和[源码同步记录](docs/maintenance/2026-11-10-community-0.87.0.md)。
 
 ## 发布版本与分支约定
 
-本变更源码候选版本为 **0.86.0-fork.10**，基于社区 **0.86.0** 及上述固定快照，加上选定的稳定修复；上一版为 **0.86.0-fork.9**，回退会恢复上述清理错误限制。fork 版本统一使用 `<社区版本>-fork.<修订号>`，本地修订不冒充社区新版本。
+本变更源码候选版本为 **0.87.0-fork.1**，基于上述已发布社区 **0.87.0** 的固定快照。在独立审查和不可变 Release 发布完成前，已发布安装及回退基线仍为 **0.86.0-fork.10**；本源码 PR 不发布、安装或 reload 候选版本。fork 版本统一使用 `<社区版本>-fork.<修订号>`。
 
 - `main`：我们的维护、整合与发布主线，保留 fork 修复。
 - `upstream-main`：仅镜像社区 `main`，不加入 fork 提交，也不作为安装来源。
 - 改动通过经过审核的 PR 合入 `main`；保留现有分支和历史。
 
-固定版本安装：
+安装现有固定发布版本（不是尚未发布的源码候选）：
 
 ```bash
 pi install git:github.com/chenhaoxiang/pi-subagents@v0.86.0-fork.10
@@ -44,7 +44,7 @@ pi install git:github.com/chenhaoxiang/pi-subagents@main
 
 ## Fork 专属能力
 
-fork 保留社区 `0.84.0` 能力，并额外维护：
+fork 保留社区 `0.87.0` 能力，并额外维护：
 
 - **受保护的异构模型 fallback**：只有在子 Agent 尚未产生工具副作用前发生 provider/model 失败时，才推进显式 fallback 链或内置模型池；每次尝试都会保留为证据；
 - **基于活动的 `idleTimeoutMs`**：前台和后台子 Agent 的流式输出及工具生命周期活动会续期；它不是墙钟总时长上限；

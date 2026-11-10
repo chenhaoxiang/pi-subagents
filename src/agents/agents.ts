@@ -225,6 +225,7 @@ interface SubagentSettings {
 	maxThinking?: ThinkingLevel;
 	defaultExtensions?: string[];
 	defaultSubagentOnlyExtensions?: string[];
+	defaultInheritGlobalContext?: boolean;
 	disableBuiltins?: boolean;
 	disableThinking?: boolean;
 	modelScope?: ModelScopeConfig;
@@ -1252,19 +1253,18 @@ function readSubagentSettings(filePath: string | null): SubagentSettings {
 	const subagentsObject = subagents as Record<string, unknown>;
 	let disableBuiltins: boolean | undefined;
 	if ("disableBuiltins" in subagentsObject) {
-		if (typeof subagentsObject.disableBuiltins === "boolean") {
-			disableBuiltins = subagentsObject.disableBuiltins;
-		} else {
-			throw new Error(`Subagent settings in '${filePath}' have invalid 'disableBuiltins'; expected a boolean.`);
-		}
+		if (typeof subagentsObject.disableBuiltins === "boolean") disableBuiltins = subagentsObject.disableBuiltins;
+		else throw new Error(`Subagent settings in '${filePath}' have invalid 'disableBuiltins'; expected a boolean.`);
 	}
 	let disableThinking: boolean | undefined;
 	if ("disableThinking" in subagentsObject) {
-		if (typeof subagentsObject.disableThinking === "boolean") {
-			disableThinking = subagentsObject.disableThinking;
-		} else {
-			throw new Error(`Subagent settings in '${filePath}' have invalid 'disableThinking'; expected a boolean.`);
-		}
+		if (typeof subagentsObject.disableThinking === "boolean") disableThinking = subagentsObject.disableThinking;
+		else throw new Error(`Subagent settings in '${filePath}' have invalid 'disableThinking'; expected a boolean.`);
+	}
+	let defaultInheritGlobalContext: boolean | undefined;
+	if ("defaultInheritGlobalContext" in subagentsObject) {
+		if (typeof subagentsObject.defaultInheritGlobalContext === "boolean") defaultInheritGlobalContext = subagentsObject.defaultInheritGlobalContext;
+		else throw new Error(`Subagent settings in '${filePath}' have invalid 'defaultInheritGlobalContext'; expected a boolean.`);
 	}
 	let defaultModel: string | undefined;
 	if ("defaultModel" in subagentsObject) {
@@ -1354,6 +1354,7 @@ function readSubagentSettings(filePath: string | null): SubagentSettings {
 		...(maxThinking !== undefined ? { maxThinking } : {}),
 		...(defaultExtensions !== undefined ? { defaultExtensions } : {}),
 		...(defaultSubagentOnlyExtensions !== undefined ? { defaultSubagentOnlyExtensions } : {}),
+		...(defaultInheritGlobalContext !== undefined ? { defaultInheritGlobalContext } : {}),
 		...(agentScanDirs !== undefined ? { agentScanDirs } : {}),
 		...(agentExcludeDirs !== undefined ? { agentExcludeDirs } : {}),
 		...(disableBuiltins !== undefined ? { disableBuiltins } : {}),
@@ -1529,6 +1530,27 @@ function applySubagentDefaultSubagentOnlyExtensions(agents: AgentConfig[], defau
 	});
 }
 
+function resolveSubagentDefaultInheritGlobalContext(
+	userSettings: SubagentSettings,
+	projectSettings: SubagentSettings,
+	projectSettingsPath: string | null,
+): boolean | undefined {
+	if (projectSettingsPath && projectSettings.defaultInheritGlobalContext !== undefined) return projectSettings.defaultInheritGlobalContext;
+	return userSettings.defaultInheritGlobalContext;
+}
+
+// The parsed field is a plain boolean, so only the frontmatter key tells an explicit `false` from an unset field.
+function applySubagentDefaultInheritGlobalContext(agents: AgentConfig[], defaultInheritGlobalContext: boolean | undefined): AgentConfig[] {
+	if (!defaultInheritGlobalContext) return agents;
+	return agents.map((agent) => {
+		const frontmatterFields = agentFrontmatterFields.get(agent);
+		if (agent.inheritGlobalContext || frontmatterFields?.has("inheritGlobalContext")) return agent;
+		const next = { ...agent, inheritGlobalContext: true };
+		if (frontmatterFields) agentFrontmatterFields.set(next, frontmatterFields);
+		return next;
+	});
+}
+
 function applySubagentDefaults(
 	agents: AgentConfig[],
 	defaultModel: AgentModelSourceInfo | undefined,
@@ -1537,13 +1559,17 @@ function applySubagentDefaults(
 	defaultThinking: string | undefined,
 	defaultExtensions: string[] | undefined,
 	defaultSubagentOnlyExtensions: string[] | undefined,
+	defaultInheritGlobalContext: boolean | undefined,
 ): AgentConfig[] {
-	return applySubagentDefaultSubagentOnlyExtensions(
-		applySubagentDefaultExtensions(
-			applySubagentDefaultThinking(applySubagentFallbackModels(applySubagentDefaultModel(agents, defaultModel, defaultProvider), fallbackModels), defaultThinking),
-			defaultExtensions,
+	return applySubagentDefaultInheritGlobalContext(
+		applySubagentDefaultSubagentOnlyExtensions(
+			applySubagentDefaultExtensions(
+				applySubagentDefaultThinking(applySubagentFallbackModels(applySubagentDefaultModel(agents, defaultModel, defaultProvider), fallbackModels), defaultThinking),
+				defaultExtensions,
+			),
+			defaultSubagentOnlyExtensions,
 		),
-		defaultSubagentOnlyExtensions,
+		defaultInheritGlobalContext,
 	);
 }
 
@@ -2966,7 +2992,8 @@ function configuredAgentsForScope(sources: AgentDiscoverySources, scope: AgentSc
 	const maxThinking = resolveSubagentMaxThinking(userSettings, projectSettings, sources.projectSettingsPath);
 	const defaultExtensions = resolveSubagentDefaultExtensions(userSettings, projectSettings, sources.projectSettingsPath);
 	const defaultSubagentOnlyExtensions = resolveSubagentDefaultSubagentOnlyExtensions(userSettings, projectSettings, sources.projectSettingsPath);
-	const applyDefaults = (agents: AgentConfig[]): AgentConfig[] => applySubagentDefaults(agents, defaultModel, defaultProvider, fallbackModels, defaultThinking, defaultExtensions, defaultSubagentOnlyExtensions);
+	const defaultInheritGlobalContext = resolveSubagentDefaultInheritGlobalContext(userSettings, projectSettings, sources.projectSettingsPath);
+	const applyDefaults = (agents: AgentConfig[]): AgentConfig[] => applySubagentDefaults(agents, defaultModel, defaultProvider, fallbackModels, defaultThinking, defaultExtensions, defaultSubagentOnlyExtensions, defaultInheritGlobalContext);
 	const builtin = applyBuiltinOverrides(applyDefaults(sources.builtinLoaded.agents), userSettings, projectSettings, sources.userSettingsPath, sources.projectSettingsPath);
 	const user = applyCustomAgentOverrides(
 		applyDefaults(scope === "project" ? [] : sources.userLoaded.flatMap((loaded) => loaded.loaded.agents)),
@@ -3125,12 +3152,13 @@ function discoverAgentsUncached(cwd: string, scope: AgentScope, preferredModelPr
 	const maxThinking = resolveSubagentMaxThinking(userSettings, projectSettings, projectSettingsPath);
 	const defaultExtensions = resolveSubagentDefaultExtensions(userSettings, projectSettings, projectSettingsPath);
 	const defaultSubagentOnlyExtensions = resolveSubagentDefaultSubagentOnlyExtensions(userSettings, projectSettings, projectSettingsPath);
+	const defaultInheritGlobalContext = resolveSubagentDefaultInheritGlobalContext(userSettings, projectSettings, projectSettingsPath);
 	const modelScope = projectSettings.modelScope ?? userSettings.modelScope;
 	const packageSubagentPaths = collectPackageSubagentPaths(effectiveCwd, { includeUser: scope !== "project", includeProject: scope !== "user", globalNpmRoot: options.globalNpmRoot });
 	const isExcluded = agentExclusions(agentExclusionRoots(userSettingsPath, projectSettingsPath));
 	const directories: AgentDefinitionDirectoryReport[] = [reportAgentDefinitionDirectory("builtin", BUILTIN_AGENTS_DIR, BUILTIN_AGENT_DEFINITION_INSPECTION)];
 	const builtinLoaded = loadAgentsFromDefinitionFiles(BUILTIN_AGENT_DEFINITION_FILES, "builtin");
-	const applyDefaults = (agents: AgentConfig[]): AgentConfig[] => applySubagentDefaults(agents, defaultModel, defaultProvider, fallbackModels, defaultThinking, defaultExtensions, defaultSubagentOnlyExtensions);
+	const applyDefaults = (agents: AgentConfig[]): AgentConfig[] => applySubagentDefaults(agents, defaultModel, defaultProvider, fallbackModels, defaultThinking, defaultExtensions, defaultSubagentOnlyExtensions, defaultInheritGlobalContext);
 	const builtinAgents = applyBuiltinOverrides(applyDefaults(builtinLoaded.agents), userSettings, projectSettings, userSettingsPath, projectSettingsPath);
 	const userScanDirs = settingsAgentScanDirs(userSettings.agentScanDirs ?? [], isExcluded);
 	const projectScanDirs = settingsAgentScanDirs(projectSettings.agentScanDirs ?? [], isExcluded);
