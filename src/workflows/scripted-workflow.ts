@@ -1910,6 +1910,7 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 					}
 					acquiredLaunches.add(key);
 					const result = await options.launch(key, launchParams, childSignal, { admitted: true, batch: batch !== undefined });
+					if (draining) return result;
 					const autoResumeParams = setupAbortResumeParams(params, result, childSignal);
 					if (!autoResumeParams) return result;
 					resolvedResumeLineage = [...new Set([...(resolvedResumeLineage ?? []), result.runId!])];

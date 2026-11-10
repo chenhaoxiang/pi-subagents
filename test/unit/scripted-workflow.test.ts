@@ -4097,6 +4097,66 @@ describe("scripted workflow drain", () => {
 		assert.equal(drainedCalls, 1);
 	});
 
+	for (const requestDrain of [true, false]) {
+		it(requestDrain ? "keeps a setup-abort result without auto-resuming after a drain" : "auto-resumes a setup-abort result when no drain was requested", async () => {
+			const controller = new AbortController();
+			let registered: ((onDrained: () => void) => number) | undefined;
+			let markStarted!: () => void;
+			let releaseFirst!: () => void;
+			const firstStarted = new Promise<void>((resolve) => { markStarted = resolve; });
+			const firstHeld = new Promise<void>((resolve) => { releaseFirst = resolve; });
+			const launches: Array<{ key: string; resume: unknown; signalAborted: boolean }> = [];
+			let firstSignal: AbortSignal | undefined;
+			let drainedCalls = 0;
+			const firstResult: WorkflowScriptChildResult = {
+				key: "owned", ok: false, runId: "first", error: "This operation was aborted", output: "", artifactPaths: [],
+				results: [{ error: "This operation was aborted", usage: { input: 0, output: 0 } }],
+			};
+			const secondResult: WorkflowScriptChildResult = { key: "owned", ok: true, runId: "second", output: "recovered", artifactPaths: [] };
+			const workflow = runWorkflowScript({
+				script: `return await runs.run("owned", { agent: "worker", task: "synthetic" });`,
+				signal: controller.signal,
+				timeoutMs: 5_000,
+				registerDrain: (fn) => { registered = fn; },
+				async status(key) { return { key, ok: true, output: "unused", artifactPaths: [] }; },
+				async launch(key, params, signal) {
+					launches.push({ key, resume: params.resume ?? null, signalAborted: signal.aborted });
+					if (launches.length === 1) {
+						firstSignal = signal;
+						markStarted();
+						await firstHeld;
+						return firstResult;
+					}
+					return secondResult;
+				},
+			});
+			await firstStarted;
+			assert.ok(registered);
+			if (requestDrain) {
+				assert.equal(registered(() => { drainedCalls += 1; controller.abort(new Error("drained")); }), 1);
+				assert.equal(drainedCalls, 0, "drain must wait for the started attempt");
+			}
+			assert.equal(firstSignal?.aborted, false, "the started attempt finishes naturally");
+			releaseFirst();
+			if (requestDrain) {
+				await assert.rejects(workflow, (error: unknown) => {
+					assert.ok(drainedError(error));
+					assert.deepEqual(error.partial.children, [firstResult], "keep the first failure and its zero-usage evidence");
+					assert.equal(error.partial.trace.some((entry) => entry.phase === "auto-resume"), false);
+					return true;
+				});
+				assert.deepEqual(launches, [{ key: "owned", resume: null, signalAborted: false }]);
+				assert.equal(drainedCalls, 1);
+			} else {
+				const result = await workflow;
+				assert.deepEqual(launches, [{ key: "owned", resume: null, signalAborted: false }, { key: "owned", resume: "first", signalAborted: false }]);
+				assert.deepEqual(result.children, [{ ...secondResult, continuation: { runIds: ["first", "second"] } }]);
+				assert.equal(drainedCalls, 0);
+			}
+			assert.equal(registered, undefined, "workflow close unregisters drain");
+		});
+	}
+
 	it("stops a child queued behind the concurrency limit at once", async () => {
 		let releaseA!: () => void;
 		let aStarted!: () => void;
