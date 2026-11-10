@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 import { setChildSessionFactoryModule } from "../../src/runs/shared/child-session.ts";
 import { createEventBus, createTempDir, events, makeAgent, makeMinimalCtx, removeTempDir } from "../support/helpers.ts";
 import { deliverInterruptRequest, deliverStopRequest, requestAsyncSteer } from "../../src/runs/background/control-channel.ts";
-import { SUBAGENT_PROCESS_TERMINAL_EVENT } from "../../src/shared/types.ts";
+import { SUBAGENT_PROCESS_TERMINAL_EVENT, type ProcessTerminal } from "../../src/shared/types.ts";
 import { waitForSubagents } from "../../src/runs/background/subagent-wait.ts";
 import { activeRunMarkerAgeMs } from "../../src/runs/background/active-run-index.ts";
 import { getActiveAsyncCapacitySnapshot } from "../../src/runs/background/active-async-capacity.ts";
@@ -114,19 +114,17 @@ export default function() {
   };
 }
 `);
-		const reportReady = new Promise<void>((resolve) => {
-			// libuv compares expanded event paths against the watched directory (Windows 8.3 aliases differ).
-			const watcher = fs.watch(fs.realpathSync.native(tempDir), () => {
-				if (fs.existsSync(reportPath)) resolve();
-			});
-			t.after(() => watcher.close());
+		const bus = createEventBus();
+		const terminal = new Promise<unknown>((resolve) => {
+			const unsubscribe = bus.on(SUBAGENT_PROCESS_TERMINAL_EVENT, resolve);
+			t.after(unsubscribe);
 		});
 		setChildSessionFactoryModule(factoryPath);
 		t.after(() => setChildSessionFactoryModule(fileURLToPath(new URL("../support/runner-child-session-factory.ts", import.meta.url))));
 		const launched = executeAsyncChain(id, {
 			chain: [{ parallel: [{ agent: "worker", task: "A" }, { agent: "worker", task: "B" }] }],
 			agents: [makeAgent("worker")],
-			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			ctx: { pi: { events: bus }, cwd: tempDir, currentSessionId: "session-1" },
 			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
 			shareEnabled: false,
 			sessionRoot: path.join(tempDir, "sessions"),
@@ -134,7 +132,10 @@ export default function() {
 			controlConfig: { enabled: true, needsAttentionAfterMs: 999_999, activeNoticeAfterTurns: 1, activeNoticeAfterMs: 999_999, activeNoticeAfterTokens: 999_999, failedToolAttemptsBeforeAttention: 3, notifyOn: ["active_long_running", "needs_attention"], notifyChannels: ["event", "async"] },
 		});
 		assert.notEqual(launched.isError, true);
-		await reportReady;
+		// The runner writes its report synchronously on exit; close proof avoids missed directory-watch events.
+		const proof = await terminal as ProcessTerminal;
+		assert.equal(proof.runId, id);
+		assert.equal(proof.state, "observed");
 		const report = JSON.parse(fs.readFileSync(reportPath, "utf8"));
 		t.diagnostic(JSON.stringify(report.samples.map(({ state, writes, bytes }: { state: string; writes: number; bytes: number }) => ({ state, writes, bytes }))));
 		assert.deepEqual(report.samples.map((sample: { writes: number }) => sample.writes), [100, 100, 100]);
