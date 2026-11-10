@@ -1569,6 +1569,8 @@ export interface Details {
 		ownerExitedAt?: number;
 		/** Set on a run that resumes an interrupted one; `attempt` counts resumes that followed Pi exits. */
 		resumeOrigin?: { sourceRunId: string; attempt: number };
+		/** When `stop` with `drain` was requested (epoch ms). A drained run is never resumed. */
+		drainRequestedAt?: number;
 		resource?: WorkflowResourceProvenance;
 		preflightWarnings?: string[];
 		trace: Array<{
@@ -2464,6 +2466,8 @@ export interface SubagentState {
 	workflowControllers?: Map<string, AbortController>;
 	/** Live in-process workflow child stoppers keyed by parent workflow run id. */
 	workflowChildStops?: Map<string, (childId: string, message?: string) => boolean>;
+	/** Live in-process workflow drains keyed by workflow run id; `ok: false` means the drain request could not be saved and nothing was stopped. */
+	workflowDrains?: Map<string, () => { ok: true; started: number } | { ok: false }>;
 	/** Background children awaited by a blocking workflow call: their parent cannot answer supervisor asks. */
 	blockingWorkflowChildren?: Set<string>;
 }
@@ -2653,7 +2657,7 @@ export interface RunSyncOptions {
 	/** Registry models available for heuristic bare-model resolution */
 	availableModels?: Array<{ provider: string; id: string; fullId: string; contextWindow?: number }>;
 	/** Every provider in Pi's full catalog, so a `provider/id` never resolves under another provider. */
-	knownModelProviders?: import("../runs/shared/model-resolution.ts").KnownProviders;
+	knownProviders?: import("../runs/shared/model-resolution.ts").KnownProviders;
 	modelResponseAliases?: Record<string, string[]>;
 	/** Current parent-session provider to prefer for ambiguous bare model ids */
 	preferredModelProvider?: string;

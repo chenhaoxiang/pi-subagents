@@ -180,7 +180,7 @@ interface AsyncExecutionContext {
 	currentModelProvider?: string;
 	currentModel?: ParentModel;
 	scopedModelIds?: string[];
-	knownModelProviders?: KnownProviders;
+	knownProviders?: KnownProviders;
 	/** Optional model-scope enforcement resolved from subagent settings. */
 	modelScope?: ModelScopeConfig;
 	modelResponseAliases?: Record<string, string[]>;
@@ -1220,7 +1220,7 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 					ctx.currentModel,
 					availableModels,
 					a.modelProvider ?? ctx.currentModelProvider,
-					{ scope: modelScopes, source: modelOrigin === "explicit" ? "explicit" : "inherited", knownProviders: ctx.knownModelProviders },
+					{ scope: modelScopes, source: modelOrigin === "explicit" ? "explicit" : "inherited", knownProviders: ctx.knownProviders },
 				);
 			} catch (error) {
 				const message = error instanceof Error ? error.message : String(error);
@@ -1254,7 +1254,7 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 			a.fallbackModels,
 			availableModels,
 			a.modelProvider ?? ctx.currentModelProvider,
-			{ scope: modelScopes, primaryModelFromParent, origin: modelOrigin, knownProviders: ctx.knownModelProviders },
+			{ scope: modelScopes, primaryModelFromParent, origin: modelOrigin, knownProviders: ctx.knownProviders },
 		);
 		const modelCandidates = fallbackEvidence.candidates.map((candidate) => applyThinkingSuffix(candidate, effectiveThinking, thinkingOverride !== undefined));
 		if (unresolvedPrimaryModelError && modelCandidates.length <= 1) throw new AsyncStartValidationError(unresolvedPrimaryModelError);
@@ -2083,7 +2083,7 @@ export function executeAsyncSingle(
 				ctx.currentModel,
 				availableModels,
 				ctx.currentModelProvider,
-				{ scope: modelScopes, source: modelOrigin === "explicit" ? "explicit" : "inherited", knownProviders: ctx.knownModelProviders },
+				{ scope: modelScopes, source: modelOrigin === "explicit" ? "explicit" : "inherited", knownProviders: ctx.knownProviders },
 			);
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
@@ -2115,7 +2115,7 @@ export function executeAsyncSingle(
 		agentConfig.fallbackModels,
 		availableModels,
 		agentConfig.modelProvider ?? ctx.currentModelProvider,
-		{ scope: modelScopes, primaryModelFromParent: modelOrigin === "inherited", origin: modelOrigin, knownProviders: ctx.knownModelProviders },
+		{ scope: modelScopes, primaryModelFromParent: modelOrigin === "inherited", origin: modelOrigin, knownProviders: ctx.knownProviders },
 	);
 	const modelCandidates = fallbackEvidence.candidates.map((candidate) => applyThinkingSuffix(candidate, effectiveThinking, params.thinkingOverride !== undefined));
 	if (unresolvedPrimaryModelError && modelCandidates.length <= 1) return formatAsyncStartError("single", unresolvedPrimaryModelError);

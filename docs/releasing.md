@@ -4,7 +4,7 @@ project: workspace
 status: active
 truth_mode: maintained
 created: 2026-10-06
-verified: 2026-11-09
+verified: 2026-11-10
 verified_by: manual
 verification_scope: Candidate identity and release contract; publication and active-session loading require separate acceptance
 ---
@@ -23,7 +23,9 @@ Applies only to chenhaoxiang/pi-subagents. The community project remains [nicoba
 
 ## Baseline for this release
 
-The current source candidate is **0.86.0-fork.10**, based on community version **0.86.0** through `fd6d45b31bcc2412d3aca9f4230be979e95b0a96`, retaining the selected published v0.87.0 repairs without a full community upgrade. This revision continues through individual claim-unlink errors within the existing batch snapshot, then reports the first original error with bounded bookkeeping; no retry worker is added. Wait-record v2, native owner/dead-only takeover, legacy-v1 non-consumption, record-before-claim removal, notification counts and mission schema-2 support remain unchanged. Previous **0.86.0-fork.9** supports the same formats but can strand later harmless claims after one unlink error. Fork.8 and earlier cannot consume v2 waits; supporting readers do not restore, deliver, migrate or prune v1. Rollback does not downgrade records or authorize replay of underlying tasks. See [waitTool](configuration.md#waittool) and [missions](missions.md). Source, immutable Release, fresh download, disk installation and active-session loading remain separate; no actual wait-store migration or forced session reload is part of publication.
+The current source candidate is **0.87.0-fork.1**, integrating the published community **v0.87.0** at `52e68e9ef0e563d5c97b28519f9999f1b5fbbbea` (annotated tag object `9427c7cd491a10a5793124f44e80c3efc0a8bc04`). The 16-commit/58-file community delta is merged into fork main through `bebba58a19ee6b7d36dd701bbdadb9814bb0ccf4`; newer unreleased community changes are excluded. Previously selected provider identity, parent-scoped shutdown and process-owned wait fixes are deduplicated while retaining detached placements, strict wait-record v2, dead-only takeover, corrupt-claim retention, record-before-claim removal and fork.10's per-file cleanup-error isolation. Guarded fallback, idle timeouts, runner/host/CJS peer behavior, unknown recovery, native parent wake and mission schema 2 remain. See the [source synchronization report](maintenance/2026-11-10-community-0.87.0.md).
+
+The published install/rollback baseline remains **0.86.0-fork.10**. The candidate is source-only until fresh independent review, normal PR merge and separate immutable publication. Wait-record v2 and mission schema 2 are not new migrations in this candidate. Fork.8 and earlier cannot consume v2 waits; supporting readers do not restore, deliver, migrate or prune v1. Rollback does not downgrade records or authorize replay of underlying tasks. See [waitTool](configuration.md#waittool) and [missions](missions.md). Source, immutable Release, fresh download, disk installation and active-session loading remain separate; no actual wait-store migration or forced session reload is part of this source update.
 
 ## Publish every version
 
