@@ -49,6 +49,25 @@ describe("async resume lookup", () => {
 		}
 	});
 
+	it("reports a missing fork copy without asserting age-based deletion", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-fork-gone-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			const sessionFile = path.join(root, "parent", "forks", "run-fork1", "child.jsonl");
+			writeJson(path.join(asyncRoot, "run-fork1", "status.json"), {
+				runId: "run-fork1", mode: "single", state: "complete", startedAt: 100, endedAt: 200, lastUpdate: 200, cwd: root, sessionFile,
+				steps: [{ agent: "worker", status: "complete" }],
+			});
+
+			assert.throws(
+				() => resolveAsyncResumeTarget({ id: "run-fork1" }, { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") }),
+				/session file does not exist: .*child\.jsonl\. This was a forked child's copy of the parent session\. The maintained fork does not automatically delete fork copies/,
+			);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("refuses a run directory whose status names another run", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-mismatch-"));
 		try {

@@ -20,13 +20,21 @@ describe("official standalone download recovery", () => {
 	});
 
 	it("keeps hash verification mandatory after either download path and before extraction", () => {
+		const cacheGate = run.indexOf('if ! test -f "$archive"');
 		const fallback = run.indexOf("if ! curl");
 		const endFallback = run.indexOf("\nfi", fallback);
 		const hash = run.indexOf("sha256sum --check -");
 		const extract = run.indexOf("tar -xzf");
-		assert.ok(fallback >= 0 && endFallback > fallback && hash > endFallback && extract > hash);
+		assert.ok(cacheGate >= 0 && fallback > cacheGate && endFallback > fallback && hash > endFallback && extract > hash);
 		assert.match(run, /set -euo pipefail/);
-		assert.match(run, /mv "\$RUNNER_TEMP\/pi-official\/release-api\.tar\.gz" "\$RUNNER_TEMP\/pi-official\/release\.tar\.gz"/);
+		assert.match(run, /archive="\$RUNNER_TEMP\/pi-official-archive\/release\.tar\.gz"/);
+		assert.match(run, /curl[^\n]+--output "\$archive"/);
+		assert.match(run, /mv "\$RUNNER_TEMP\/pi-official-archive\/release-api\.tar\.gz" "\$archive"/);
+		assert.match(run.slice(endFallback), /"\$sha" "\$archive" \| sha256sum --check -/);
+		assert.match(run.slice(extract), /^tar -xzf "\$archive"/);
+		const cache = job.steps.find((value: { uses?: string }) => value.uses === "actions/cache@v4");
+		assert.equal(cache.with.path, "${{ runner.temp }}/pi-official-archive");
+		assert.equal(cache.with.key, "pi-official-${{ steps.release.outputs.sha }}");
 		assert.equal(step["continue-on-error"], undefined);
 		assert.doesNotMatch(run.slice(hash, extract), /\|\|/);
 	});

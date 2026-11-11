@@ -12,6 +12,7 @@ import {
 	writeMetadata,
 } from "../../shared/artifacts.ts";
 import { createChildTranscriptWriter, type ChildTranscriptWriter } from "../../shared/child-transcript.ts";
+import { extractReportedProgress } from "../../shared/reported-progress.ts";
 import {
 	type AgentProgress,
 	type ArtifactPaths,
@@ -41,6 +42,8 @@ import {
 	detectSubagentError,
 	hasEmptyTerminalAssistantResponse,
 	formatEmptyTerminalAssistantResponseError,
+	getTerminalAssistantStopReason,
+	TRUNCATED_RESPONSE_ERROR,
 	extractToolArgsPreview,
 	assistantMessageError,
 	extractTextFromContent,
@@ -112,6 +115,7 @@ import { childSessionFactory, childSessionHasQueuedMessages, projectChildSession
 import { reconcileAttemptUsage } from "../shared/usage-reconciliation.ts";
 import { clearProviderRetry, observeProviderDiagnostics, snapshotProviderDiagnostics } from "../../shared/provider-diagnostics.ts";
 import { isRexLocalMachine } from "../shared/rex-machine.ts";
+import { pauseForSupervisorWait, startPausableTimer, type PausableTimer } from "../shared/supervisor-wait-timer.ts";
 
 const artifactOutputByResult = new WeakMap<SingleResult, string>();
 const acceptanceOutputByResult = new WeakMap<SingleResult, string>();
@@ -301,6 +305,8 @@ interface StructuredDelegationProgressState {
 	recentOutput: string[];
 	recentTools: Array<{ tool: string; args: string }>;
 	activityState?: AgentProgress["activityState"];
+	progressText?: string;
+	progressUpdatedAt?: number;
 	model?: string;
 	toolCount: number;
 	tokens: number;
@@ -315,6 +321,8 @@ function captureStructuredDelegationProgressState(progress: AgentProgress, resul
 		recentOutput: [...progress.recentOutput],
 		recentTools: progress.recentTools.slice(-MAX_STREAMED_RECENT_TOOLS).map(({ tool, args }) => ({ tool, args })),
 		activityState: progress.activityState,
+		progressText: progress.progressText,
+		progressUpdatedAt: progress.progressUpdatedAt,
 		model: progress.model ?? result.model,
 		toolCount: progress.toolCount,
 		tokens: progress.tokens,
@@ -332,6 +340,8 @@ function structuredDelegationProgressChanged(
 		|| previous.currentTool !== progress.currentTool
 		|| previous.currentToolArgs !== progress.currentToolArgs
 		|| previous.activityState !== progress.activityState
+		|| previous.progressText !== progress.progressText
+		|| previous.progressUpdatedAt !== progress.progressUpdatedAt
 		|| previous.model !== (progress.model ?? result.model)
 		|| previous.toolCount !== progress.toolCount
 		|| previous.tokens !== progress.tokens
@@ -356,7 +366,8 @@ function isCompleteUsageCounter(value: unknown): value is number {
 
 const STOPPED_BEFORE_COMPLETION_ERROR = "Subagent stopped before completion.";
 const AFTER_COMPACTION_SETTLEMENT = Symbol("afterCompactionSettlement");
-type AbortRecoverySingleResult = SingleResult & { [AFTER_COMPACTION_SETTLEMENT]?: true };
+const REMAINING_TIMEOUT_MS = Symbol("remainingTimeoutMs");
+type AbortRecoverySingleResult = SingleResult & { [AFTER_COMPACTION_SETTLEMENT]?: true; [REMAINING_TIMEOUT_MS]?: number };
 
 
 async function runSingleAttempt(
@@ -382,7 +393,7 @@ async function runSingleAttempt(
 		verifyModel: boolean;
 		providerDiagnostics?: SingleResult["providerDiagnostics"];
 	},
-): Promise<SingleResult> {
+): Promise<AbortRecoverySingleResult> {
 	const effectiveThinking = options.thinkingOverride ?? agent.thinking;
 	const modelArg = applyThinkingSuffix(model, effectiveThinking, options.thinkingOverride !== undefined);
 	assertThinkingWithinCeiling({ model: modelArg, configThinking: effectiveThinking, ceiling: options.thinkingCeiling, agent: agent.name, runId: options.runId });
@@ -483,7 +494,7 @@ async function runSingleAttempt(
 		...(options.structuredOutput ? { structuredOutputSchema: options.structuredOutput.schema } : {}),
 		...(options.extensionBindings ? { extensionBindings: options.extensionBindings } : {}),
 	});
-	const result: SingleResult = withRunContext({
+	const result: AbortRecoverySingleResult = withRunContext({
 		index: options.index ?? 0,
 		agent: agent.name,
 		task: shared.originalTask ?? task,
@@ -576,6 +587,7 @@ async function runSingleAttempt(
 	let toolAvailabilityError: string | undefined;
 	let abortedBySignal = options.signal?.aborted === true;
 	let afterCompactionSettlement = false;
+	let remainingTimeoutMs: number | undefined;
 
 	if (options.workflowChildPermitLaunch) {
 		const permitError = consumeWorkflowChildPermit(options.workflowChildPermitLaunch.permit, {
@@ -612,12 +624,13 @@ async function runSingleAttempt(
 		let removeAbortListener: (() => void) | undefined;
 		let removeInterruptListener: (() => void) | undefined;
 		let activityTimer: NodeJS.Timeout | undefined;
-		let timeoutTimer: NodeJS.Timeout | undefined;
+		let timeoutTimer: PausableTimer | undefined;
 		let idleTimeoutTimer: NodeJS.Timeout | undefined;
 		let timeoutHardFinishTimer: NodeJS.Timeout | undefined;
 		const clearTimeoutTimers = () => {
 			if (timeoutTimer) {
-				clearTimeout(timeoutTimer);
+				remainingTimeoutMs = timeoutTimer.remainingMs();
+				timeoutTimer.clear();
 				timeoutTimer = undefined;
 			}
 			if (idleTimeoutTimer) {
@@ -863,7 +876,7 @@ async function runSingleAttempt(
 		};
 
 		let activeLongRunningNotified = false;
-		type PendingToolResult = { tool: string; path?: string; mutates: boolean; startedAt?: number };
+		type PendingToolResult = { tool: string; path?: string; mutates: boolean; startedAt?: number; progressText?: string };
 		// Pi's parallel tool execution emits every tool_execution_start before the first result message,
 		// so results are matched to their call by toolCallId; the last-started slot covers events without one.
 		const pendingToolResultsByCallId = new Map<string, PendingToolResult>();
@@ -1142,6 +1155,7 @@ async function runSingleAttempt(
 			progress.durationMs = now - startTime;
 			progress.lastActivityAt = now;
 			updateActivityState(now);
+			pauseForSupervisorWait(timeoutTimer, evt);
 
 			if (evt.type === "tool_execution_start") {
 				const toolArgs = evt.args && typeof evt.args === "object" && !Array.isArray(evt.args)
@@ -1161,7 +1175,7 @@ async function runSingleAttempt(
 					result.toolBudget = toolBudgetState(options.toolBudget, progress.toolCount, result.toolBudget?.blockedTool);
 				}
 				const mutates = isMutatingTool(evt.toolName, toolArgs, agent.mutationTools);
-				pendingToolResult = { tool: evt.toolName ?? "tool", path: activeTool?.path, mutates, startedAt: now };
+				pendingToolResult = { tool: evt.toolName ?? "tool", path: activeTool?.path, mutates, startedAt: now, progressText: extractReportedProgress(evt.toolName ?? "", evt.args) };
 				if (typeof evt.toolCallId === "string" && evt.toolCallId) pendingToolResultsByCallId.set(evt.toolCallId, pendingToolResult);
 				fireUpdate();
 			}
@@ -1260,6 +1274,10 @@ async function runSingleAttempt(
 						);
 					}
 					appendRecentOutput(progress, resultText.split("\n").slice(-10));
+					if (evt.message.isError !== true && resultToolName === toolSnapshot?.tool && toolSnapshot?.progressText) {
+						progress.progressText = toolSnapshot.progressText;
+						progress.progressUpdatedAt = now;
+					}
 					// A budget block has its own signal; it is not a failing mutation.
 					if (toolSnapshot?.mutates && !budgetBlocked && didMutatingToolFail(evt.message)) {
 						recordMutatingFailure(mutatingFailures, {
@@ -1302,7 +1320,7 @@ async function runSingleAttempt(
 		}
 
 		if (attemptTimeout) {
-			timeoutTimer = setTimeout(() => {
+			timeoutTimer = startPausableTimer(attemptTimeout.remainingMs, () => {
 				if (sessionSettled || lifecycleFinished || interruptedByControl || result.timedOut) return;
 				result.timedOut = true;
 				timeoutCause = attemptTimeout.message;
@@ -1319,8 +1337,7 @@ async function runSingleAttempt(
 					settle(undefined, true);
 				}, 4000);
 				timeoutHardFinishTimer.unref?.();
-			}, attemptTimeout.remainingMs);
-			timeoutTimer.unref?.();
+			});
 		}
 
 		let toolTimeoutSequence = 0;
@@ -1355,7 +1372,7 @@ async function runSingleAttempt(
 		};
 		const terminateForToolTimeout = (message: string): void => {
 			if (sessionSettled || lifecycleFinished || interruptedByControl || result.timedOut) return;
-			clearTimeout(timeoutTimer);
+			timeoutTimer?.clear();
 			result.timedOut = true;
 			timeoutCause = message;
 			result.error = message;
@@ -1374,9 +1391,6 @@ async function runSingleAttempt(
 		const armToolTimeout = (event: { toolCallId?: unknown; toolName: string }): void => {
 			const timeoutForTool = effectiveToolTimeoutMs(event.toolName, options.toolTimeoutMs);
 			if (timeoutForTool === undefined) return;
-			const elapsed = Date.now() - startTime;
-			const runRemaining = attemptTimeout ? Math.max(0, attemptTimeout.remainingMs - elapsed) : undefined;
-			if (runRemaining !== undefined && timeoutForTool >= runRemaining) return;
 			const key = toolTimeoutCallKey(event, ++toolTimeoutSequence);
 			const toolName = event.toolName;
 			const timer = setTimeout(() => {
@@ -1517,12 +1531,12 @@ async function runSingleAttempt(
 				const steer = created.steer.bind(created);
 				const followUp = created.followUp.bind(created);
 				created.steer = async (text) => {
+					await steer(text);
 					if (cleanTerminalAssistantStopReceived || agentSettledReceived) queuedDrainHold = true;
-					return steer(text);
 				};
 				created.followUp = async (text) => {
+					await followUp(text);
 					if (cleanTerminalAssistantStopReceived || agentSettledReceived) queuedDrainHold = true;
-					return followUp(text);
 				};
 				created.detached = detached;
 				unsubscribe = created.subscribe((event) => processEvent(event as Parameters<typeof processEvent>[0]));
@@ -1568,9 +1582,8 @@ async function runSingleAttempt(
 	result.exitCode = exitCode;
 	result.providerDiagnostics = clearProviderRetry(result.providerDiagnostics);
 	progress.providerDiagnostics = result.providerDiagnostics;
-	if (afterCompactionSettlement) {
-		(result as AbortRecoverySingleResult)[AFTER_COMPACTION_SETTLEMENT] = true;
-	}
+	if (afterCompactionSettlement) result[AFTER_COMPACTION_SETTLEMENT] = true;
+	result[REMAINING_TIMEOUT_MS] = remainingTimeoutMs;
 	if (interruptedByControl) {
 		result.exitCode = 0;
 		result.interrupted = true;
@@ -1642,6 +1655,9 @@ async function runSingleAttempt(
 			result.error = errInfo.details
 				? `${errInfo.errorType} failed (exit ${errInfo.exitCode}): ${errInfo.details}`
 				: `${errInfo.errorType} failed with exit code ${errInfo.exitCode}`;
+		} else if (!validatedStructuredOutput && getTerminalAssistantStopReason(messages) === "length") {
+			result.exitCode = 1;
+			result.error = TRUNCATED_RESPONSE_ERROR;
 		}
 	}
 
@@ -2081,6 +2097,8 @@ async function runSyncCompletionInner(
 				providerDiagnostics: lastResult?.providerDiagnostics,
 			});
 			lastResult = attemptResult;
+			const remainingMs = attemptResult[REMAINING_TIMEOUT_MS];
+			if (remainingMs !== undefined) attemptOptions.deadlineAt = Date.now() + remainingMs;
 			const model = attemptResult.model ?? candidate ?? "default";
 			if (!attemptedModels.includes(model)) attemptedModels.push(model);
 			sumUsage(aggregateUsage, attemptResult.usage);
@@ -2104,7 +2122,7 @@ async function runSyncCompletionInner(
 				structuredOutputFailed: attemptResult.structuredOutputFailed,
 				acceptanceFailed: false,
 				currentTool: attemptResult.progress?.currentTool,
-				afterCompactionSettlement: (attemptResult as AbortRecoverySingleResult)[AFTER_COMPACTION_SETTLEMENT],
+				afterCompactionSettlement: attemptResult[AFTER_COMPACTION_SETTLEMENT],
 			});
 			if (recovery.action === "resume") {
 				recoveryPrompt = recovery.prompt;
