@@ -289,3 +289,8 @@ export function cleanupAllArtifactDirs(maxAgeDays: number): void {
 		}
 	}
 }
+
+export function missingForkCopyNote(sessionFile: string): string {
+	if (path.basename(path.dirname(path.dirname(sessionFile))) !== "forks") return "";
+	return ". This was a forked child's copy of the parent session. The maintained fork does not automatically delete fork copies; inspect the retained run and its dependencies before recovery.";
+}

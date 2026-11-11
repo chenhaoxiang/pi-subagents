@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -9,7 +10,8 @@ import { clearSkillCache, discoverAvailableSkills, resolveSkillPath } from "../.
 import { loadConfig, updateConfig } from "../../src/extension/config.ts";
 import { diagnoseIntercomBridge, resolveIntercomBridge } from "../../src/intercom/intercom-bridge.ts";
 import { cleanupAllArtifactDirs, getArtifactsDir, getProjectArtifactsDir } from "../../src/shared/artifacts.ts";
-import { TEMP_ARTIFACTS_DIR } from "../../src/shared/types.ts";
+import { ASYNC_DIR, TEMP_ARTIFACTS_DIR } from "../../src/shared/types.ts";
+import { acquireSessionLease } from "../../src/runs/shared/session-lease.ts";
 import { getAgentDir, getConfigDirName, getProjectConfigDir, resolveConfigDirName } from "../../src/shared/utils.ts";
 
 let tempDir = "";
@@ -244,6 +246,54 @@ Package skill content.
 		assert.equal(fs.existsSync(handoff), true);
 		assert.equal(fs.existsSync(patch), true);
 	});
+
+	for (const entry of ["cleanup", "extension startup"] as const) {
+		it(`keeps fork copies with missing, unknown, foreign, live or resumable ownership during ${entry}`, () => {
+			const projectSessions = path.join(agentDir, "sessions", "--project--");
+			const parentFile = path.join(projectSessions, "parent.jsonl");
+			const original = JSON.stringify({ type: "session", id: "parent", cwd });
+			writeFile(parentFile, original);
+			const forkRoot = path.join(projectSessions, "parent", "forks");
+			const copies = ["missing", "unknown", "foreign", "live", "resumable", "finished"].map((state) => ({
+				state, runId: `fork-${state}-${process.pid}`, file: path.join(forkRoot, `fork-${state}-${process.pid}`, "child.jsonl"),
+			}));
+			const oldTime = new Date(Date.now() - 100 * 24 * 60 * 60 * 1000);
+			for (const copy of copies) {
+				writeFile(copy.file, JSON.stringify({ type: "session", id: copy.runId, parentSession: parentFile, cwd }));
+				fs.utimesSync(copy.file, oldTime, oldTime);
+				fs.utimesSync(path.dirname(copy.file), oldTime, oldTime);
+				if (copy.state !== "missing") writeFile(path.join(ASYNC_DIR, copy.runId, "status.json"), JSON.stringify({
+					runId: copy.runId, mode: "single", state: copy.state === "live" || copy.state === "unknown" ? "running" : "complete",
+					startedAt: 1, lastUpdate: 1, pid: process.pid, sessionId: copy.state === "foreign" ? "other-parent" : "parent",
+					sessionFile: copy.file, steps: [], ...(copy.state === "unknown" ? { processTerminal: { state: "unknown" } } : {}),
+				}));
+			}
+			const leases = copies.filter((copy) => copy.state === "foreign" || copy.state === "resumable").map((copy) => acquireSessionLease(
+				{ sessionFile: copy.file, runId: `resume-${copy.runId}`, sourceRunId: copy.runId },
+				copy.state === "foreign" ? { hostname: "foreign-synthetic-host" } : {},
+			));
+			const oldArtifact = path.join(projectSessions, "subagent-artifacts", "old-output.md");
+			writeFile(oldArtifact, "expired artifact");
+			fs.utimesSync(oldArtifact, oldTime, oldTime);
+			try {
+				if (entry === "cleanup") cleanupAllArtifactDirs(1);
+				else {
+					const result = spawnSync(process.execPath, ["--experimental-strip-types", "--input-type=module", "--eval", `
+						const { default: register } = await import("./src/extension/index.ts");
+						const { createEventBus } = await import("@earendil-works/pi-coding-agent");
+						register(new Proxy({ events: createEventBus(), on() {}, registerTool() {}, registerCommand() {}, registerShortcut() {}, registerMessageRenderer() {} }, { get: (target, key) => key in target ? target[key] : () => undefined }));
+					`], { cwd: process.cwd(), env: { ...process.env, PI_SUBAGENT_CHILD: undefined }, encoding: "utf8", timeout: 10_000 });
+					assert.equal(result.status, 0, result.stderr);
+				}
+				assert.equal(fs.existsSync(oldArtifact), false, "existing artifact cleanup still runs");
+				assert.equal(fs.readFileSync(parentFile, "utf8"), original, "the original parent is untouched");
+				for (const copy of copies) assert.equal(JSON.parse(fs.readFileSync(copy.file, "utf8")).id, copy.runId, copy.state);
+			} finally {
+				for (const lease of leases) lease.release();
+				for (const copy of copies) fs.rmSync(path.join(ASYNC_DIR, copy.runId), { recursive: true, force: true });
+			}
+		});
+	}
 
 	it("resolves configured artifact directory preferences", () => {
 		const sessionFile = path.join(agentDir, "sessions", "session-1", "session.jsonl");

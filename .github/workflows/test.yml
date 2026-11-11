@@ -230,6 +230,14 @@ jobs:
           # Bubblewrap needs only the runner's Ubuntu mirror (sources.list), not its third-party repositories (sources.list.d).
           sudo apt-get -o Dir::Etc::sourceparts=- update
           sudo apt-get -o Dir::Etc::sourceparts=- install -y bubblewrap
+      - name: Read the pinned official release
+        id: release
+        run: echo "sha=$(node -p 'require("./test/smoke/standalone-release.json").archiveSha256')" >> "$GITHUB_OUTPUT"
+      # GitHub release downloads from runners return 504 for long stretches; the archive is checksum-pinned, so reuse it.
+      - uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/pi-official-archive
+          key: pi-official-${{ steps.release.outputs.sha }}
       - name: Provision the checksum-pinned official binary
         shell: bash
         env:
@@ -238,17 +246,19 @@ jobs:
           set -euo pipefail
           url="$(node -p 'require("./test/smoke/standalone-release.json").url')"
           sha="$(node -p 'require("./test/smoke/standalone-release.json").archiveSha256')"
-          mkdir -p "$RUNNER_TEMP/pi-official"
-          # The web download can return repeated gateway errors before tests start.
-          # Both transports fetch the same pinned official asset; only transport failure falls back.
-          if ! curl --fail --location --connect-timeout 30 --max-time 180 --retry 3 --retry-delay 15 --retry-max-time 300 "$url" --output "$RUNNER_TEMP/pi-official/release.tar.gz"; then
-            timeout --kill-after=10s 180s gh release download "v$(node -p 'require("./test/smoke/standalone-release.json").version')" \
-              --repo earendil-works/pi --pattern pi-linux-x64.tar.gz \
-              --output "$RUNNER_TEMP/pi-official/release-api.tar.gz"
-            mv "$RUNNER_TEMP/pi-official/release-api.tar.gz" "$RUNNER_TEMP/pi-official/release.tar.gz"
+          archive="$RUNNER_TEMP/pi-official-archive/release.tar.gz"
+          mkdir -p "$RUNNER_TEMP/pi-official" "$RUNNER_TEMP/pi-official-archive"
+          # Both transports fetch the same pinned asset; only transport failure falls back.
+          if ! test -f "$archive"; then
+            if ! curl --fail --location --connect-timeout 30 --max-time 180 --retry 3 --retry-delay 15 --retry-max-time 300 "$url" --output "$archive"; then
+              timeout --kill-after=10s 180s gh release download "v$(node -p 'require("./test/smoke/standalone-release.json").version')" \
+                --repo earendil-works/pi --pattern pi-linux-x64.tar.gz \
+                --output "$RUNNER_TEMP/pi-official-archive/release-api.tar.gz"
+              mv "$RUNNER_TEMP/pi-official-archive/release-api.tar.gz" "$archive"
+            fi
           fi
-          printf '%s  %s\n' "$sha" "$RUNNER_TEMP/pi-official/release.tar.gz" | sha256sum --check -
-          tar -xzf "$RUNNER_TEMP/pi-official/release.tar.gz" -C "$RUNNER_TEMP/pi-official"
+          printf '%s  %s\n' "$sha" "$archive" | sha256sum --check -
+          tar -xzf "$archive" -C "$RUNNER_TEMP/pi-official"
       - name: Complete isolated official binary matrix
         run: node test/smoke/standalone-matrix.mjs "$RUNNER_TEMP/pi-official/pi/pi" "$RUNNER_TEMP/standalone-matrix"
       - name: Provision npm host for public launch regression

@@ -7,6 +7,7 @@ import type { Message } from "@earendil-works/pi-ai";
 import { installRunnerHttpDispatcher } from "./runner-http-dispatcher.ts";
 import { startConfiguredSubagentEntrypoint } from "./subagent-runner-bootstrap.ts";
 import { writeAtomicJson } from "../../shared/atomic-json.ts";
+import { extractReportedProgress } from "../../shared/reported-progress.ts";
 import { withResultRunLease, writeAsyncResultFile, writePendingAsyncResultFile } from "./result-files.ts";
 import { createFileCoalescer } from "../../shared/file-coalescer.ts";
 import { createCapacityResilientJsonWriter } from "../../shared/capacity-resilient-json.ts";
@@ -85,6 +86,7 @@ import { buildRunnerChildLaunch } from "./runner-child-launch.ts";
 import { normalizeExtensionBindings } from "../shared/extension-bindings.ts";
 import type { ChildSessionFactory, DefaultChildSessionFactoryOptions } from "../shared/child-session.ts";
 import { runChildSession, type ChildEvent, type RunChildSessionInput, type RunChildSessionResult, type SteerDelivery, type StepSteerHandler } from "./run-child-session.ts";
+import { isBlockingSupervisorTool, pauseForSupervisorWait, startPausableTimer, type PausableTimer } from "../shared/supervisor-wait-timer.ts";
 import { loadRunnerChildSessionFactory } from "./runner-child-sessions.ts";
 import { SUBAGENT_CHILD_ENV, SUBAGENT_RUNNER_PID_ENV } from "../shared/child-runtime-config.ts";
 import { deriveChildSessionName } from "../../shared/child-session-name.ts";
@@ -104,7 +106,7 @@ import { persistRunnerStartupFailure } from "./runner-startup-failure.ts";
 import { currentRecordedPid } from "./boot-id.ts";
 import type { RecordedPid } from "./stale-run-reconciler.ts";
 import { createSteeringStatus, recordSteeringRequest, steeringStatus, terminalSteeringNoticeState, unconsumedSteerReason, updateSteeringTarget } from "./steering.ts";
-import { PROMPT_REDACTED, SUBAGENT_STOPPED_MESSAGE, SUBAGENT_TIMED_OUT_MESSAGE, detectSubagentError, extractTextFromContent, extractToolArgsPreview, formatEmptyTerminalAssistantResponseError, getAgentDir, getFinalOutput, hasEmptyTerminalAssistantResponse, readStatus } from "../../shared/utils.ts";
+import { PROMPT_REDACTED, SUBAGENT_STOPPED_MESSAGE, SUBAGENT_TIMED_OUT_MESSAGE, TRUNCATED_RESPONSE_ERROR, detectSubagentError, extractTextFromContent, extractToolArgsPreview, formatEmptyTerminalAssistantResponseError, getAgentDir, getFinalOutput, getTerminalAssistantStopReason, hasEmptyTerminalAssistantResponse, readStatus } from "../../shared/utils.ts";
 import { planAbortRecovery } from "../shared/abort-recovery.ts";
 import {
 	createMutatingFailureState,
@@ -402,15 +404,6 @@ function appendDiagnosticJsonl(filePath: string, line: string, droppedEventType?
 	state.diagnosticsTruncated = true;
 }
 
-function isBlockingSupervisorTool(toolName: string | undefined, args: unknown): boolean {
-	if (!args || typeof args !== "object" || Array.isArray(args)) return false;
-	if (toolName === "contact_supervisor") {
-		const reason = (args as Record<string, unknown>).reason;
-		return reason === "need_decision" || reason === "interview_request";
-	}
-	return toolName === "intercom" && (args as Record<string, unknown>).action === "ask";
-}
-
 function findLatestSessionFile(sessionDir: string): string | null {
 	try {
 		const files = fs
@@ -703,8 +696,6 @@ interface SingleStepContext {
 	stopMessage?: string;
 	/** Resolved configured hard per-tool-call timeout (ms); fast tools still have a default when undefined. */
 	toolTimeoutMs?: number;
-	/** Effective step deadline (Date.now() + effective timeout) when a run budget exists. */
-	deadlineAt?: number;
 	childIntercomTarget?: string;
 	orchestratorIntercomTarget?: string;
 	nestedRoute?: NestedRouteInfo;
@@ -1255,7 +1246,6 @@ export async function runSingleStepInner(
 			onContextWindow: (contextLimit) => ctx.onAttemptStart?.({ ...attemptModel, contextLimit }),
 			transcriptWriter,
 			toolTimeoutMs: ctx.toolTimeoutMs,
-			runDeadlineAt: ctx.deadlineAt,
 			expectedModelForVerification,
 			modelVerificationRegistry: step.modelVerificationRegistry,
 			modelResponseAliases: step.modelResponseAliases,
@@ -1335,6 +1325,10 @@ export async function runSingleStepInner(
 			&& (!hiddenError?.hasError || hasEmptyTerminalAssistantResponse(run.messages))
 			? formatEmptyTerminalAssistantResponseError(run.messages)
 			: undefined;
+		// Earlier errors in the chains below win, so only the hidden-error gate needs restating.
+		const truncatedResponseError = hiddenError && !hiddenError.hasError && !validatedStructuredOutput && getTerminalAssistantStopReason(run.messages) === "length"
+			? TRUNCATED_RESPONSE_ERROR
+			: undefined;
 		const remoteGitChanged = run.nativeMachine?.initialGit && run.nativeMachine.finalGit ? run.nativeMachine.initialGit.head !== run.nativeMachine.finalGit.head || run.nativeMachine.initialGit.dirty !== run.nativeMachine.finalGit.dirty : undefined;
 		const mutationEvidence = run.nativeMachine && !isRexLocalMachine(step.machine) ? { source: "tracked-files" as const, trackedOnly: true as const, changedFiles: [], attemptedMutation: remoteGitChanged === true, ...(remoteGitChanged === undefined ? { unavailable: "Remote Git before/after evidence was incomplete." } : {}) } : await collectTrackedMutationEvidence(mutationSnapshot, step.cwd ?? ctx.cwd);
 		finalMutationEvidence = mutationEvidence;
@@ -1352,7 +1346,7 @@ export async function runSingleStepInner(
 		finalRequiredOutputMissing = requiredOutput?.missing;
 		const missingRequiredOutputError = terminalDiagnosticsEligible ? formatRequiredOutputError(requiredOutput) : undefined;
 		const missingRequiredOutputAfterMutation = Boolean(missingRequiredOutputError) && (mutationAttemptObserved || Boolean(mutationEvidence.changedFiles.length));
-		const effectiveExitCode = toolAvailabilityError || midToolExitError || structuredError || emptyOutputError || missingRequiredOutputError
+		const effectiveExitCode = toolAvailabilityError || midToolExitError || structuredError || truncatedResponseError || emptyOutputError || missingRequiredOutputError
 			? 1
 			: hiddenError?.hasError
 				? (hiddenError.exitCode ?? 1)
@@ -1364,6 +1358,7 @@ export async function runSingleStepInner(
 			?? structuredError
 			?? run.error
 			?? emptyOutputError
+			?? truncatedResponseError
 			?? (missingRequiredOutputAfterMutation ? missingRequiredOutputError : undefined)
 			?? (hiddenError?.hasError
 				? hiddenError.details
@@ -1898,23 +1893,14 @@ function combinedAbortSignal(signals: Array<AbortSignal | undefined>): AbortSign
 async function runSingleStepWithTimeout(
 	step: SubagentStep,
 	ctx: SingleStepContext,
-	parentDeadlineAt?: number,
+	runRemainingMs: () => number | undefined,
 ): Promise<SingleStepResult> {
+	const runRemainingAtStart = runRemainingMs();
+	// A shorter run timer owns the deadline, including pauses for a sibling's supervisor wait.
+	const timeoutMs = step.timeoutMs !== undefined && (runRemainingAtStart === undefined || runRemainingAtStart > step.timeoutMs) ? step.timeoutMs : undefined;
 	const idleTimeoutMs = step.idleTimeoutMs;
-	const parentRemainingMs = parentDeadlineAt === undefined ? undefined : Math.max(0, parentDeadlineAt - Date.now());
-	if (step.timeoutMs === undefined && idleTimeoutMs === undefined) return runSingleStep(step, parentDeadlineAt === undefined ? ctx : {
-		...ctx,
-		deadlineAt: ctx.deadlineAt === undefined ? parentDeadlineAt : Math.min(ctx.deadlineAt, parentDeadlineAt),
-	});
-
-	const timeoutMs = step.timeoutMs === undefined || parentRemainingMs === undefined
-		? step.timeoutMs
-		: Math.min(step.timeoutMs, parentRemainingMs);
-	const timeoutMessage = parentRemainingMs !== undefined && step.timeoutMs !== undefined && parentRemainingMs <= step.timeoutMs
-		? ctx.timeoutMessage
-		: step.timeoutMs === undefined
-			? `Subagent idle timed out after ${idleTimeoutMs}ms.`
-			: `Subagent timed out after ${step.timeoutMs}ms.`;
+	if (timeoutMs === undefined && idleTimeoutMs === undefined) return runSingleStep(step, ctx);
+	const timeoutMessage = timeoutMs === undefined ? `Subagent idle timed out after ${idleTimeoutMs}ms.` : `Subagent timed out after ${timeoutMs}ms.`;
 	const timeoutController = new AbortController();
 	let timeoutAction: (() => void) | undefined;
 	let timeoutTriggered = false;
@@ -1936,36 +1922,24 @@ async function runSingleStepWithTimeout(
 		idleTimer = setTimeout(triggerTimeout, idleTimeoutMs);
 		idleTimer.unref?.();
 	};
-	const onChildEvent = (event: ChildEvent): void => {
-		if (!isChildWatchdogStatusEvent(event)) resetIdleTimeout();
-		ctx.onChildEvent?.(event);
-	};
-	const onExternalStreamActivity = (): void => {
-		resetIdleTimeout();
-		ctx.onExternalStreamActivity?.();
-	};
-	const onExternalJob = (status: ExternalJobStatus): void => {
-		resetIdleTimeout();
-		ctx.onExternalJob?.(status);
-	};
+	const timer = timeoutMs === undefined ? undefined : startPausableTimer(timeoutMs, triggerTimeout);
 	if (idleTimeoutMs !== undefined) resetIdleTimeout();
-	const timer = timeoutMs === undefined ? undefined : setTimeout(triggerTimeout, timeoutMs);
-	timer?.unref?.();
 	try {
 		return await runSingleStep(step, {
 			...ctx,
 			registerTimeout,
-			deadlineAt: timeoutMs === undefined
-				? (ctx.deadlineAt === undefined ? parentDeadlineAt : parentDeadlineAt === undefined ? ctx.deadlineAt : Math.min(ctx.deadlineAt, parentDeadlineAt))
-				: Date.now() + timeoutMs,
+			onChildEvent: (event) => {
+				if (!isChildWatchdogStatusEvent(event)) resetIdleTimeout();
+				pauseForSupervisorWait(timer, event);
+				ctx.onChildEvent?.(event);
+			},
+			onExternalStreamActivity: () => { resetIdleTimeout(); ctx.onExternalStreamActivity?.(); },
+			onExternalJob: (status) => { resetIdleTimeout(); ctx.onExternalJob?.(status); },
 			timeoutSignal: combinedAbortSignal([ctx.timeoutSignal, timeoutController.signal]),
 			timeoutMessage,
-			onChildEvent,
-			onExternalStreamActivity,
-			onExternalJob,
 		});
 	} finally {
-		if (timer) clearTimeout(timer);
+		timer?.clear();
 		if (idleTimer) clearTimeout(idleTimer);
 		ctx.registerTimeout?.(undefined);
 	}
@@ -2002,9 +1976,16 @@ export async function runSubagent(
 	let interrupted = false;
 	let currentActivityState: ActivityState | undefined;
 	let activityTimer: NodeJS.Timeout | undefined;
-	let timeoutTimer: NodeJS.Timeout | undefined;
+	let timeoutTimer: PausableTimer | undefined;
+	let checkpointTimer: PausableTimer | undefined;
+	// The run deadline moves later by the time its children spent blocked on a supervisor reply.
+	const runRemainingMs = (): number | undefined => timeoutTimer?.remainingMs();
+	const runDeadlineAt = (): number | undefined => {
+		const remainingMs = runRemainingMs();
+		return remainingMs === undefined ? undefined : Date.now() + remainingMs;
+	};
+	const runDeadlineExpired = (): boolean => runRemainingMs() === 0;
 	let idleTimeoutTimer: NodeJS.Timeout | undefined;
-	let checkpointTimer: NodeJS.Timeout | undefined;
 	let timedOut = false;
 	let stopped = false;
 	let usageBudgetExceeded = false;
@@ -2762,7 +2743,7 @@ export async function runSubagent(
 	const emittedControlEventKeys = new Set<string>();
 	const activeLongRunningSteps = new Set<number>();
 	const mutatingFailureStates = initialStatusSteps.map(() => createMutatingFailureState());
-	type PendingToolResult = { tool: string; path?: string; mutates: boolean; startedAt?: number };
+	type PendingToolResult = { tool: string; path?: string; mutates: boolean; startedAt?: number; progressText?: string };
 	const pendingToolResults: Array<PendingToolResult | undefined> = initialStatusSteps.map(() => undefined);
 	// Pi's parallel tool execution emits every tool_execution_start before the first result message, so each
 	// step matches results to calls by toolCallId; pendingToolResults keeps the last-started call for events without one.
@@ -2978,7 +2959,7 @@ export async function runSubagent(
 		index: number,
 		state: SteeringTargetState,
 		now: number,
-		fields: Pick<SteeringTargetStatus, "reason" | "replacementRunId"> = {},
+		fields: Pick<SteeringTargetStatus, "reason" | "replacementRunId" | "failureKind"> = {},
 	): SteeringTargetStatus | undefined => {
 		const updated = updateSteeringTarget(steeringStatus(statusPayload), requestId, index, state, now, fields);
 		const step = statusPayload.steps[index];
@@ -3047,13 +3028,14 @@ export async function runSubagent(
 		writeStatusPayload();
 	};
 	/** Record the outcome of handing a routed steer to the live child session. */
-	const applySteerDelivery = (requestId: string, index: number, delivery: { state: "delivered" | "queued" | "failed"; message: string }): void => {
+	const applySteerDelivery = (requestId: string, index: number, delivery: SteerDelivery): void => {
 		const lifecycle = steeringStatus(statusPayload);
 		const request = lifecycle.recent.find((candidate) => candidate.id === requestId);
 		const target = request?.targets.find((candidate) => candidate.index === index);
 		if (!request || !target) return;
-		if (target.state === "delivered" || target.state === "late" || target.state === "failed") return;
-		if (target.state === delivery.state) return;
+		if (target.state === "delivered" || target.state === "late") return;
+		if (target.state === "failed" && !(target.failureKind === "unconsumed" && delivery.failureKind === "rejected")) return;
+		if (target.state === delivery.state && target.failureKind === delivery.failureKind) return;
 		const late = fs.existsSync(steeringMarkerPath(requestId));
 		const now = Date.now();
 		if (delivery.state === "delivered") {
@@ -3064,7 +3046,7 @@ export async function runSubagent(
 			emitSteeringEvent("subagent.steer.queued", { type: "steer", id: requestId, ts: now, message: delivery.message }, index, { deliveryStatus: "queued", message: delivery.message });
 		} else {
 			markSteeringAttention(index);
-			updateSteeringLifecycleTarget(requestId, index, "failed", now, { reason: delivery.message });
+			updateSteeringLifecycleTarget(requestId, index, "failed", now, { reason: delivery.message, failureKind: delivery.failureKind ?? "rejected" });
 			emitSteeringEvent("subagent.steer.failed", { type: "steer", id: requestId, ts: now, message: delivery.message }, index, { reason: delivery.message });
 		}
 		emitTerminalSteeringNotice(requestId, `Steering failed for run ${id}: ${delivery.message}`);
@@ -3104,9 +3086,19 @@ export async function runSubagent(
 		statusPayload.lastUpdate = now;
 		writeStatusPayload();
 	};
+	// Keyed by step, so a step that ends mid-ask never leaves the run timers paused.
+	const pauseRunTimers = (flatIndex: number): void => {
+		timeoutTimer?.pause(String(flatIndex));
+		checkpointTimer?.pause(String(flatIndex));
+	};
+	const resumeRunTimers = (flatIndex: number): void => {
+		timeoutTimer?.resume(String(flatIndex));
+		checkpointTimer?.resume(String(flatIndex));
+	};
 	// The sequential and both parallel paths share it.
 	const recordStepResult = (fi: number, singleResult: StepResult, startedAt: number, endedAt: number, recordLaunchContractDigest = false): void => {
 		const step = requiredStatusStep(statusPayload, fi);
+		resumeRunTimers(fi);
 		const childStopped = singleResult.stopped === true;
 		const childInterrupted = singleResult.interrupted === true;
 		step.status = stopped || childStopped ? "stopped" : timedOut ? "failed" : childInterrupted ? "paused" : singleResult.execution?.status === "partial" ? "partial" : singleResult.exitCode === 0 ? "complete" : "failed";
@@ -3204,7 +3196,8 @@ export async function runSubagent(
 				statusPayload.toolBudget = step.toolBudget;
 			}
 			recordActiveToolCall(flatIndex, { toolCallId: (event as { toolCallId?: unknown }).toolCallId, toolName: event.toolName }, { argsPreview, currentPath, blocksSupervisor, now });
-			const pending: PendingToolResult = omitUndefinedProperties({ tool: event.toolName, path: currentPath, mutates, startedAt: now });
+			if (blocksSupervisor) pauseRunTimers(flatIndex);
+			const pending: PendingToolResult = omitUndefinedProperties({ tool: event.toolName, path: currentPath, mutates, startedAt: now, progressText: extractReportedProgress(event.toolName, event.args) });
 			pendingToolResults[flatIndex] = pending;
 			const startedCallId = (event as { toolCallId?: unknown }).toolCallId;
 			if (typeof startedCallId === "string" && startedCallId) pendingToolResultsByCallId[flatIndex]!.set(startedCallId, pending);
@@ -3245,6 +3238,7 @@ export async function runSubagent(
 			const supervisorPreviousActivity = supervisorAttentionSteps.get(flatIndex);
 			const stillBlockingSupervisor = [...(activeToolCalls[flatIndex]?.values() ?? [])].some((active) => active.blocksSupervisor);
 			const clearedSupervisorAttention = endedTool?.blocksSupervisor && !stillBlockingSupervisor ? supervisorAttentionSteps.delete(flatIndex) : false;
+			if (!stillBlockingSupervisor) resumeRunTimers(flatIndex);
 			if (clearedSupervisorAttention && step.activityState === "needs_attention") {
 				setOptionalProperty(step, "activityState", supervisorPreviousActivity);
 				syncAggregateActivityState();
@@ -3260,6 +3254,10 @@ export async function runSubagent(
 			if (!keyedSnapshot || pendingToolResults[flatIndex] === keyedSnapshot) pendingToolResults[flatIndex] = undefined;
 			const resultText = extractTextFromContent(event.message.content);
 			const resultToolName = (event.message as { toolName?: unknown }).toolName;
+			if (event.message.isError !== true && resultToolName === toolSnapshot?.tool && toolSnapshot?.progressText) {
+				step.progressText = toolSnapshot.progressText;
+				step.progressUpdatedAt = now;
+			}
 			const blockedTool = (typeof resultToolName === "string" && resultToolName.length > 0 ? resultToolName : undefined) ?? toolSnapshot?.tool;
 			const configuredToolBudget = flatSteps[flatIndex]?.toolBudget;
 			const budgetBlocked = configuredToolBudget !== undefined && isToolBudgetBlockedMessage(configuredToolBudget, resultText, blockedTool);
@@ -3488,7 +3486,7 @@ export async function runSubagent(
 			source: "async", cwd, stepIndex, flatStartIndex, setup, diffs: [], results: [], cleanup,
 		});
 		writeStatusPayload();
-	}, config.deadlineAt);
+	}, runDeadlineAt());
 	const interruptRunner = () => {
 		consumeInterruptRequest(asyncDir);
 		if (interrupted || statusPayload.state !== "running") return;
@@ -3616,21 +3614,20 @@ export async function runSubagent(
 	resetIdleTimeout();
 	if (config.deadlineAt !== undefined && config.idleTimeoutMs === undefined) {
 		const remainingMs = Math.max(0, config.deadlineAt - Date.now());
-		timeoutTimer = setTimeout(timeoutRunner, remainingMs);
-		timeoutTimer.unref?.();
+		const runTimer = startPausableTimer(remainingMs, timeoutRunner);
+		timeoutTimer = runTimer;
 		// Route the pre-deadline checkpoint like any external steer so its lifecycle records the receipt.
 		const checkpointBeforeDeadlineMs = config.checkpointBeforeDeadlineMs;
 		const checkpointDelayMs = checkpointBeforeDeadlineMs === undefined || !Number.isInteger(checkpointBeforeDeadlineMs) || checkpointBeforeDeadlineMs <= 0
 			? undefined
 			: remainingMs - checkpointBeforeDeadlineMs;
 		if (checkpointDelayMs !== undefined && checkpointDelayMs >= 1_000) {
-			const deadlineAt = config.deadlineAt;
-			checkpointTimer = setTimeout(() => {
+			checkpointTimer = startPausableTimer(checkpointDelayMs, () => {
 				checkpointTimer = undefined;
 				if (timedOut || stopped || interrupted) return;
 				if (!statusPayload.steps.some((step) => step.status === "running")) return;
 				const now = Date.now();
-				const seconds = Math.round(Math.max(0, deadlineAt - now) / 1000);
+				const seconds = Math.round(runTimer.remainingMs() / 1000);
 				deliverSteerRequest({
 					type: "steer",
 					id: `deadline-checkpoint-${now}`,
@@ -3639,8 +3636,7 @@ export async function runSubagent(
 					source: "deadline-checkpoint",
 					message: `Deadline checkpoint from the runner: this run is killed in about ${seconds} seconds. Finish the current tool call only, then stop and reply with a handoff: changed files, build/test state, remaining work, and commit/PR state. Do not start new work.`,
 				});
-			}, checkpointDelayMs);
-			checkpointTimer.unref?.();
+			});
 		}
 	}
 	appendJsonl(
@@ -3984,7 +3980,7 @@ export async function runSubagent(
 					usageBudgetExhausted: continuationUsageBudgetExhausted,
 					usageBudget: config.usageBudget,
 					orcaProgressTab,
-				}), config.deadlineAt);
+				}), runRemainingMs);
 				const taskEndTime = Date.now();
 				const childInterrupted = singleResult.interrupted === true;
 				const childStopped = singleResult.stopped === true;
@@ -4179,7 +4175,7 @@ export async function runSubagent(
 				try {
 					worktreeSetup = await createWorktrees(cwd, `${id}-s${stepIndex}`, group.parallel.length, omitUndefinedProperties({
 						signal: setupSignal,
-						deadlineAt: config.deadlineAt,
+						deadlineAt: runDeadlineAt(),
 						agents: group.parallel.map((task) => task.agent),
 						labels: group.parallel.map((task) => task.lane?.key ?? config.workflowKey ?? task.outputName ?? task.label),
 						tasks: group.parallel.map((task) => task.task),
@@ -4210,11 +4206,11 @@ export async function runSubagent(
 							writeStatusPayload();
 						},
 					}));
-					if (config.deadlineAt !== undefined && Date.now() >= config.deadlineAt) timeoutRunner();
+					if (runDeadlineExpired()) timeoutRunner();
 					if (setupSignal.aborted) throw new Error(stopped ? stopMessage : timedOut ? timeoutMessage ?? SUBAGENT_TIMED_OUT_MESSAGE : "Subagent paused during worktree setup.");
 				} catch (error) {
 					if (worktreeSetup) await cleanupRemainingWorktree(worktreeSetup, stepIndex, groupStartFlatIndex);
-					if (config.deadlineAt !== undefined && Date.now() >= config.deadlineAt) timeoutRunner();
+					if (runDeadlineExpired()) timeoutRunner();
 					const setupError = error instanceof Error ? error.message : String(error);
 					if (error instanceof WorktreeSetupError) publishSetupUnknown(error.snapshot);
 					for (let index = groupStartFlatIndex; index < groupStartFlatIndex + group.parallel.length; index++) {
@@ -4361,7 +4357,7 @@ export async function runSubagent(
 							usageBudgetExhausted: continuationUsageBudgetExhausted,
 							usageBudget: config.usageBudget,
 							orcaProgressTab,
-						}), config.deadlineAt);
+						}), runRemainingMs);
 						if (task.sessionFile) {
 							latestSessionFile = task.sessionFile;
 						}
@@ -4584,7 +4580,7 @@ export async function runSubagent(
 				try {
 					singleWorktreeSetup = await createWorktrees(cwd, `${id}-s${stepIndex}`, 1, omitUndefinedProperties({
 						signal: setupSignal,
-						deadlineAt: config.deadlineAt,
+						deadlineAt: runDeadlineAt(),
 						agents: [seqStep.agent],
 						labels: [seqStep.lane?.key ?? config.workflowKey ?? seqStep.outputName ?? seqStep.label],
 						tasks: [seqStep.task],
@@ -4620,7 +4616,7 @@ export async function runSubagent(
 					}));
 				} catch (error) {
 					if (error instanceof WorktreeSetupError) publishSetupUnknown(error.snapshot);
-					if (config.deadlineAt !== undefined && Date.now() >= config.deadlineAt) timeoutRunner();
+					if (runDeadlineExpired()) timeoutRunner();
 					const message = error instanceof Error ? error.message : String(error);
 					if (childStopRequests.has(flatIndex)) markChildStopped(flatIndex);
 					const statusStep = requiredStatusStep(statusPayload, flatIndex);
@@ -4639,7 +4635,7 @@ export async function runSubagent(
 					break;
 				}
 			}
-			if (singleWorktreeSetup && config.deadlineAt !== undefined && Date.now() >= config.deadlineAt) timeoutRunner();
+			if (singleWorktreeSetup && runDeadlineExpired()) timeoutRunner();
 			if (singleWorktreeSetup && (timedOut || stopped || interrupted || childStopRequests.has(flatIndex))) {
 				await cleanupRemainingWorktree(singleWorktreeSetup, stepIndex, flatIndex);
 				results.push(stopped ? stoppedStepResult(seqStep.agent, seqStep.context, seqStep.sessionName)
@@ -4715,7 +4711,7 @@ export async function runSubagent(
 				usageBudgetExhausted: continuationUsageBudgetExhausted,
 				usageBudget: config.usageBudget,
 				orcaProgressTab,
-				}), config.deadlineAt);
+				}), runRemainingMs);
 			} catch (error) {
 				if (singleWorktreeSetup) await cleanupRemainingWorktree(singleWorktreeSetup, stepIndex, flatIndex);
 				throw error;
@@ -4989,17 +4985,13 @@ export async function runSubagent(
 		clearInterval(activityTimer);
 		activityTimer = undefined;
 	}
-	if (timeoutTimer) {
-		clearTimeout(timeoutTimer);
-		timeoutTimer = undefined;
-	}
+	timeoutTimer?.clear();
+	timeoutTimer = undefined;
+	checkpointTimer?.clear();
+	checkpointTimer = undefined;
 	if (idleTimeoutTimer) {
 		clearTimeout(idleTimeoutTimer);
 		idleTimeoutTimer = undefined;
-	}
-	if (checkpointTimer) {
-		clearTimeout(checkpointTimer);
-		checkpointTimer = undefined;
 	}
 	if (!timedOut && !stopped && !interrupted && (config.timeoutMs !== undefined || config.idleTimeoutMs !== undefined) && (timeoutMessage !== undefined || idleTimeoutMessage !== undefined) && results.some((result) => result.timedOut === true && (result.error?.startsWith(timeoutMessage ?? "") || result.error?.startsWith(idleTimeoutMessage ?? "")))) {
 		timedOut = true;
@@ -5035,7 +5027,7 @@ export async function runSubagent(
 			if (target.state !== "scheduled" && target.state !== "routed" && target.state !== "queued") continue;
 			changed = true;
 			const reason = target.state === "queued" ? unconsumedSteerReason() : "child terminated before steering delivery";
-			updateSteeringLifecycleTarget(request.id, target.index, "failed", Date.now(), { reason });
+			updateSteeringLifecycleTarget(request.id, target.index, "failed", Date.now(), { reason, failureKind: "unconsumed" });
 			markSteeringAttention(target.index);
 			emitSteeringEvent("subagent.steer.failed", { type: "steer", id: request.id, ts: request.requestedAt, message: reason }, target.index, { reason });
 		}

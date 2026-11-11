@@ -12,11 +12,11 @@ This repository is the maintained fork at:
 
 <https://github.com/chenhaoxiang/pi-subagents>
 
-It tracks the community project selectively and keeps fork-specific behavior on the fork's `main` line. The current source candidate is `0.87.0-fork.1`, integrating the published community `v0.87.0` at `52e68e9ef0e563d5c97b28519f9999f1b5fbbbea` (16 commits, 58 files since v0.86.0), not the newer unreleased community main. It adds workflow drain, opt-in global context defaults, MCP selector and nested artifact cleanup fixes, and Pi 1.5 schema preflight. Previously selected provider, wait-owner and session-shutdown repairs are deduplicated without dropping fork hardening: guarded fallback, idle timeouts, unknown recovery, native parent wake, mission schema 2 and strict wait-record v2 remain. Wait-claim cleanup still removes the record first and continues through individual unlink failures. Fork.8 and earlier cannot consume v2 waits; supporting readers leave legacy v1 waits untouched. No record downgrade, migration or underlying task replay occurs. See [waitTool](docs/configuration.md#waittool), [missions](docs/missions.md) and the [source synchronization report](docs/maintenance/2026-11-10-community-0.87.0.md).
+It tracks the community project selectively and keeps fork-specific behavior on the fork's `main` line. The current source candidate is `0.88.0-fork.1`, integrating published community `v0.88.0` at `c99503aed6d6b20d2397a1767f7d60730efe3963` (21 commits / 73 files since v0.87.0), not a moving unreleased main. It adds monotonic supervisor-paused runtime budgets, truncated-response failures, finishing-guidance rejection, disabled-MCP filtering, cross-folder fork instructions, bounded agent search, progress visibility and cache session identities. The maintained fork deliberately does **not** enable the new automatic age-based fork-session-copy deletion: unknown ownership or missing status is not proof that a copy is safe to delete, and retained recovery references remain protected. Existing artifact cleanup, resumable async-state retention and strict session leases stay in place; fork-copy disk growth is not claimed solved. Guarded fallback, activity-based idle timeouts, runner/host/CJS compatibility, unknown recovery, native parent wake, scoped shutdown, mission schema 2, strict wait-record v2 and the drain/setup-abort no-new-launch repair remain. See [waitTool](docs/configuration.md#waittool), [missions](docs/missions.md) and the [source synchronization report](docs/maintenance/2026-11-11-community-0.88.0.md).
 
 ## Releases and branch policy
 
-The source candidate is **0.87.0-fork.1**, based on the exact published community **0.87.0** snapshot above. The published rollback/install baseline remains **0.86.0-fork.10** until a separately reviewed immutable release is published; this source PR does not publish, install or reload the candidate. Fork releases use `<community-version>-fork.<revision>`.
+The source candidate is **0.88.0-fork.1**, based on that exact published community snapshot. The published installation/rollback baseline remains **0.87.0-fork.1** until this candidate passes fresh independent review and separate immutable publication. This source PR does not merge main, publish, install or reload the candidate. Fork releases use `<community-version>-fork.<revision>`.
 
 - `main`: our maintained integration and release branch, including fork fixes.
 - `upstream-main`: an exact mirror of the community's `main`, with no fork commits. Never install from this branch.
@@ -25,7 +25,7 @@ The source candidate is **0.87.0-fork.1**, based on the exact published communit
 Install the existing reproducible release (not the unpublished source candidate):
 
 ```bash
-pi install git:github.com/chenhaoxiang/pi-subagents@v0.86.0-fork.10
+pi install git:github.com/chenhaoxiang/pi-subagents@v0.87.0-fork.1
 ```
 
 [GitHub Releases](https://github.com/chenhaoxiang/pi-subagents/releases) include the installable package tarball, a provenance manifest, and `SHA256SUMS`. These GitHub releases are not npm publications under the upstream author's namespace. See [release maintenance](docs/releasing.md) for asset installation and future releases.
@@ -46,7 +46,7 @@ After installation, **restart Pi** to load the new runtime. Version 0.79.0 detec
 
 ## Fork-specific behavior
 
-The fork retains the community `0.87.0` functionality and adds or maintains:
+The fork selectively retains the community `0.88.0` functionality (with the fork-copy cleanup boundary above) and adds or maintains:
 
 - **Guarded heterogeneous model fallback** for native Pi children. Explicit fallback chains and the built-in pool advance only for provider/model failures that occur before child tool activity; each attempt remains visible as evidence.
 - **Activity-based `idleTimeoutMs`** for foreground and background children. Stream and tool lifecycle activity resets the inactivity window; this is not a wall-clock runtime cap.
