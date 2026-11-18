@@ -1,4 +1,5 @@
 import { VERSION, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { compactionInProgress } from "./compaction-interruption.ts";
 
 export const PARENT_WAKE_TEXT = "Inspect subagent updates above. Answer pending supervisor requests within your authority. For completed work, read saved results and resume the already-authorized parent task, or report completion. If approval is required, explicitly ask the user. Do not silently yield, rerun completed work, or infer new authorization.";
 
@@ -41,6 +42,7 @@ export interface ParentWake {
 	 * trigger skipped before_agent_start (earendil-works/pi#5581).
 	 * Returns true when the message was appended that way: Pi emits no extension message_start for it.
 	 * After userAborted() and until the next run starts, a turn-triggering message is only appended.
+	 * So it is during a manual compaction, which Pi does not guard against a new run; takeDeferredWake() reports it.
 	 */
 	sendMessage(...args: Parameters<ExtensionAPI["sendMessage"]>): boolean;
 	/** True from an idle wake until its run starts or the session shuts down. Past the deadline it holds only while the parent is busy, which may still be the wake's preflight (for example compacting). */
@@ -49,9 +51,9 @@ export interface ParentWake {
 	agentStarted(): void;
 	/** The user stopped the parent run: hold wakes until the next run starts. */
 	userAborted(): void;
-	/** A deliberate resume (manual compaction) drops the hold without touching the shared wake reservation. */
-	releaseHold(): void;
 	isHeld(): boolean;
+	/** True once if a wake was only appended because a manual compaction was in progress. */
+	takeDeferredWake(): boolean;
 	sessionShutdown(reason: string | undefined): void;
 }
 
@@ -64,6 +66,7 @@ export function createParentWake(
 	// Captured at bind: Pi's ctx throws once stale, which it can be by session_shutdown.
 	let session: { manager: object; id: string } | undefined;
 	let held = false;
+	let deferred = false;
 	// Look the reservation up on every access: another extension may have created this session's entry.
 	const reservation = (): WakeReservation => {
 		// Pi can shut an extension down before session_start binds it; an unbound wake reserved nothing.
@@ -87,6 +90,11 @@ export function createParentWake(
 			if (held || (ctx.isIdle() && reserved())) {
 				// Appended now, or at the end of a run still finishing; neither emits an extension message_start.
 				// A reserved wake's run picks the notice up when it starts.
+				pi.sendMessage(message, { triggerTurn: false });
+				return true;
+			}
+			if (session && compactionInProgress(session.manager)) {
+				deferred = true;
 				pi.sendMessage(message, { triggerTurn: false });
 				return true;
 			}
@@ -116,15 +124,19 @@ export function createParentWake(
 		bindSession(context) {
 			ctx = context;
 			session = { manager: context.sessionManager, id: context.sessionManager.getSessionId() };
-			held = false;
+			held = deferred = false;
 		},
 		agentStarted() {
 			reservation().sentAt = undefined;
-			held = false;
+			held = deferred = false;
 		},
 		userAborted: () => { held = true; },
-		releaseHold: () => { held = false; },
 		isHeld: () => held,
+		takeDeferredWake() {
+			const wasDeferred = deferred;
+			deferred = false;
+			return wasDeferred;
+		},
 		sessionShutdown(reason) {
 			if (reason !== "reload") reservation().sentAt = undefined;
 		},

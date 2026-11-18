@@ -527,8 +527,24 @@ export function reconcileAsyncRun(asyncDir: string, options: ReconcileAsyncRunOp
 	const existingResultPath = effectiveStatus.sessionId
 		? resultPayloadPathForSessionRun(resultsDir, effectiveStatus.sessionId, runId) ?? (regularFileExists(resultPath) ? resultPath : undefined)
 		: regularFileExists(resultPath) ? resultPath : undefined;
+	const staleAfterMs = options.staleAlivePidMs ?? 24 * 60 * 60 * 1000;
+	const lastUpdate = effectiveStatus.lastUpdate ?? effectiveStatus.startedAt;
+	const observedScope = options.pidNamespaceScope ? options.pidNamespaceScope() : currentPidNamespaceScope();
+	const runnerLiveness = (pid: number): PidLiveness => checkRecordedPidLiveness({ pid, pidNamespaceScope: effectiveStatus.pidNamespaceScope, bootId: effectiveStatus.bootId }, {
+		kill: options.kill,
+		observedScope,
+		observedBootId: options.bootId ? options.bootId() : currentBootId(),
+		...(options.probe ? { probe: options.probe } : {}),
+	});
 	if (existingResultPath) {
-		const terminalStatus = effectiveStatus.state === "running" || effectiveStatus.state === "queued"
+		// A live runner writes its result before its final status; repairing in that window would replace
+		// its pending exit proof with a placeholder. Only a confirmed-alive pid defers: a result is better
+		// evidence than an unprobeable pid, and a pid from another pid namespace can be alive here as an unrelated
+		// process. A workflow's pid is its host Pi process, which outlives the workflow.
+		const runnerStillFinishing = effectiveStatus.state === "running" && effectiveStatus.mode !== "workflow" && typeof effectiveStatus.pid === "number"
+			&& effectiveStatus.pidNamespaceScope === observedScope
+			&& now - lastUpdate <= staleAfterMs && runnerLiveness(effectiveStatus.pid) === "alive";
+		const terminalStatus = (effectiveStatus.state === "running" || effectiveStatus.state === "queued") && !runnerStillFinishing
 			? terminalStatusFromResult(effectiveStatus, existingResultPath, now)
 			: undefined;
 		if (terminalStatus) {
@@ -570,20 +586,14 @@ export function reconcileAsyncRun(asyncDir: string, options: ReconcileAsyncRunOp
 		}
 	}
 
-	const liveness = checkRecordedPidLiveness({ pid: effectiveStatus.pid, pidNamespaceScope: effectiveStatus.pidNamespaceScope, bootId: effectiveStatus.bootId }, {
-		kill: options.kill,
-		observedScope: options.pidNamespaceScope ? options.pidNamespaceScope() : currentPidNamespaceScope(),
-		observedBootId: options.bootId ? options.bootId() : currentBootId(),
-		...(options.probe ? { probe: options.probe } : {}),
-	});
-	if (liveness !== "dead") {
-		const unknownStatus = liveness === "unknown" ? markUnknownRecovery(asyncDir, effectiveStatus, now) : effectiveStatus;
-		if (liveness === "unknown") return { status: unknownStatus, repaired: false, resultPath, message: "Runner liveness is unknown; no replacement was launched. Reconcile the original run before resuming." };
-		const staleAfterMs = options.staleAlivePidMs ?? 24 * 60 * 60 * 1000;
-		const lastUpdate = effectiveStatus.lastUpdate ?? effectiveStatus.startedAt;
-		if (now - lastUpdate <= staleAfterMs) return { status: unknownStatus, repaired: false, resultPath };
-		const probe = liveness === "alive" ? "is still live" : "cannot be probed from this process";
-		const message = `Async runner PID ${effectiveStatus.pid} ${probe}; status has not updated for ${now - lastUpdate}ms, so stale-run reconciliation marked the run failed because PID ownership is unverified.`;
+	const liveness = runnerLiveness(effectiveStatus.pid);
+	if (liveness === "unknown") {
+		const unknownStatus = markUnknownRecovery(asyncDir, effectiveStatus, now);
+		return { status: unknownStatus, repaired: false, resultPath, message: "Runner liveness is unknown; no replacement was launched. Reconcile the original run before resuming." };
+	}
+	if (liveness === "alive") {
+		if (now - lastUpdate <= staleAfterMs) return { status: effectiveStatus, repaired: false, resultPath };
+		const message = `Async runner PID ${effectiveStatus.pid} is still live; status has not updated for ${now - lastUpdate}ms, so stale-run reconciliation marked the run failed because PID ownership is unverified.`;
 		return writeFailedRepair(asyncDir, effectiveStatus, resultPath, now, message);
 	}
 

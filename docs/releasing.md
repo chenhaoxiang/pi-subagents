@@ -23,9 +23,9 @@ Applies only to chenhaoxiang/pi-subagents. The community project remains [nicoba
 
 ## Baseline for this release
 
-The current source candidate is **0.88.0-fork.1**, integrating published community **v0.88.0** at `c99503aed6d6b20d2397a1767f7d60730efe3963` (annotated tag object `c84d4a817db9e6e49179ec202ba6c619322eb767`), a 21-commit/73-file delta from v0.87.0. It builds on maintained main `a3c1a4f8392aadb30de6f90370eebfea3fa64b24`, preserving the reviewed drain/setup-abort guard and all fork safety/identity/recovery seams. This maintained version does not adopt the new age-based automatic fork-copy deletion; existing artifact cleanup, 90-day resumable async-state retention and strict leases remain. Missing/unknown ownership never authorizes deleting a copy or replaying work. See the [source synchronization report](maintenance/2026-11-11-community-0.88.0.md).
+Candidate `0.89.0-fork.1` integrates published `v0.89.0` at `4aa4ddb0ecb7ad56a6c9e56c96f39f7877a1550f` plus two specific fixes for inactive allowlisted tools and temporarily unreadable status files, through `2a236ff599267ba1de9709afde5b5c4533cf3449`. Fork-specific fallback, retention and recovery contracts remain; no live session, wait store or mission is migrated by source synchronization.
 
-The published installation/rollback baseline is **0.87.0-fork.1**, released at `a3c1a4f8392aadb30de6f90370eebfea3fa64b24`. Its immutable tag/assets, older releases and installation materials remain intact. The new candidate stays source-only until fresh independent review, normal PR merge and separate immutable publication. Wait-record v2 and mission schema 2 retain their existing mixed-version boundaries: older unsupported readers do not gain permission to consume/downgrade records, supporting readers leave legacy v1 waits alone, and no real store is migrated. Source, publication, fresh download, disk selection and active-session loading are separate; disk updates do not hot-load old consumers.
+Previous release **0.88.0-fork.1** (`667ad365d305132e933dd0fc16f5cfaf84d67b48`) is unchanged. Continue to enforce wait-record v2 and mission schema 2 coexistence boundaries. Do not delete retained fork copies or replay UNKNOWN work.
 
 ## Publish every version
 
