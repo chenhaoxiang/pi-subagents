@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+## [0.89.0-fork.2] - 2026-11-18
+
+- Reissue the maintained release with portable `SHA256SUMS` filenames; the source and runtime behavior are unchanged. The prior `0.89.0-fork.1` assets remain immutable for audit and rollback.
+
 ## [0.89.0-fork.1] - 2026-11-18
 
 - Integrate community v0.89.0 (`4aa4ddb0ecb7ad56a6c9e56c96f39f7877a1550f`) and the two follow-up corrections for inactive allowlisted tools and temporarily unreadable runner status (`2a236ff599267ba1de9709afde5b5c4533cf3449`).
