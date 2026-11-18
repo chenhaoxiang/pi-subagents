@@ -113,8 +113,8 @@ describe("wait subscription record format fence", () => {
 			foreign.state.currentSessionId = "foreign-session";
 			const legacyFiles: string[] = [];
 			for (let index = 0; index < 10; index++) {
-				for (const manager of [owner.manager, foreign.manager]) {
-					const record = manager.arm(input);
+				for (const [managerIndex, manager] of [owner.manager, foreign.manager].entries()) {
+					const record = manager.arm({ ...input, runId: `run-${managerIndex}-${index}`, requestedId: `run-${managerIndex}-${index}` });
 					fs.writeFileSync(path.join(f.subscriptionsDir, record.token + ".claim-test.1"), "{}");
 				}
 				const legacy = { version: 1, token: String(index).padStart(8, "0") + "-1111-4111-8111-111111111111", sessionId: "legacy-session", ...input, createdAt: 0, expiresAt: 1 };
@@ -158,8 +158,8 @@ describe("wait subscription record format fence", () => {
 			const f = fixture();
 			try {
 				const owner = f.open("owner-a");
-				const first = owner.manager.arm(input);
-				const second = owner.manager.arm(input);
+				const first = owner.manager.arm({ ...input, runId: "run-first", requestedId: "run-first" });
+				const second = owner.manager.arm({ ...input, runId: "run-second", requestedId: "run-second" });
 				const claimNames = [first.token + ".claim-a.1", first.token + ".claim-b.1", second.token + ".claim-a.1"];
 				const claimFiles = claimNames.map(name => path.join(f.subscriptionsDir, name));
 				for (const file of claimFiles) fs.writeFileSync(file, "{}");

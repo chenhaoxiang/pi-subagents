@@ -65,6 +65,7 @@ const STATUS_TONES = new Map<string, StatusTone>([
 	["unanswered", "warning"],
 	["concern", "warning"],
 	["timed out", "warning"],
+	["wait window expired", "warning"],
 	["needs attention", "warning"],
 	["needs a decision", "warning"],
 	["needs clarification", "warning"],
@@ -150,7 +151,8 @@ function supervisorReminderHeadline(details: unknown, status: "unanswered" | "bl
 
 function waitSubscriptionHeadline(details: unknown): Headline {
 	if (!isRecord(details) || typeof details.runId !== "string" || typeof details.outcome !== "string") return [`${waitToolName()} fired`];
-	return [`${waitToolName()}: run ${details.runId} `, { status: details.outcome }];
+	const outcome = details.outcome === "timed out" ? "wait window expired" : details.outcome;
+	return [`${waitToolName()}: run ${details.runId} `, { status: outcome }];
 }
 
 /** Workflow child notices saved before render details existed are read from their first line. */

@@ -26,7 +26,7 @@ import { createClaimFile } from "../../workflows/workflow-resume-claim.ts";
 
 const OWNED_SUBSCRIPTION_VERSION = 2;
 // Outcomes that report no saved results, so the notice points the parent at the run status instead.
-const STATUS_OUTCOMES = new Set(["timed out", "could not be reconciled", "needs attention", "reconciliation failed"]);
+const STATUS_OUTCOMES = new Set(["wait window expired", "timed out", "could not be reconciled", "needs attention", "reconciliation failed"]);
 const RECONCILE_INTERVAL_MS = 1_000;
 /**
  * How often the subscriptions directory is re-scanned for expired records left
@@ -36,7 +36,7 @@ const RECONCILE_INTERVAL_MS = 1_000;
 const FOREIGN_SWEEP_INTERVAL_MS = 60_000;
 /**
  * How far past expiry a record armed by another session is kept before it is
- * swept. The owning session settles its own expired records with a "timed out"
+ * swept. The owning session settles its own expired records with a "wait window expired"
  * notice on the next restore(), so removing one the moment it expires would take
  * that notice away from a session that simply had not resumed yet. A day is long
  * enough for an ordinary return and short enough to bound the directory.
@@ -50,9 +50,14 @@ export interface ArmWaitSubscriptionInput {
 	timeoutMs: number;
 }
 
+export interface WaitSubscriptionRegistration extends WaitSubscriptionRecord {
+	/** True when an existing live subscription for the same target was reused. */
+	reused: boolean;
+}
+
 export interface WaitSubscriptionManager {
 	start(): void;
-	arm(input: ArmWaitSubscriptionInput): WaitSubscriptionRecord;
+	arm(input: ArmWaitSubscriptionInput): WaitSubscriptionRegistration;
 	restore(): void;
 	reconcile(): void;
 	dispose(): void;
@@ -269,7 +274,7 @@ export function createWaitSubscriptionManager(
 			}
 			if (!record || file !== `${record.token}.json`) continue;
 			// The owning session keeps its own expired records so reconcileRecord()
-			// can still settle them with the "timed out" notice callers expect.
+			// can still settle them with the "wait window expired" notice callers expect.
 			if (record.sessionId === state.currentSessionId) continue;
 			if (sweptAt < record.expiresAt + FOREIGN_SWEEP_GRACE_MS) continue;
 			try {
@@ -334,7 +339,7 @@ export function createWaitSubscriptionManager(
 	const reconcileRecord = (record: WaitSubscriptionRecord) => {
 		if (record.sessionId !== state.currentSessionId) return;
 		if (now() >= record.expiresAt) {
-			settle(record, "timed out", "The targeted run may still be active; inspect its status before taking follow-up action.");
+			settle(record, "wait window expired", "The targeted run may still be active; inspect its status before taking follow-up action.");
 			return;
 		}
 		if (record.targetKind === "foreground") {
@@ -425,6 +430,14 @@ export function createWaitSubscriptionManager(
 			if (!sessionId) throw new Error("A wait subscription requires an active session identity.");
 			if (!state.completionOwnerId) throw new Error("A wait subscription requires a native completion owner identity.");
 			const createdAt = now();
+			// Repeated model calls for the same target must not create one durable
+			// wake record per call. Otherwise every record later emits its own notice.
+			for (const existing of subscriptions.values()) {
+				if (existing.sessionId === sessionId && existing.completionOwnerId === state.completionOwnerId
+					&& existing.targetKind === input.targetKind && existing.runId === input.runId && createdAt < existing.expiresAt) {
+					return { ...existing, reused: true };
+				}
+			}
 			const record: WaitSubscriptionRecord = {
 				// Never promote an existing record in place: an old reader may already hold it.
 				version: OWNED_SUBSCRIPTION_VERSION,
@@ -441,7 +454,7 @@ export function createWaitSubscriptionManager(
 			fs.mkdirSync(subscriptionsDir, { recursive: true });
 			writeAtomicJson(subscriptionFile(subscriptionsDir, record.token), record);
 			subscriptions.set(record.token, record);
-			return record;
+			return { ...record, reused: false };
 		},
 		restore() {
 			subscriptions.clear();
@@ -457,6 +470,7 @@ export function createWaitSubscriptionManager(
 				if (isNotFound(error)) return;
 				throw error;
 			}
+
 			for (const file of files) {
 				try {
 					const filePath = path.join(subscriptionsDir, file);
@@ -470,6 +484,17 @@ export function createWaitSubscriptionManager(
 				} catch (error) {
 					console.error(`Ignoring invalid wait subscription '${path.join(subscriptionsDir, file)}':`, error);
 				}
+			}
+			// Only records admitted by claimRecord above belong to this manager. Keep the
+			// earliest unexpired watch (or the earliest expiry if all have elapsed).
+			const restoredAt = now();
+			const targets = new Set<string>();
+			for (const record of [...subscriptions.values()].sort((a, b) =>
+				Number(a.expiresAt <= restoredAt) - Number(b.expiresAt <= restoredAt) || a.expiresAt - b.expiresAt || a.token.localeCompare(b.token))) {
+				const key = JSON.stringify([record.completionOwnerId, record.targetKind, record.runId]);
+				if (!targets.has(key)) { targets.add(key); continue; }
+				try { remove(record); }
+				catch (error) { console.error('Failed to coalesce restored wait subscription; retaining its record:', error); }
 			}
 			reconcile();
 		},
