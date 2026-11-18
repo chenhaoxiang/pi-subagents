@@ -23,7 +23,7 @@ Applies only to chenhaoxiang/pi-subagents. The community project remains [nicoba
 
 ## Baseline for this release
 
-Candidate `0.89.0-fork.1` integrates published `v0.89.0` at `4aa4ddb0ecb7ad56a6c9e56c96f39f7877a1550f` plus two specific fixes for inactive allowlisted tools and temporarily unreadable status files, through `2a236ff599267ba1de9709afde5b5c4533cf3449`. Fork-specific fallback, retention and recovery contracts remain; no live session, wait store or mission is migrated by source synchronization.
+Candidate `0.89.0-fork.2` integrates published `v0.89.0` at `4aa4ddb0ecb7ad56a6c9e56c96f39f7877a1550f` plus two specific fixes for inactive allowlisted tools and temporarily unreadable status files, through `2a236ff599267ba1de9709afde5b5c4533cf3449`. Fork-specific fallback, retention and recovery contracts remain; no live session, wait store or mission is migrated by source synchronization.
 
 Previous release **0.88.0-fork.1** (`667ad365d305132e933dd0fc16f5cfaf84d67b48`) is unchanged. Continue to enforce wait-record v2 and mission schema 2 coexistence boundaries. Do not delete retained fork copies or replay UNKNOWN work.
 
