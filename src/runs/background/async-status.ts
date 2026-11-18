@@ -102,6 +102,7 @@ interface AsyncRunStepSummary {
 
 export interface AsyncRunSummary {
 	id: string;
+	completionOwnerId?: string;
 	asyncDir: string;
 	toolCallId?: string;
 	sessionId?: string;
@@ -461,6 +462,7 @@ function statusToSummary(asyncDir: string, status: AsyncStatus & { cwd?: string 
 		asyncDir,
 		...(status.toolCallId ? { toolCallId: status.toolCallId } : {}),
 		...(status.sessionId ? { sessionId: status.sessionId } : {}),
+		...(status.completionOwnerId ? { completionOwnerId: status.completionOwnerId } : {}),
 		state: status.state,
 		...(status.error ? { error: status.error } : {}),
 		activityState,

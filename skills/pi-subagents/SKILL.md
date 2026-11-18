@@ -41,7 +41,7 @@ block; final reviews and gates stay async. After launching, keep doing safe
 independent work, or yield: native completion wakes this session. Do not sleep,
 poll, or call `bg_wait` for ordinary children. Use `bg_wait` only for provider
 or detached work that has no native notification and whose result this turn
-needs.
+needs. The supervisor inbox is not a progress monitor: reply to the exact request id in an incoming ask; do not loop on empty status/list results.
 
 ## Workflow scripts
 

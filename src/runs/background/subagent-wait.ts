@@ -128,7 +128,7 @@ export interface SubagentWaitDeps {
 	/** Aborted when the user sends a message; the wait then yields without an error. */
 	userInputSignal?: AbortSignal;
 	/** Arm a durable exact-target wait subscription in a long-lived interactive runtime. */
-	subscribe?: (input: { targetKind: "async" | "foreground"; runId: string; requestedId: string; timeoutMs: number }) => { token: string; expiresAt: number };
+	subscribe?: (input: { targetKind: "async" | "foreground"; runId: string; requestedId: string; timeoutMs: number }) => { token: string; expiresAt: number; reused?: boolean };
 	/** Injectable provider protocol surfaces for deterministic tests. */
 	backgroundWork?: {
 		snapshot(sessionIds: readonly string[], nowMs: number): BackgroundWorkSnapshot;
@@ -728,13 +728,21 @@ export async function waitForSubagents(
 				return result(error instanceof Error ? error.message : String(error), true);
 			}
 		}
+		if (selected?.kind === "async" && params.nonBlocking && deps.subscribe && !deps.nestedRootRunId
+			&& !selected.run.parentWorkflowRunId && selected.run.sessionId === sessionId
+			&& deps.state.completionOwnerId && selected.run.completionOwnerId === deps.state.completionOwnerId) {
+			return result(`Ordinary async subagent run "${selected.id}" already wakes this parent natively; no wait subscription was armed. Return control and consume the native completion notice. Do not poll status or re-arm this wait.`);
+		}
 		if (selected && params.nonBlocking) {
 			if (!deps.subscribe) {
 				return result(`Non-blocking wait subscriptions require a long-lived interactive subagent runtime; this runtime can only use blocking ${waitToolName()} calls.`, true);
 			}
 			try {
 				const registration = deps.subscribe({ targetKind: selected.kind, runId: selected.id, requestedId: params.id, timeoutMs });
-				return result(`Armed wait subscription ${registration.token} for exact ${selected.kind} run ${selected.id}. Subscription window: ${formatDuration(timeoutMs)}. Returning immediately; this session will be woken on completion, failure, attention, reconciliation failure, or subscription expiry. Expiry does not stop the targeted run. Inspect armed subscriptions with subagent({ action: "status" }).`);
+				const action = registration.reused
+					? `Wait subscription ${registration.token} is already armed for exact ${selected.kind} run ${selected.id}; no duplicate was created.`
+					: `Armed wait subscription ${registration.token} for exact ${selected.kind} run ${selected.id}.`;
+				return result(`${action} Subscription window: ${formatDuration(Math.max(0, registration.expiresAt - now()))}. Returning immediately; this session will be woken on completion, failure, attention, reconciliation failure, or wait-window expiry. Expiry does not stop the targeted run. Inspect armed subscriptions with subagent({ action: "status" }).`);
 			} catch (error) {
 				return result(error instanceof Error ? error.message : String(error), true);
 			}

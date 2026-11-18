@@ -138,7 +138,7 @@ function textOf(result: { content: Array<{ type: string; text?: string }> }): st
 }
 
 describe("non-blocking wait subscriptions", () => {
-	it("returns immediately and binds an id prefix to one exact run", async () => {
+	it("returns immediately and binds an id prefix to one exact run without a known native owner", async () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-subscribe-arm-"));
 		try {
 			const asyncRoot = path.join(root, "runs");
@@ -160,6 +160,25 @@ describe("non-blocking wait subscriptions", () => {
 			assert.equal(result.isError, undefined);
 			assert.match(textOf(result), /Armed wait subscription wait-token/);
 			assert.deepEqual(armed, { targetKind: "async", runId: "run-alpha", requestedId: "run-alph", timeoutMs: 5_000 });
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("does not arm a root subscription for an ordinary async child", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-native-async-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			writeStatus(asyncRoot, "run-native", "running", { sessionId: "session-a", completionOwnerId: currentCompletionOwnerId(), pid: 999_999 });
+			let arms = 0;
+			const result = await waitForSubagents({ id: "run-native", nonBlocking: true }, undefined, {
+				state: makeState(), asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results"),
+				defaultTimeoutMs: 5_000, kill: () => true,
+				subscribe: () => { arms++; return { token: "must-not-arm", expiresAt: 5_000 }; },
+			});
+			assert.equal(result.isError, undefined);
+			assert.match(textOf(result), /already wakes this parent natively/);
+			assert.equal(arms, 0);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
@@ -237,6 +256,33 @@ describe("non-blocking wait subscriptions", () => {
 		assert.equal(result.isError, undefined);
 		assert.equal(result.details.wait?.reason, "user_input");
 		assert.deepEqual(result.details.wait?.activeRunIds, ["run-live"]);
+	});
+
+	it("reuses one live registration for repeated calls to the same target", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-subscribe-dedupe-"));
+		const subscriptionsDir = path.join(root, "subscriptions");
+		let clock = 1_000;
+		const notices: string[] = [];
+		const manager = createWaitSubscriptionManager({
+			events: new TestBus(),
+			sendMessage(message: { content: string }) { notices.push(message.content); },
+		} as never, makeState(), { subscriptionsDir, now: () => clock });
+		try {
+			const first = manager.arm({ targetKind: "async", runId: "run-dedupe", requestedId: "run-dedupe", timeoutMs: 30_000 });
+			clock += 15_000;
+			const second = manager.arm({ targetKind: "async", runId: "run-dedupe", requestedId: "run-ded", timeoutMs: 60_000 });
+			assert.equal(second.expiresAt, first.expiresAt, "a duplicate cannot renew the original window");
+			assert.equal(second.token, first.token);
+			assert.equal(second.reused, true);
+			assert.equal(fs.readdirSync(subscriptionsDir).filter((file) => file.endsWith(".json")).length, 1);
+			clock = first.expiresAt;
+			manager.reconcile(); manager.reconcile();
+			assert.equal(notices.length, 1);
+			assert.match(notices[0]!, /wait window expired/);
+		} finally {
+			manager.dispose();
+			fs.rmSync(root, { recursive: true, force: true });
+		}
 	});
 
 	it("restores durable registrations and wakes on exact completion", () => {
@@ -639,7 +685,7 @@ describe("non-blocking wait subscriptions", () => {
 			clock += 60_000;
 			next.reconcile();
 
-			assert.match(sent[0] ?? "", /timed out/);
+			assert.match(sent[0] ?? "", /wait window expired/);
 			assert.equal(nextState.waitSubscriptions?.has(registration.token), false);
 			assert.equal(fs.existsSync(recordPath), false);
 		} finally {
@@ -878,7 +924,7 @@ describe("non-blocking wait subscriptions", () => {
 			manager.arm({ targetKind: "async", runId: "run-timeout", requestedId: "run-timeout", timeoutMs: 100 });
 			now = 1_101;
 			manager.reconcile();
-			assert.match(sent.shift() ?? "", /timed out[\s\S]*Parent action: Check the run status/, "a wait with no saved results points at the run status");
+			assert.match(sent.shift() ?? "", /wait window expired[\s\S]*Parent action: Check the run status/, "a wait with no saved results points at the run status");
 			assert.equal(state.asyncJobs.size, 0);
 			assert.equal(state.waitSubscriptions?.size, 0);
 		} finally {
@@ -1086,7 +1132,7 @@ describe("wait subscriptions armed by another session", () => {
 			});
 			try {
 				resumed.restore();
-				assert.match(sent.shift() ?? "", /timed out/, "the owner is still told its wait expired");
+				assert.match(sent.shift() ?? "", /wait window expired/, "the owner is still told its wait expired");
 				assert.deepEqual(subscriptionFiles(subscriptionsDir), []);
 			} finally {
 				resumed.dispose();
