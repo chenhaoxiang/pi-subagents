@@ -12,11 +12,11 @@ This repository is the maintained fork at:
 
 <https://github.com/chenhaoxiang/pi-subagents>
 
-It tracks the community project selectively and keeps fork-specific behavior on the fork's `main` line. The current source candidate is `0.88.0-fork.1`, integrating published community `v0.88.0` at `c99503aed6d6b20d2397a1767f7d60730efe3963` (21 commits / 73 files since v0.87.0), not a moving unreleased main. It adds monotonic supervisor-paused runtime budgets, truncated-response failures, finishing-guidance rejection, disabled-MCP filtering, cross-folder fork instructions, bounded agent search, progress visibility and cache session identities. The maintained fork deliberately does **not** enable the new automatic age-based fork-session-copy deletion: unknown ownership or missing status is not proof that a copy is safe to delete, and retained recovery references remain protected. Existing artifact cleanup, resumable async-state retention and strict session leases stay in place; fork-copy disk growth is not claimed solved. Guarded fallback, activity-based idle timeouts, runner/host/CJS compatibility, unknown recovery, native parent wake, scoped shutdown, mission schema 2, strict wait-record v2 and the drain/setup-abort no-new-launch repair remain. See [waitTool](docs/configuration.md#waittool), [missions](docs/missions.md) and the [source synchronization report](docs/maintenance/2026-11-11-community-0.88.0.md).
+Candidate `0.89.0-fork.1` integrates published `v0.89.0` at `4aa4ddb0ecb7ad56a6c9e56c96f39f7877a1550f` plus two specific fixes for inactive allowlisted tools and temporarily unreadable status files, through `2a236ff599267ba1de9709afde5b5c4533cf3449`. Fork-specific fallback, retention and recovery contracts remain; no live session, wait store or mission is migrated by source synchronization.
 
 ## Releases and branch policy
 
-The source candidate is **0.88.0-fork.1**, based on that exact published community snapshot. The published installation/rollback baseline remains **0.87.0-fork.1** until this candidate passes fresh independent review and separate immutable publication. This source PR does not merge main, publish, install or reload the candidate. Fork releases use `<community-version>-fork.<revision>`.
+The previous published release **0.88.0-fork.1** remains the installation and rollback baseline until this candidate completes review, CI and separate fixed-release publication.
 
 - `main`: our maintained integration and release branch, including fork fixes.
 - `upstream-main`: an exact mirror of the community's `main`, with no fork commits. Never install from this branch.
@@ -25,7 +25,7 @@ The source candidate is **0.88.0-fork.1**, based on that exact published communi
 Install the existing reproducible release (not the unpublished source candidate):
 
 ```bash
-pi install git:github.com/chenhaoxiang/pi-subagents@v0.87.0-fork.1
+pi install git:github.com/chenhaoxiang/pi-subagents@v0.88.0-fork.1
 ```
 
 [GitHub Releases](https://github.com/chenhaoxiang/pi-subagents/releases) include the installable package tarball, a provenance manifest, and `SHA256SUMS`. These GitHub releases are not npm publications under the upstream author's namespace. See [release maintenance](docs/releasing.md) for asset installation and future releases.

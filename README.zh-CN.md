@@ -12,11 +12,11 @@
 
 <https://github.com/chenhaoxiang/pi-subagents>
 
-本变更源码候选版本为 `0.88.0-fork.1`，整合已发布社区 `v0.88.0` 的精确提交 `c99503aed6d6b20d2397a1767f7d60730efe3963`（相较 v0.87.0 共 21 提交、73 文件），不追逐未发布 main。新增单调时钟与监督等待期间暂停的运行预算、截断响应失败、收尾指导拒绝、disabled MCP 过滤、跨目录 fork 指令、受限 agent 搜索、进度展示和缓存 session 身份。维护 fork **暂不启用新增的按年龄自动删除 fork session copy**：unknown 归属或缺失 status 不是安全删除证明，retained 恢复引用必须保留。既有 artifact 清理、可恢复 async 状态保留及严格 session lease 不变，不宣称 fork-copy 磁盘增长已根治。受保护 fallback、活动 idle timeout、runner/宿主/CJS 兼容、unknown recovery、原生 parent wake、scoped shutdown、mission schema 2、严格 wait-record v2 及刚修复的 drain/setup-abort 不再启动新 attempt 契约均保留。见 [waitTool](docs/configuration.md#waittool)、[missions](docs/missions.md) 和[源码同步记录](docs/maintenance/2026-11-11-community-0.88.0.md)。
+源码候选 `0.89.0-fork.1` 整合已发布社区 `v0.89.0`（`4aa4ddb0ecb7ad56a6c9e56c96f39f7877a1550f`），并纳入两个已定位的补丁：允许子会话省略未激活的白名单工具，状态文件暂不可读时保持运行记录（截至 `2a236ff599267ba1de9709afde5b5c4533cf3449`）。保留 fork 的 fallback、保留与恢复契约；源码同步不迁移现有会话、等待记录或任务状态。
 
 ## 发布版本与分支约定
 
-本变更源码候选版本为 **0.88.0-fork.1**，基于上述已发布社区的固定快照。在独立审查与新的不可变 Release 完成前，已发布安装及回退基线仍为 **0.87.0-fork.1**。本源码 PR 不合入 main、不发布、安装或 reload 候选版本。fork 版本统一使用 `<社区版本>-fork.<修订号>`。
+候选通过独立审查、CI 和固定 Release 发布前，仍使用已发布的 **0.88.0-fork.1** 作为安装和回退基线。
 
 - `main`：我们的维护、整合与发布主线，保留 fork 修复。
 - `upstream-main`：仅镜像社区 `main`，不加入 fork 提交，也不作为安装来源。
@@ -25,7 +25,7 @@
 安装现有固定发布版本（不是尚未发布的源码候选）：
 
 ```bash
-pi install git:github.com/chenhaoxiang/pi-subagents@v0.87.0-fork.1
+pi install git:github.com/chenhaoxiang/pi-subagents@v0.88.0-fork.1
 ```
 
 [GitHub Releases](https://github.com/chenhaoxiang/pi-subagents/releases) 提供可安装的包、来源清单和 `SHA256SUMS` 校验文件；这不是向上游作者的 npm 命名空间发布。发布及制品安装流程见[维护说明](docs/releasing.md)。
