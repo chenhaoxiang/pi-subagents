@@ -3,7 +3,7 @@ import * as path from "node:path";
 import { formatDuration, formatModelThinking, formatTokens, shortenPath } from "../../shared/formatters.ts";
 import { previewDisplayText } from "../../shared/display-text.ts";
 import { formatActivityLabel, formatParallelOutcome } from "../../shared/status-format.ts";
-import { type ActivityState, type AsyncJobStep, type AsyncParallelGroupStatus, type AsyncStatus, type CostSummary, type Details, type HostStepNode, type HostStepState, type LaunchResolvedChildExtensions, type RuntimeAcknowledgedChildExtensions, type ModelAttempt, type NestedRunSummary, type SkippedModel, type SteeringStatus, type SubagentRunMode, type TimeoutRecoveryProjection, type TokenUsage, type TurnBudgetState, type UsageBudgetState, type WorktreeNaming, type WorkflowPreflight, type WorkflowGraphSnapshot } from "../../shared/types.ts";
+import { type ActivityState, type AsyncJobStep, type AsyncParallelGroupStatus, type AsyncStatus, type CostSummary, type Details, type HostStepNode, type HostStepState, type LaunchResolvedChildExtensions, type RuntimeAcknowledgedChildExtensions, type ModelAttempt, type NestedRunSummary, type ScheduleOrigin, type SkippedModel, type SteeringStatus, type SubagentRunMode, type TimeoutRecoveryProjection, type TokenUsage, type TurnBudgetState, type UsageBudgetState, type WorktreeNaming, type WorkflowPreflight, type WorkflowGraphSnapshot } from "../../shared/types.ts";
 import type { ResolvedSubagentCapabilityCeiling, SubagentCapabilityAudit } from "../shared/capability-ceiling.ts";
 import { isStatusAccessError, readStatus } from "../../shared/utils.ts";
 import { attachRootChildrenToSteps, buildNestedRouteIndex, findNestedRouteForRootId, type NestedRoute, projectNestedEvents } from "../shared/nested-events.ts";
@@ -103,6 +103,7 @@ interface AsyncRunStepSummary {
 export interface AsyncRunSummary {
 	id: string;
 	completionOwnerId?: string;
+	scheduleOrigin?: ScheduleOrigin;
 	asyncDir: string;
 	toolCallId?: string;
 	sessionId?: string;
@@ -463,6 +464,7 @@ function statusToSummary(asyncDir: string, status: AsyncStatus & { cwd?: string 
 		...(status.toolCallId ? { toolCallId: status.toolCallId } : {}),
 		...(status.sessionId ? { sessionId: status.sessionId } : {}),
 		...(status.completionOwnerId ? { completionOwnerId: status.completionOwnerId } : {}),
+		...(status.scheduleOrigin ? { scheduleOrigin: status.scheduleOrigin } : {}),
 		state: status.state,
 		...(status.error ? { error: status.error } : {}),
 		activityState,

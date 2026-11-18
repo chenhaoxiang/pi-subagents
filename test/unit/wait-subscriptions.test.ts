@@ -184,6 +184,29 @@ describe("non-blocking wait subscriptions", () => {
 		}
 	});
 
+	it("keeps a quiet scheduled run on the explicit subscription path", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-quiet-schedule-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			writeStatus(asyncRoot, "run-quiet", "running", {
+				sessionId: "session-a", completionOwnerId: currentCompletionOwnerId(), pid: 999_999,
+				scheduleOrigin: { id: "schedule-quiet", quiet: true },
+			});
+			const state = makeState();
+			const wakes: boolean[] = [];
+			const deps = { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results"), subscriptionsDir: path.join(root, "subscriptions"), kill: () => true };
+			const manager = createWaitSubscriptionManager({ events: new TestBus(), sendMessage(_message: unknown, options: { triggerTurn: boolean }) { wakes.push(options.triggerTurn); } } as never, state, deps);
+			try {
+				const result = await waitForSubagents({ id: "run-quiet", nonBlocking: true }, undefined, { ...deps, state, subscribe: manager.arm });
+				assert.equal(result.isError, undefined);
+				assert.equal(state.waitSubscriptions?.size, 1);
+				writeStatus(asyncRoot, "run-quiet", "complete", { sessionId: "session-a", scheduleOrigin: { id: "schedule-quiet", quiet: true } });
+				manager.reconcile();
+				assert.deepEqual(wakes, [true]);
+			} finally { manager.dispose(); }
+		} finally { fs.rmSync(root, { recursive: true, force: true }); }
+	});
+
 	it("registers bg_wait and rejects non-blocking subscriptions from headless tool calls", async () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-subscribe-headless-"));
 		try {
@@ -283,6 +306,36 @@ describe("non-blocking wait subscriptions", () => {
 			manager.dispose();
 			fs.rmSync(root, { recursive: true, force: true });
 		}
+	});
+
+	it("canonicalizes duplicate persisted v2 registrations during restore", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-subscribe-restore-dedupe-"));
+		const subscriptionsDir = path.join(root, "subscriptions");
+		const asyncRoot = path.join(root, "runs");
+		const notices: string[] = [];
+		const pi = { events: new TestBus(), sendMessage(message: { content: string }) { notices.push(message.content); } };
+		try {
+			writeStatus(asyncRoot, "run-persisted-duplicate", "running", { sessionId: "session-a", completionOwnerId: currentCompletionOwnerId(), pid: 999_999 });
+			const first = createWaitSubscriptionManager(pi as never, makeState(), { subscriptionsDir, asyncDirRoot: asyncRoot, now: () => 1_000, kill: () => true });
+			const firstRecord = first.arm({ targetKind: "async", runId: "run-persisted-duplicate", requestedId: "run-persisted-duplicate", timeoutMs: 30_000 });
+			first.dispose();
+			const secondState = makeState();
+			const second = createWaitSubscriptionManager(pi as never, secondState, { subscriptionsDir, asyncDirRoot: asyncRoot, now: () => 2_000, kill: () => true });
+			const secondRecord = second.arm({ targetKind: "async", runId: "run-persisted-duplicate", requestedId: "run-persisted-duplicate", timeoutMs: 60_000 });
+			second.dispose();
+			assert.notEqual(firstRecord.token, secondRecord.token);
+			const restoredState = makeState();
+			const restored = createWaitSubscriptionManager(pi as never, restoredState, { subscriptionsDir, asyncDirRoot: asyncRoot, now: () => 3_000, kill: () => true });
+			try {
+				restored.restore();
+				assert.deepEqual([...restoredState.waitSubscriptions!.keys()], [firstRecord.token]);
+				assert.deepEqual(fs.readdirSync(subscriptionsDir), [firstRecord.token + ".json"]);
+				writeStatus(asyncRoot, "run-persisted-duplicate", "complete", { sessionId: "session-a" });
+				restored.reconcile(); restored.reconcile();
+				assert.equal(notices.length, 1);
+				assert.match(notices[0]!, /completed/);
+			} finally { restored.dispose(); }
+		} finally { fs.rmSync(root, { recursive: true, force: true }); }
 	});
 
 	it("restores durable registrations and wakes on exact completion", () => {

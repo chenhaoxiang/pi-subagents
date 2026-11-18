@@ -470,6 +470,7 @@ export function createWaitSubscriptionManager(
 				if (isNotFound(error)) return;
 				throw error;
 			}
+
 			for (const file of files) {
 				try {
 					const filePath = path.join(subscriptionsDir, file);
@@ -483,6 +484,17 @@ export function createWaitSubscriptionManager(
 				} catch (error) {
 					console.error(`Ignoring invalid wait subscription '${path.join(subscriptionsDir, file)}':`, error);
 				}
+			}
+			// Only records admitted by claimRecord above belong to this manager. Keep the
+			// earliest unexpired watch (or the earliest expiry if all have elapsed).
+			const restoredAt = now();
+			const targets = new Set<string>();
+			for (const record of [...subscriptions.values()].sort((a, b) =>
+				Number(a.expiresAt <= restoredAt) - Number(b.expiresAt <= restoredAt) || a.expiresAt - b.expiresAt || a.token.localeCompare(b.token))) {
+				const key = JSON.stringify([record.completionOwnerId, record.targetKind, record.runId]);
+				if (!targets.has(key)) { targets.add(key); continue; }
+				try { remove(record); }
+				catch (error) { console.error('Failed to coalesce restored wait subscription; retaining its record:', error); }
 			}
 			reconcile();
 		},

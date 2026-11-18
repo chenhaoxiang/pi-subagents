@@ -423,7 +423,7 @@ Blocking `bg_wait({ id: "..." })` keeps the current tool call open until that ru
 
 This is different from `waitTool.enabled=false`, which returns immediately without registering any future wake. Provider items remain available only to blocking fleet-wide waits; non-blocking subscriptions require one async or remembered detached foreground run id.
 
-Repeated subscriptions for the same live `(session, completion owner, target kind, exact run id)` reuse the existing token and do not extend its expiry. An interactive parent waiting on its own top-level async run uses its native completion notification without arming another subscription. Without a matching native owner, explicit watches remain available.
+Repeated subscriptions for the same live `(session, completion owner, target kind, exact run id)` reuse the existing token and do not extend its expiry. An interactive parent waiting on its own top-level async run uses its native completion notification without arming another subscription. Quiet scheduled runs and runs without a matching native owner keep their explicit watches. On restore, duplicate v2 watches admitted by the same owner are coalesced: keep the earliest unexpired deadline, or the earliest expiry if all windows elapsed. Legacy v1 and other live owners’ records are not adopted.
 
 Owner-bound subscriptions use **record version 2**, with the native completion-owner id and recorded process identity. A second Pi process on the same saved session does not adopt a live or unknown owner's subscription; a proven-dead owner can be replaced through an exclusive generation claim. Only the process that removes the record sends its wake. Arming without a native completion-owner identity is rejected before any record is written.
 

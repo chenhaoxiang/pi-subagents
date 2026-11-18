@@ -730,6 +730,7 @@ export async function waitForSubagents(
 		}
 		if (selected?.kind === "async" && params.nonBlocking && deps.subscribe && !deps.nestedRootRunId
 			&& !selected.run.parentWorkflowRunId && selected.run.sessionId === sessionId
+			&& selected.run.scheduleOrigin?.quiet !== true
 			&& deps.state.completionOwnerId && selected.run.completionOwnerId === deps.state.completionOwnerId) {
 			return result(`Ordinary async subagent run "${selected.id}" already wakes this parent natively; no wait subscription was armed. Return control and consume the native completion notice. Do not poll status or re-arm this wait.`);
 		}
