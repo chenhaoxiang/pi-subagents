@@ -123,7 +123,8 @@ export async function reconnectHerdrPiSession<C extends PlacementSockets>(sessio
 			const ready = await waitForReadyBridgeFrame(bridge, 8_000, "Reconnected bridge handshake timed out.", true);
 			const candidate = { ...panes, bridge: { runId: ready.runId, nativeSessionId: ready.nativeSessionId as string | undefined, packageVersion: ready.packageVersion as string | undefined, protocol: ready.protocol, evidenceCursor: ready.evidenceCursor as number | undefined, evidenceFloor: ready.evidenceFloor as number | undefined } };
 			const check = reconcileHerdrReconnect(session.identity, candidate, session.evidenceCursor, host); if (!check.ok) throw new Error(check.reason);
-			unsubscribe = await host.subscribe(connection, check.paneId, (event) => session.owner.observeEvent(event), (error) => { if (!generation.adopted) { generation.lost ??= error; return; } session.owner.markConnectionUnknown(connection); void session.reconnect(); });
+			const live = () => generation.adopted && session.owner.connection === connection && session.owner.identity !== undefined;
+			unsubscribe = await host.subscribe(connection, check.paneId, (event) => { if (live()) session.owner.observeEvent(event); }, (error) => { if (!generation.adopted) { generation.lost ??= error; return; } if (!live()) return; generation.adopted = false; unsubscribe(); if (!session.owner.markConnectionUnknown(connection)) return; void session.reconnect(); });
 			if (generation.lost) throw generation.lost; validated = { connection, unsubscribe, bridgeForward, bridge, candidate: generation }; return candidate;
 		} catch (error) { unsubscribe(); bridge?.close(); await bridgeForward?.close(); await connection.close(); throw error; }
 	}, { attempts: 3, deadlineMs: 15_000, disposed: () => session.placementSnapshot.connection === "closed", host });
