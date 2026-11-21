@@ -935,7 +935,7 @@ export async function runSingleStepInner(
 			const runner = resolveExternalCliRunnerStatus({ ...step.runner, machine: step.machine });
 			const outputSnapshot = captureSingleOutputSnapshot(step.outputPath);
 			const placedRunId = `${ctx.id}-${ctx.flatIndex}`;
-			const session = await prepareInternalHerdrExternalAdapter({ adapter: step.runner.adapter as HerdrExternalAdapterId, machine: step.machine, runId: placedRunId }, {});
+			const session = await prepareInternalHerdrExternalAdapter({ adapter: step.runner.adapter as HerdrExternalAdapterId, machine: step.machine, runId: placedRunId, onActivity: ctx.onExternalStreamActivity }, {});
 			let timedOut = false, stopped = false, retain = false;
 			const evidenceInput = { runId: placedRunId, requestId: `prompt-${ctx.flatIndex}`, task: buildExternalCliPrompt(step.systemPrompt ?? "", task), cwd: externalCwd, nativeSessionId: session.launch.nativeSessionId };
 			let resolveInterruption!: (value: "timeout" | "stop") => void, rejectInterruption!: (error: unknown) => void;
