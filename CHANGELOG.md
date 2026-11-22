@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+## [0.89.0-fork.4] - 2026-11-22
+
+- Harden Herdr and native-placement transport ownership: stale disconnects invalidate their subscriptions, status activity requires the exact pane and terminal identity, reconnects update the owned pane, and superseded transports cannot mutate current run evidence.
+
 ## [0.89.0-fork.3] - 2026-11-18
 
 - Non-blocking waits no longer pile up for one run: the launching interactive parent uses its native completion notice, and duplicate explicit watches reuse their original token and expiry. Quiet scheduled runs retain explicit watches because their completion is intentionally not a parent wake. Restore coalesces duplicate persisted v2 records, and the UI identifies an expired wait window separately from a child timeout.
