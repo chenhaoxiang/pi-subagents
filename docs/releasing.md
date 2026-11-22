@@ -23,9 +23,9 @@ Applies only to chenhaoxiang/pi-subagents. The community project remains [nicoba
 
 ## Baseline for this release
 
-Candidate `0.89.0-fork.3` fixes duplicate wait subscriptions and distinguishes subscription expiry from run failure. It retains the fork.2 baseline, which integrates published `v0.89.0` at `4aa4ddb0ecb7ad56a6c9e56c96f39f7877a1550f` plus two specific fixes for inactive allowlisted tools and temporarily unreadable status files, through `2a236ff599267ba1de9709afde5b5c4533cf3449`. Fork-specific fallback, retention and recovery contracts remain; no live session, wait store or mission is migrated by source synchronization.
+Candidate `0.89.0-fork.4` hardens Herdr and native-placement transport ownership: stale disconnects invalidate their subscriptions, status activity requires the exact pane and terminal identity, reconnects update the owned pane, and superseded transports cannot mutate current run evidence. It retains the fork.3 baseline, which fixes duplicate wait subscriptions and distinguishes subscription expiry from run failure. Fork-specific fallback, retention and recovery contracts remain; no live session, wait store or mission is migrated by source synchronization.
 
-Previous release **0.89.0-fork.2** (`47f78d6c2a7fc78d59aa9204399d1d7bf7d6a8c5`) is unchanged. Continue to enforce wait-record v2 and mission schema 2 coexistence boundaries. Do not delete retained fork copies or replay UNKNOWN work.
+Previous release **0.89.0-fork.3** (`f64bca59c3dc013d6119ce023ba72100b3a58489`) is unchanged. Continue to enforce wait-record v2 and mission schema 2 coexistence boundaries. Do not delete retained fork copies or replay UNKNOWN work.
 
 ## Publish every version
 
