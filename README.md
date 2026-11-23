@@ -42,18 +42,17 @@ pi install git:github.com/chenhaoxiang/pi-subagents@main
 
 For reproducible environments, pin the released tag shown above. Releases also provide a **compiled** package (`index.js`, API exports and runner files), not only a source-code archive. Download the tarball, manifest and checksums, verify them, extract into a permanent directory and `pi install /absolute/path/to/package`; see [release maintenance](docs/releasing.md).
 
-After installation, **restart Pi** to load the new runtime. Version 0.79.0 detects in-place updates and may reject `/reload` when old modules are still loaded; restarting avoids a mixed old/new runtime. Active sessions and children are never force-stopped by the installer.
+After installation, **restart Pi** to load the new runtime. Disk installation does not hot-upgrade active sessions; active sessions and children are never force-stopped by the installer.
 
 ## Fork-specific behavior
 
-The fork selectively retains the community `0.88.0` functionality (with the fork-copy cleanup boundary above) and adds or maintains:
+The fork integrates the community `0.90.0` functionality (with the fork-copy cleanup boundary above) and adds or maintains:
 
 - **Guarded heterogeneous model fallback** for native Pi children. Explicit fallback chains and the built-in pool advance only for provider/model failures that occur before child tool activity; each attempt remains visible as evidence.
 - **Activity-based `idleTimeoutMs`** for foreground and background children. Stream and tool lifecycle activity resets the inactivity window; this is not a wall-clock runtime cap.
 - **Runner and Pi 1.x compatibility** for long-lived parents and host layouts, with fail-closed handling for unknown or pre-1.0 layouts.
 - **Command supervision** for native children that are granted `bash` and `subagent_command`: inspect, yield, or cancel the child command without hiding it from the parent.
 - **Maintained background execution**, workflow recovery, model-scope handling, child-extension requirements, and Pi 1.0 clean-install compatibility from the synchronized community line.
-- **Community 0.84 reliability and security updates** for restricted Node workflow scripts, locked-down provider diagnostics, background-run retention and the earlier 0.83 prompt-cache, child-settlement, placed-child, event-refresh, session-keyed `bg_wait`, thinking-level and override-validation fixes.
 - **Fork unknown async-run recovery** that preserves explicit run identity and evidence when an async operation's execution or completion becomes unknown.
 
 The fork does not silently replay a child after tool side effects. Provider/model fallback is deliberately narrower than generic task retry.

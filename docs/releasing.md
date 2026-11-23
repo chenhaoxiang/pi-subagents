@@ -40,9 +40,9 @@ Previous release **0.89.0-fork.4** (`c703c928b8ac4d248d342ae201f1887a60dd7ccd`) 
 
 ## Installation
 
-See [upgrade evidence and installation boundaries](maintenance/2026-10-17-community-0.79.0.md) for the current source, release and installed-acceptance record.
+See [the 0.90.0 maintenance record](maintenance/2026-11-23-community-0.90.0.md) for this candidate's exact source, validation and release/install boundaries.
 
-Prefer the pinned git command in README. For offline/artifact installs, download the three release assets into a temporary directory, verify the checksums, then extract the package into a permanent user-owned package directory and run `pi install /absolute/path/to/package`. Do not leave an active install under a temporary release directory. Restart Pi after this upgrade. The 0.77.0 update detector rejects reload when imported modules belong to an old in-place version; disk updates do not replace loaded code. Let active work finish before restarting.
+Prefer the pinned git command in README. For offline/artifact installs, download the three release assets into a temporary directory, verify the checksums, then extract the package into a permanent user-owned package directory and run `pi install /absolute/path/to/package`. Do not leave an active install under a temporary release directory. Restart Pi after this upgrade; disk updates do not replace code already loaded by an active session. Let active work finish before restarting.
 
 Keep the previous release/source available for rollback. Never force-stop unrelated active children or silently replace a custom experimental installed package.
 

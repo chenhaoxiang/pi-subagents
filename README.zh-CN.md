@@ -40,17 +40,17 @@ pi install git:github.com/chenhaoxiang/pi-subagents@main
 
 可复现环境使用上面的固定发布 tag。Release 额外提供**编译后的安装包**，包含 `index.js`、API 导出和 runner 文件，不仅是源码归档。下载包、来源清单及校验文件，校验后解压到永久目录，再 `pi install /absolute/path/to/package`；详见[维护说明](docs/releasing.md)。
 
-安装后请**重启 Pi**加载新运行时。0.79.2 会检测原地更新；旧模块尚在内存时可能拒绝 `/reload`，必须重启以免混用新旧代码。安装过程不会强制停止活跃会话或子任务。
+安装后请**重启 Pi**加载新运行时。磁盘安装不会热更新正在运行的会话；安装过程不会强制停止活跃会话或子任务。
 
 ## Fork 专属能力
 
-fork 选择性保留社区 `0.88.0` 能力（fork-copy 清理边界见上），并额外维护：
+fork 集成社区 `0.90.0` 能力（fork-copy 清理边界见上），并额外维护：
 
 - **受保护的异构模型 fallback**：只有在子 Agent 尚未产生工具副作用前发生 provider/model 失败时，才推进显式 fallback 链或内置模型池；每次尝试都会保留为证据；
 - **基于活动的 `idleTimeoutMs`**：前台和后台子 Agent 的流式输出及工具生命周期活动会续期；它不是墙钟总时长上限；
 - **Runner 与 Pi 1.x 兼容**：对长期运行的父会话和不同宿主布局提供兼容，并对未知或旧布局 fail closed；
 - **原生子 Agent 命令监督**：获得 `bash` 和 `subagent_command` 的子 Agent 可被检查、暂停等待或取消命令，命令不会从父会话中消失；
-- **维护中的后台执行、工作流恢复、模型 scope、子扩展要求和 Pi 1.0 clean-install 兼容**；同时带入 0.84 的 Node workflow 脚本隔离、受限子 Agent provider 诊断、后台运行清理，以及 0.83 的 prompt-cache 稳定性、子任务结算、远程放置、jobs-changed 刷新、session-id keyed `bg_wait` 和 thinking/override 校验修复。
+- **维护中的后台执行、工作流恢复、模型 scope、子扩展要求和 Pi clean-install 兼容**。
 - **未知 async run 恢复**：保留明确 run 身份与证据，避免执行或完成状态未知时误报成功。
 
 fork 不会在工具副作用之后静默重放子 Agent。Provider/model fallback 有意比通用任务重试更严格。
