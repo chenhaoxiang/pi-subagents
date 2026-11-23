@@ -115,7 +115,8 @@ test("native Pi exposes the full subagent schema on the request immediately afte
 	assert.equal(captured.length, 2);
 	// Every package tool definition is sent on every request. Raising these budgets needs owner approval (#2770).
 	assert.ok(captured[0]! <= 500, `cold package tool text exceeded budget: ${captured[0]} (${sizes[0]})`);
-	assert.ok(captured[1]! <= 5_500, `activated package tool text exceeded budget: ${captured[1]} (${sizes[1]})`);
+	// v0.90 adds the top-level label field; keep the activated declaration bounded with the minimal budget increase.
+	assert.ok(captured[1]! <= 5_700, `activated package tool text exceeded budget: ${captured[1]} (${sizes[1]})`);
 	assert.ok(captured[1]! - captured[0]! >= 3_000, "lazy activation should remove the full subagent schema from cold requests");
 	console.log(`package tool characters cold=${captured[0]} (${sizes[0]}) activated=${captured[1]} (${sizes[1]})`);
 });

@@ -12,11 +12,11 @@
 
 <https://github.com/chenhaoxiang/pi-subagents>
 
-源码候选 `0.89.0-fork.4` 加固 Herdr 和原生放置运行的传输归属：断开的旧订阅会失效，状态活动必须匹配准确的 pane 与 terminal，重连会更新归属 pane，被替换的传输不能修改当前任务证据。保留 fork.3 的基线：修复重复登记等待订阅的问题，并区分订阅到期和任务超时。保留 fork 的 fallback、保留与恢复契约；源码同步不迁移现有会话、等待记录或任务状态。
+源码候选 `0.90.0-fork.1` 集成社区 0.90.0，同时保留我方 fork 的异构模型 fallback、idle timeout、runner/宿主兼容、UNKNOWN 对账和 fail-closed 恢复语义；并保留 0.89.0-fork.4 的 Herdr/原生放置传输归属修复。源码同步不会迁移现有会话、等待记录或任务状态。
 
 ## 发布版本与分支约定
 
-候选通过独立审查、CI 和固定 Release 发布前，仍使用已发布的 **0.89.0-fork.3** 作为安装和回退基线。
+候选通过独立审查、CI 和固定 Release 发布前，仍使用已发布的 **0.89.0-fork.4** 作为安装和回退基线。
 
 - `main`：我们的维护、整合与发布主线，保留 fork 修复。
 - `upstream-main`：仅镜像社区 `main`，不加入 fork 提交，也不作为安装来源。
@@ -25,7 +25,7 @@
 安装现有固定发布版本（不是尚未发布的源码候选）：
 
 ```bash
-pi install git:github.com/chenhaoxiang/pi-subagents@v0.89.0-fork.3
+pi install git:github.com/chenhaoxiang/pi-subagents@v0.89.0-fork.4
 ```
 
 [GitHub Releases](https://github.com/chenhaoxiang/pi-subagents/releases) 提供可安装的包、来源清单和 `SHA256SUMS` 校验文件；这不是向上游作者的 npm 命名空间发布。发布及制品安装流程见[维护说明](docs/releasing.md)。

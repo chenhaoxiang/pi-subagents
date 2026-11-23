@@ -23,9 +23,9 @@ Applies only to chenhaoxiang/pi-subagents. The community project remains [nicoba
 
 ## Baseline for this release
 
-Candidate `0.89.0-fork.4` hardens Herdr and native-placement transport ownership: stale disconnects invalidate their subscriptions, status activity requires the exact pane and terminal identity, reconnects update the owned pane, and superseded transports cannot mutate current run evidence. It retains the fork.3 baseline, which fixes duplicate wait subscriptions and distinguishes subscription expiry from run failure. Fork-specific fallback, retention and recovery contracts remain; no live session, wait store or mission is migrated by source synchronization.
+Candidate `0.90.0-fork.1` integrates community 0.90.0 while retaining the maintained fork's heterogeneous-model fallback, idle-timeout, runner/host compatibility, UNKNOWN reconciliation and fail-closed recovery behavior. It preserves the 0.89.0-fork.4 Herdr/native-placement ownership fixes and does not migrate live sessions, wait stores or missions during source synchronization.
 
-Previous release **0.89.0-fork.3** (`f64bca59c3dc013d6119ce023ba72100b3a58489`) is unchanged. Continue to enforce wait-record v2 and mission schema 2 coexistence boundaries. Do not delete retained fork copies or replay UNKNOWN work.
+Previous release **0.89.0-fork.4** (`c703c928b8ac4d248d342ae201f1887a60dd7ccd`) is unchanged. Continue to enforce wait-record v2 and mission schema 2 coexistence boundaries. Do not delete retained fork copies or replay UNKNOWN work.
 
 ## Publish every version
 

@@ -326,7 +326,7 @@ function deriveAsyncActivityState(asyncDir: string, status: AsyncStatus): { acti
 	};
 }
 
-function statusToSummary(asyncDir: string, status: AsyncStatus & { cwd?: string }, nestedWarnings: string[] = [], nestedRoute?: NestedRoute): AsyncRunSummary {
+function statusToSummary(asyncDir: string, status: AsyncStatus & { cwd?: string }, nestedWarnings: string[] = []): AsyncRunSummary {
 	const statusPath = path.join(asyncDir, "status.json");
 	validateAsyncStatusLaneMetadata(status, `Invalid async status '${statusPath}'`);
 	const workflowChildren = parseWorkflowChildSummary(status.workflowChildren);
@@ -341,7 +341,6 @@ function statusToSummary(asyncDir: string, status: AsyncStatus & { cwd?: string 
 	const { activityState, lastActivityAt } = deriveAsyncActivityState(asyncDir, status);
 	const processTerminal = readProcessTerminal(asyncDir, { runId: status.runId, runnerProcessInstanceId: status.processTerminal?.runnerProcessInstanceId })
 		?? sanitizeProcessTerminal(status.processTerminal, { runId: status.runId, runnerProcessInstanceId: status.processTerminal?.runnerProcessInstanceId }, path.join(asyncDir, "status.json"));
-	const nestedProjectionAllowed = nestedWarnings.length === 0;
 	// Degrade to the status-stored snapshot when the persisted budget is unavailable (e.g. removed
 	// by OS temp cleanup) instead of failing the whole run list; admission paths stay strict.
 	let runFanoutBudget: AsyncStatus["runFanoutBudget"] = status.runFanoutBudget;
@@ -354,16 +353,6 @@ function statusToSummary(asyncDir: string, status: AsyncStatus & { cwd?: string 
 	const steps = status.steps ?? [];
 	const chainStepCount = status.chainStepCount ?? steps.length;
 	const parallelGroups = normalizeParallelGroups(status.parallelGroups, steps.length, chainStepCount);
-	let nestedChildren: NestedRunSummary[] = [];
-	if (nestedProjectionAllowed && nestedRoute) {
-		try {
-			// The route is resolved by the caller via buildNestedRouteIndex, so this
-			// avoids a fresh scan of the nested-events directory per run.
-			nestedChildren = projectNestedEvents(nestedRoute)?.children ?? [];
-		} catch (error) {
-			nestedWarnings.push(`Nested status unavailable: ${getErrorMessage(error)}`);
-		}
-	}
 	const summarizedSteps = steps.map((step, index) => {
 		const stepActivityState = step.activityState;
 		const stepLastActivityAt = step.lastActivityAt;
@@ -442,7 +431,7 @@ function statusToSummary(asyncDir: string, status: AsyncStatus & { cwd?: string 
 			...(step.children?.length ? { children: step.children } : {}),
 		};
 	});
-	attachRootChildrenToSteps(status.runId || path.basename(asyncDir), summarizedSteps, nestedChildren);
+	attachRootChildrenToSteps(status.runId || path.basename(asyncDir), summarizedSteps, undefined);
 	const recovery = status.recovery?.state === "unknown" ? status.recovery : projectAsyncRecovery({
 		runId: status.runId || path.basename(asyncDir),
 		state: status.state,
@@ -497,7 +486,6 @@ function statusToSummary(asyncDir: string, status: AsyncStatus & { cwd?: string 
 		...(hostSteps.length ? { hostSteps } : {}),
 		...(status.mode === "workflow" && status.workflowGraph ? { workflowGraph: status.workflowGraph } : {}),
 		steps: summarizedSteps,
-		...(nestedChildren.length ? { nestedChildren } : {}),
 		...(nestedWarnings.length ? { nestedWarnings } : {}),
 		...(processTerminal ? { processTerminal } : {}),
 		recovery,
@@ -524,6 +512,23 @@ function statusToSummary(asyncDir: string, status: AsyncStatus & { cwd?: string 
 
 export function summarizeAsyncStatus(asyncDir: string, status: AsyncStatus & { cwd?: string }): AsyncRunSummary {
 	return statusToSummary(asyncDir, status);
+}
+
+/** Projects nested children onto summaries built without them. It never reconciles descendants. */
+function attachNestedChildren(runs: AsyncRunSummary[], resolveRoute: (run: AsyncRunSummary) => NestedRoute | undefined = (run) => findNestedRouteForRootId(run.id)): void {
+	for (const run of runs) {
+		let nestedChildren: NestedRunSummary[];
+		try {
+			const route = resolveRoute(run);
+			nestedChildren = route ? projectNestedEvents(route).children : [];
+		} catch (error) {
+			run.nestedWarnings = [...(run.nestedWarnings ?? []), `Nested status unavailable: ${getErrorMessage(error)}`];
+			continue;
+		}
+		if (!nestedChildren.length) continue;
+		run.nestedChildren = nestedChildren;
+		attachRootChildrenToSteps(run.id, run.steps, nestedChildren);
+	}
 }
 
 function sortRuns(runs: AsyncRunSummary[]): AsyncRunSummary[] {
@@ -604,6 +609,7 @@ export function listAsyncRuns(asyncDirRoot: string, options: AsyncRunListOptions
 	// load-time restoration (which only wants queued/running runs) skips it
 	// entirely when no active runs match.
 	let nestedRouteIndex: Map<string, NestedRoute> | undefined;
+	const reconciledRoutes = new Map<AsyncRunSummary, NestedRoute>();
 	const resolveNestedRoute = (rootRunId: string): NestedRoute | undefined => {
 		if (!includeNested) return undefined;
 		if (activeEntries.has(rootRunId)) return findNestedRouteForRootId(rootRunId);
@@ -663,11 +669,13 @@ export function listAsyncRuns(asyncDirRoot: string, options: AsyncRunListOptions
 			} catch (error) {
 				observeStatus?.(null);
 				nestedWarnings.push(`Nested status unavailable: ${getErrorMessage(error)}`);
+				// Children that failed to reconcile are not projected.
+				nestedRoute = undefined;
 			}
 		}
 		let summary: AsyncRunSummary;
 		try {
-			summary = statusToSummary(asyncDir, status, nestedWarnings, nestedRoute);
+			summary = statusToSummary(asyncDir, status, nestedWarnings);
 		} catch (error) {
 			observeStatus?.(null);
 			if (!activeEntries.has(entry) || !isAsyncStatusIsolationError(asyncDir, error)) throw error;
@@ -675,10 +683,15 @@ export function listAsyncRuns(asyncDirRoot: string, options: AsyncRunListOptions
 			continue;
 		}
 		runs.push(summary);
+		if (nestedRoute) reconciledRoutes.set(summary, nestedRoute);
 	}
 
 	const sorted = sortRuns(runs);
-	return options.limit !== undefined ? sorted.slice(0, options.limit) : sorted;
+	const listed = options.limit !== undefined ? sorted.slice(0, options.limit) : sorted;
+	// Project nested children only for the runs returned. A non-reconciling read
+	// (FleetView polls one) looks up each run's own route-index directory.
+	if (includeNested) attachNestedChildren(listed, options.reconcile === false ? undefined : (run) => reconciledRoutes.get(run));
+	return listed;
 }
 
 function formatActivityFacts(input: { activityState?: ActivityState; lastActivityAt?: number; currentTool?: string; currentToolStartedAt?: number; currentPath?: string; turnCount?: number; toolCount?: number; steering?: SteeringStatus; turnBudget?: TurnBudgetState; turnBudgetExceeded?: boolean; wrapUpRequested?: boolean }): string | undefined {

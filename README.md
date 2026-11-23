@@ -12,11 +12,11 @@ This repository is the maintained fork at:
 
 <https://github.com/chenhaoxiang/pi-subagents>
 
-Candidate `0.89.0-fork.4` hardens Herdr and native-placement transport ownership: stale disconnects invalidate their subscriptions, status activity requires the exact pane and terminal identity, reconnects update the owned pane, and superseded transports cannot mutate current run evidence. It retains the fork.3 baseline, which fixes duplicate wait subscriptions and distinguishes subscription expiry from run failure. Fork-specific fallback, retention and recovery contracts remain; no live session, wait store or mission is migrated by source synchronization.
+Candidate `0.90.0-fork.1` integrates community 0.90.0 while retaining the maintained fork's heterogeneous-model fallback, idle-timeout, runner/host compatibility, UNKNOWN reconciliation and fail-closed recovery behavior. It preserves the 0.89.0-fork.4 Herdr/native-placement ownership fixes and does not migrate live sessions, wait stores or missions during source synchronization.
 
 ## Releases and branch policy
 
-The previous published release **0.89.0-fork.3** remains the installation and rollback baseline until this candidate completes review, CI and separate fixed-release publication.
+The previous published release **0.89.0-fork.4** remains the installation and rollback baseline until this candidate completes review, CI and separate fixed-release publication.
 
 - `main`: our maintained integration and release branch, including fork fixes.
 - `upstream-main`: an exact mirror of the community's `main`, with no fork commits. Never install from this branch.
@@ -25,7 +25,7 @@ The previous published release **0.89.0-fork.3** remains the installation and ro
 Install the existing reproducible release (not the unpublished source candidate):
 
 ```bash
-pi install git:github.com/chenhaoxiang/pi-subagents@v0.89.0-fork.3
+pi install git:github.com/chenhaoxiang/pi-subagents@v0.89.0-fork.4
 ```
 
 [GitHub Releases](https://github.com/chenhaoxiang/pi-subagents/releases) include the installable package tarball, a provenance manifest, and `SHA256SUMS`. These GitHub releases are not npm publications under the upstream author's namespace. See [release maintenance](docs/releasing.md) for asset installation and future releases.

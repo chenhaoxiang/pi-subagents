@@ -67,7 +67,7 @@ The complete plain-JSON inventory is validated before the first launch (maximum 
 
 ## Parameter reference
 
-The `subagent` tool schema lists `agent`, `task`, `workflow`, `args`, `async`, `model`, `cwd`, `worktree`, `output`, `action`, `id` and `message` at the top level and every other field inside `options`, for example `subagent({ action: "status", id: "<run-id>", options: { view: "transcript" } })`. Management fields and the `runId`, `maxRuntimeMs` and `isolation` aliases also keep working at the top level, as in RPC payloads, slash commands, schedules and workflow `runs.run`/`runs.all` items; a field given in both places with different values is rejected.
+The `subagent` tool schema lists `agent`, `task`, `workflow`, `args`, `async`, `model`, `cwd`, `worktree`, `output`, `action`, `id`, `message` and `label` at the top level and every other field inside `options`, for example `subagent({ action: "status", id: "<run-id>", options: { view: "transcript" } })`. Management fields and the `runId`, `maxRuntimeMs` and `isolation` aliases also keep working at the top level, as in RPC payloads, slash commands, schedules and workflow `runs.run`/`runs.all` items; a field given in both places with different values is rejected.
 
 ### Target and management parameters
 
@@ -76,6 +76,7 @@ The `subagent` tool schema lists `agent`, `task`, `workflow`, `args`, `async`, `
 | `options` | object | - | Management and control fields; the rows named `options.<name>` below go here. Unknown keys are rejected with the closest valid option. The same fields are also accepted at the top level. |
 | `agent` | string | - | One direct child or agent-management target. Workflow child agents are set inside `runs.run` or `runs.all`. |
 | `task` | string | agent default | Direct child's task; requires `agent`, excludes `action` and workflow inputs. `agent` may also select a management target. |
+| `label` | string | task excerpt | 2-4 words naming a direct child, at most 80 characters. Names the child's session and status row and is sent as `description` in `subagent:async-started`. Each `args.tasks` item of `workflow: "parallel"` also takes a `label`. |
 | `action` | string | - | Offline workflow `validate`, agent management (including `guide`, `children.list`, and `refine`/`refine.show`/`refine.rollback`), lane evidence (`lane.status`, `lane.recordMerge`, `lane.recordSupersession`), mission (`mission.create/list/show/update/resolve-decision/attach-run/close`), Inspect actions (`inspector.command/open/status/close`), Herdr project pane (`project.open/status/close`), status/reconcile/control, reviewed `worktree.cleanup`, schedule, watchdog, or doctor action. |
 | `options.topic` | `overview \| workflows \| agents \| missions \| observability \| tool-reference \| configuration \| models \| watchdog \| extension-api \| council`, or `<topic>/<section>` | `overview` | Packaged guide topic for `action: "guide"`. A docs topic returns its table of contents; `<topic>/<section>` returns one section. |
 | `options.config` | object/string | - | Agent config for management create/update. |
@@ -107,7 +108,6 @@ The `subagent` tool schema lists `agent`, `task`, `workflow`, `args`, `async`, `
 | `isolation` | `none \| worktree` | - | Alias kept at the top level; prefer `worktree`. Workflow child isolation. `none` runs in the shared cwd and does not need Git. `worktree` requires a managed Git worktree. Do not combine it with a contradictory `worktree` value. |
 | `options.baseRef` | string | `HEAD` | `HEAD` or a supported named ref such as `refs/heads/release`, `refs/tags/v1`, or `origin/main`. Full 40/64-character commit IDs and revision expressions such as `HEAD~1` are unsupported. The ref must resolve to a commit at worktree allocation; omitted values default to `HEAD` resolved at that time. Source-checkout cleanliness is still checked. For a workflow script, set it on the outer request as a default or on an individual `runs.run`/`runs.all` child to override it. |
 | `options.timeoutMs` | number | config `timeoutMs`, else 30 min foreground / single-agent async | Optional run-level max runtime in milliseconds; time a child spends waiting for a supervisor reply (`contact_supervisor` decision or interview, `intercom` ask) does not count. The top-level alias `maxRuntimeMs` is also accepted; both must agree. When omitted, the global [`timeoutMs`](configuration.md#timeoutms) config provides the default; absent that, foreground and plain single-agent async runs fall back to 30 minutes, while composite async runs (chains, parallel tasks, workflows) stay unbounded at the top level. Expiration of this run-level deadline is terminal. |
-| `options.idleTimeoutMs` | number | agent/config default | Optional inactivity window; stream/tool activity resets it and it has no wall-clock cap. Do not combine it with `options.timeoutMs`/`maxRuntimeMs`. |
 | `options.toolTimeoutMs` | number | fast-tool default | Optional positive hard per-tool-call deadline in milliseconds. Precedence: call value → agent frontmatter → config → `PI_SUBAGENT_TOOL_TIMEOUT_MS`. The timer starts on `tool_execution_start`, clears on the matching `tool_execution_end`, and terminates the run with `timedOut: true` if the tool remains open. When omitted, known-fast built-in tools get a five-minute default; long-running tools get attention notices but no hard default. It never extends the run deadline; `contact_supervisor`, `intercom`, and `bg_wait` are exempt. |
 | `options.checkpointBeforeDeadlineMs` | number | none | Async single-agent runs only. The runner requests that the child "checkpoint and stop" this many milliseconds before the run deadline (finish the current tool call, report changed files, build/test state, remaining work, commit/PR state; start no new work). This best-effort steer uses the normal steering lifecycle at the next tool boundary, so the receipt is visible in status and events; the ordinary deadline kill still applies. Precedence: call value → config `checkpointBeforeDeadlineMs`. Disarmed when the deadline leaves under one second before the checkpoint. |
 | `options.toolBudget` | object | none | Optional child tool-call budget `{ soft?, hard, block? }`: `hard` is a positive integer and `soft`, if set, is a positive integer no greater than `hard`. At `soft` the child is nudged to finalize. After `hard`, configured tools are blocked; `block` defaults to `read`, `grep`, `find`, and `ls`, and accepts either a nonempty array of tool names or `"*"` for every tool call. Final assistant text is never blocked. |
@@ -119,7 +119,7 @@ The `subagent` tool schema lists `agent`, `task`, `workflow`, `args`, `async`, `
 | `options.maxOutput` | object | none | Final output truncation limits `{ bytes?, lines? }`. For child runs it is only applied when set; there is no default cap on the inline path, so use `outputMode: "file-only"` for large outputs. For workflow script results, the Return, Emitted, and Console sections are always capped, at 200 KB / 5000 lines unless `maxOutput` sets other limits. |
 | `options.artifacts` | boolean | true | Write debug artifacts. |
 | `options.includeProgress` | boolean | false | Include full progress in result. |
-| `options.share` | boolean | false | Upload session export to GitHub Gist. |
+| `options.share` | boolean | false | Upload session export to GitHub Gist. Disable with `disabledFeatures: ["session-sharing"]`. |
 | `options.sessionDir` | string | derived | Override session log directory. |
 | `options.acceptance` | string/object/false | inferred | Configure evidence gates. See [Acceptance gates](#acceptance-gates). |
 | `options.gate` | string \| object | - | One host-run verification command, shorthand for `acceptance: { level: "verified", verify: [{ id: "gate", command }] }`. The object form `{ command, output?: "json", schema?, timeoutMs? }` adds a [typed gate](#typed-gates): with `output: "json"`, a passing command's stdout becomes the child's `structuredOutput`. Also valid on individual `runs.run`/`runs.all` items. Rejects `acceptance` except `false` (treated as omitted), rejects retained `resume`, and `output: "json"` rejects `outputSchema`. |
@@ -199,16 +199,6 @@ Inside a workflow script, `await runs.run(key, { resume, task })` waits for the 
 For a simple implementation challenge outside a workflow script, send the challenge through `subagent({ action: "resume", id: "<retained-writer-run>", message: "Reconsider the implementation and make any better current-scope change." })` when `children.list` reports that retained writer as `resumable`, or attempt it after exact-id status inspection identifies a known direct-child candidate. Status is advisory; resume authoritatively checks eligibility and may reject missing recovery requirements. If there is no known candidate or resume rejects eligibility, start a same-role fallback challenge and record why it is a fallback. Use workflow `runs.run({ resume })` only when the script must await the revived writer output before the next step. Do not use `steer` as the sole challenge action for a completed retained child; `steer` with `mode: "follow_up"` only queues text for the next `resume`.
 
 `resume` and `agent` are mutually exclusive. The revived child keeps its stored agent, model, and tool contract. `gate` is rejected on retained resume items because resume uses the retained child contract.
-
-### UNKNOWN runner recovery
-
-A status may report `Recovery: unknown (runner_liveness_unknown)` when the recorded runner cannot be safely probed from the observing process (for example, a PID namespace or permission boundary is not comparable). This is a recoverable observation, not a failed or completed run:
-
-1. No replacement runner or business action is launched.
-2. Use `{ action: "reconcile", id: "<run-id>" }` to re-read the original run, result and process evidence after the runtime boundary becomes available.
-3. Only after reconciliation proves the original runner terminal should `{ action: "resume", id: "<run-id>", message: "..." }` be used.
-
-`reconcile` is a read/recovery action over the existing status, result and event files; it is not a second ledger, retry queue or effect dispatcher. Until the original runner is proven terminal, `resume` is rejected to prevent duplicate work.
 
 ## Management actions
 
@@ -561,6 +551,8 @@ Intentionally unsupported: native Pi child options such as model override, struc
 ## Session sharing
 
 Pass `share: true` to export a full session to HTML, upload it to a secret GitHub Gist through your `gh` credentials, and return a `https://shittycodingagent.ai/session/?<gistId>` URL.
+
+A secret Gist is unlisted, not private: anyone with the link can read it, and nothing asks before the upload, so treat `share: true` as publishing. With `context: "fork"`, the parent conversation is included. Setting `disabledFeatures: ["session-sharing"]` turns sharing off for an install.
 
 ```js workflow
 return runs.run("main", { agent: "scout", task: "..." });
