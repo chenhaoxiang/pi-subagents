@@ -2,22 +2,73 @@
 
 ## [Unreleased]
 
-## [0.89.0-fork.4] - 2026-11-22
+## [0.90.0-fork.1] - 2026-11-23
 
-- Harden Herdr and native-placement transport ownership: stale disconnects invalidate their subscriptions, status activity requires the exact pane and terminal identity, reconnects update the owned pane, and superseded transports cannot mutate current run evidence.
+- Integrate community v0.90.0 while retaining the maintained fork's heterogeneous-model fallback, idle-timeout, runner/host compatibility, UNKNOWN reconciliation and fail-closed recovery behavior.
+- Preserve the prior 0.89.0-fork.4 release for rollback; source synchronization does not migrate live sessions or replay retained work.
 
-## [0.89.0-fork.3] - 2026-11-18
+## [0.90.0] - 2026-11-22
 
-- Non-blocking waits no longer pile up for one run: the launching interactive parent uses its native completion notice, and duplicate explicit watches reuse their original token and expiry. Quiet scheduled runs retain explicit watches because their completion is intentionally not a parent wake. Restore coalesces duplicate persisted v2 records, and the UI identifies an expired wait window separately from a child timeout.
+### Highlights
 
-## [0.89.0-fork.2] - 2026-11-18
+- Give a subagent a short `label` and it shows up by that name in its session, its status row and the events host apps receive, so several runs of the same agent are easy to tell apart.
+- A `parallel` workflow can run its tasks one at a time with `globalConcurrencyLimit: 1`.
+- Finished workflows are now cleaned up from disk like other background runs, instead of piling up to tens of gigabytes.
+- On Windows, a locked status file at the end of a workflow no longer crashes Pi.
+- An install can turn off session sharing with `disabledFeatures: ["session-sharing"]`, so no run can upload a session to a GitHub Gist.
 
-- Reissue the maintained release with portable `SHA256SUMS` filenames; the source and runtime behavior are unchanged. The prior `0.89.0-fork.1` assets remain immutable for audit and rollback.
+### Added
 
-## [0.89.0-fork.1] - 2026-11-18
+- A direct subagent launch can now be named with a short top-level `label`, for example `subagent({ agent: "worker", task: "…", label: "Fix login redirect" })`, and so can each `args.tasks` item of `workflow: "parallel"`. The label names the child's session and status row, as a workflow child's `runs.run` label already does, and `subagent:async-started` carries it as `description`, so hosts that list running children can tell several runs of the same agent apart. Thanks to [@mmarabel](https://github.com/mmarabel) for the report (#3324).
+- A foreground subagent run now emits `task:subagent:lifecycle` (`started`, then `completed`, `failed` or `aborted`) on Pi's extension event bus, so host apps that only watch `subagent:async-*` can show foreground runs. The payload carries the run id, agent name and a description (the launch's `label`, or else the agent's description), never the task prompt. `subagent:async-started` for single, chain and parallel runs now carries `description` by the same rule. Thanks to [@Andy123qq4](https://github.com/Andy123qq4) for #3318.
+- A named workflow call such as `{ workflow: "parallel", args: { tasks: [...] } }` now accepts a top-level `globalConcurrencyLimit`, so `globalConcurrencyLimit: 1` runs its tasks one at a time; before, the call was refused. When `args.concurrency` is passed to `parallel`, the error now points to `globalConcurrencyLimit`. Thanks to [@mmarabel](https://github.com/mmarabel) for #3320.
+- `disabledFeatures: ["session-sharing"]` now removes `share` from the `subagent` tool, so a run cannot upload a session to a GitHub Gist from that install. A resume whose saved launch enabled `share` is refused before it starts, and the run stays resumable once the setting is gone. Nothing changes when the setting is absent. Before, the only ways to stop the upload were to remove `gh` from `PATH`, revoke the `gist` OAuth scope, or block network access. Thanks to [@jpodivin](https://github.com/jpodivin) for #3323 and to [@marcfargas](https://github.com/marcfargas) for the report (#30).
+- A new `fastServiceTier` setting chooses the OpenAI service tier that `fast: true` requests for native OpenAI-Codex children: `"priority"` (the default, as before) or `"ultrafast"`. Before, fast mode could only request Priority. Thanks to [@FireSpoonYZ](https://github.com/FireSpoonYZ) for #3317.
 
-- Integrate community v0.89.0 (`4aa4ddb0ecb7ad56a6c9e56c96f39f7877a1550f`) and the two follow-up corrections for inactive allowlisted tools and temporarily unreadable runner status (`2a236ff599267ba1de9709afde5b5c4533cf3449`).
-- Retain UNKNOWN reconciliation and namespace/boot identity, native/legacy parent wake, retained fork-session copies, and the previous fixed release for rollback. Defer a wake during manual compaction without starting another turn or weakening the earlier reservation.
+### Fixed
+
+- Finished workflows and their subagents are now deleted from disk like other background runs. Before, async retention kept every workflow run, workflow child and revived child forever, so `async-subagent-runs` could grow to tens of gigabytes. A workflow is now removed with its children once it has finished and passed the 30-day window; it is still kept while it, any of its children, or a revival of one is running, recent or still resumable. Thanks to [@youlikemodernart](https://github.com/youlikemodernart) for the report (#3326).
+- On Windows, an async workflow whose last writes to `status.json` failed with `EPERM` no longer crashes Pi. When another process held the file locked, the error escaped the workflow's teardown and took the whole process down. The failure is now recorded as a `subagent.workflow.status_write_failed` event, the workflow's result is still delivered, and `status.json` catches up with the finished state once the lock clears (Pi keeps retrying for up to a minute without blocking). Thanks to [@M0-3del](https://github.com/M0-3del) for the report (#3325).
+- A background subagent that launches its own nested subagents now shows them in the Fleet status widget, `subagent({ action: "status" })` and its completion result. Before, the nested children were filed under the wrong run id, so status never found them. Thanks to [@dvishoot](https://github.com/dvishoot) for #3316.
+- A `subagent` call with `workflow: true` and `options.script` now runs the script, as `options.script` alone does, instead of failing with `options.script replaces workflow`. A named workflow or a script path together with `options.script` is still refused. Thanks to [@mmarabel](https://github.com/mmarabel) for the report (#3320).
+- A foreground subagent's result in the tool details (`details.results[i]`) no longer carries hidden Symbol keys, so extensions that hash or compare tool results, such as pi-fold, see a plain JSON object. Thanks to [@xiaquwan1001](https://github.com/xiaquwan1001) for the report (#3319).
+- pi-subagents now type-checks against Pi 1.6, whose components return read-only render output, without changing its dependency pins. Thanks to [@Giesch](https://github.com/Giesch) for #3322.
+- The tool reference warns again that a secret Gist is unlisted, not private, and that nothing asks before the upload, and says how to turn sharing off. The warning was lost when the README was split into guides (#30).
+
+## [0.89.2] - 2026-11-20
+
+### Highlights
+
+- Subagents in a Herdr pane (`machine: "local"`) no longer fail to start, and Herdr project panes on Windows now work in Git Bash.
+- In `/subagents-fleet`, expanded tool details show a `bash` call's whole command, including multiline scripts.
+- A workflow child with a `label` is named by that label in its session name, terminal title and Fleet row.
+- The child watchdog no longer tells you to undo work the supervisor approved.
+- Subagents can use MCP servers configured with `"openUi": false`.
+
+### Fixed
+
+- A subagent placed in a Herdr pane (`machine: "local"`) no longer fails to start with `is not an active named agent`. Herdr holds a newly started agent as pending until something asks for its state, so retrying the first prompt alone never got through. pi-subagents now waits for the agent to be ready before it prompts again. Thanks to [@TheEdgeOfRage](https://github.com/TheEdgeOfRage) for #3312.
+- On Windows, a Herdr project pane now starts Pi when the pane runs Git Bash or another POSIX shell. The launch command was always written for PowerShell, so a Git Bash pane failed with `syntax error near unexpected token '&'` and never started. Thanks to [@mystery4f](https://github.com/mystery4f) for #3306.
+- In `/subagents-fleet`, expanding tool details (`x` or `Ctrl+O`) now shows a `bash` call's whole command, every line wrapped to the pane, while it runs and after it finishes. Before, a multiline script such as a heredoc was cut to one line. When the saved arguments were too large to keep in full, the expanded view shows what was saved and says it was truncated. Thanks to [@power22c](https://github.com/power22c) for the report (#3308).
+- A subagent started from a workflow script with a short `label` (for example `runs.run("tests", { label: "Validate sanitizer tests", agent: "worker", task: "…" })`) is now named by that label: its session name and Pi terminal title read `worker: Validate sanitizer tests`, and its Fleet row reads `Validate sanitizer tests (worker)`. Before, only the workflow's own row used the label, and the subagent was named after the first words of its task, so several children of the same agent were hard to tell apart. Thanks to [@power22c](https://github.com/power22c) for the report (#3309).
+- The child watchdog no longer warns that a change the supervisor approved was unauthorised. When a subagent asks its supervisor a question and follows the answer, the watchdog now always sees that question and answer, even in a long run whose earlier turns no longer fit in its review. Before, the answer could drop out, and the watchdog reported the instruction as missing and suggested undoing correct work. The watchdog is also told when earlier turns were left out, so it doesn't treat missing evidence as proof. Thanks to [@mannainsect](https://github.com/mannainsect) for the report (#3307).
+- A subagent that lists `mcp:<server>` in its `tools` now starts when that server's MCP config sets `"openUi": false`. Before, it failed with `Unresolved MCP direct-tool selectors` even though the server was connected, because pi-mcp-adapter 7 counts that setting when it checks its cached tool list and pi-subagents did not (#3310). Thanks to [@carlesba](https://github.com/carlesba) for #3311.
+- A workflow no longer waits forever when one of its background subagents finishes after the Pi that started it has exited, for example because Pi was restarted. Once the subagent's process is confirmed gone, the workflow treats it as finished. Thanks to [@tdslot](https://github.com/tdslot) for the report (#3304).
+
+## [0.89.1] - 2026-11-18
+
+### Highlights
+
+- Subagents limited to a list of `tools` work again alongside extensions that keep a tool switched off on purpose, such as pi-web-access.
+- A background subagent keeps showing as running when its status file can't be read, instead of being marked failed and dropped.
+- Stopping a subagent in a Herdr or Rex pane now actually stops it.
+
+### Fixed
+
+- A subagent limited to a list of `tools` no longer stops before its first request when an extension keeps one of those tools inactive on purpose, as pi-web-access does with `web_enable`. 0.89.0 treated that tool as replaced by another extension and failed the child with a misleading error. The check now fails the child only when a tool it can call is missing from the request, so a child whose tools pi-fabric's code mode swapped out still stops early. Thanks to [@chpock](https://github.com/chpock) for the report (#3296).
+- A background subagent whose status file can't be read, for example after its permissions changed, now still counts as running. Before, a session that reopened while the subagent was working showed no active subagents and told hosts such as pi-web it was idle, and a session already open marked the subagent failed and dropped it about 10 seconds later. The run is kept until its status can be read again, then tracked normally, or dropped if it belongs to another session. Thanks to [@jordan-quan](https://github.com/jordan-quan) for the report (#3295).
+- Stopping a subagent that runs in a Herdr or Rex pane now stops its current turn. Before, the stop request failed in the subagent's Pi with `api.abort is not a function`. Thanks to [@guneriu](https://github.com/guneriu) for the report (#3300).
+- `machine: "local"` from a Pi running in a Herdr Core terminal (`hc`, the Herdr app's terminal server) now fails with an error that says Herdr Core is not supported. Before, the error said Pi was not running in Herdr, which was confusing inside the Herdr app. Only the herdr terminal multiplexer and Rex are supported. Thanks to [@guneriu](https://github.com/guneriu) for the report (#3300).
 
 ## [0.89.0] - 2026-11-16
 
@@ -72,13 +123,6 @@
 - An extension that changes a workflow child's `task` in its `tool_call` handler for `subagent_launch` now changes what that child is told. Before, the change was dropped and the child got the original text, although Pi applies such changes for every other tool. This covers workflow scripts, `parallel`, `tasks` and `chain`, including steps built from `{previous}`. Other fields and a resumed child's message still can't be changed.
 - With background subagents running, a manual compaction (`/compact`, RPC `compact` or an extension's `ctx.compact()`) no longer starts a turn when the parent was idle or stopped with Esc. Before, every manual compaction resumed the parent, so an extension that compacts on `agent_settled` made it answer "still waiting" each time. A compaction that interrupts a working parent still resumes it. A subagent result that arrives during a compaction now wakes the parent once the compaction ends, instead of starting a run mid-compaction. Thanks to [@IdrisGit](https://github.com/IdrisGit) for #3253 and [@jyshowalter](https://github.com/jyshowalter) for the report. (#3252)
 
-## [0.88.0-fork.1] - 2026-11-11
-
-- Integrate published community v0.88.0 (`c99503ae`), including monotonic supervisor-paused runtime budgets, truncated-response failures, finishing-guidance rejection, disabled-MCP filtering, cross-folder fork instructions, agent search, progress and cache-session identity fixes.
-- Preserve guarded fallback, idle timeout, runner/host/CJS and unknown recovery, native wake/scoped shutdown, mission schema 2, wait v2/claim cleanup and the drain/setup-abort no-new-attempt repair.
-- Deliberately defer community's new automatic age-based fork-copy deletion: missing/unknown ownership and retained recovery dependencies are not deletion proof. Existing artifact cleanup, resumable async-state retention and session leases remain unchanged; no real cleanup, store migration or task replay is performed.
-- Pin external Undici 8.12.4 for the six security fixes in its official release notes. This does not update Node's separately bundled Undici or claim every built-in fetch consumer is repaired.
-
 ## [0.88.0] - 2026-11-10
 
 ### Highlights
@@ -110,11 +154,6 @@
 - `{ action: "list" }` now shows at most 30 agents and points to `options.search` for the rest. Before, it printed every agent with its full description, so a catalog of a few hundred agents put about 160 KB into the conversation in one call.
 - In a non-interactive session (`pi -p`), Pi now waits for background subagent work at the end of a turn for as long as the `timeoutMs` setting allows a run to take. Before, it always gave up after 30 minutes, so a parent that ended its turn to wait for a longer child failed and exited before the child's result arrived. Without `timeoutMs`, the wait is still 30 minutes. Thanks to [@mt-huerta](https://github.com/mt-huerta) for #3229.
 - The Watchdog's own model requests (reviews and permission decisions) and Prompt Audit's task rewrite now carry the parent session id, so providers that key prompt caching on it get a `prompt_cache_key`. Before, a gateway that requires one rejected every Watchdog review with HTTP 400. Thanks to [@hetingyi](https://github.com/hetingyi) for #3223.
-## [0.87.0-fork.1] - 2026-11-10
-
-- Integrate the exact published community v0.87.0 (`52e68e9ef`), excluding later unreleased main changes. Add workflow drain, opt-in global context defaults, MCP selector, nested artifact cleanup and Pi 1.5 schema-preflight repairs.
-- Deduplicate the selected provider, wait-owner and scoped-shutdown backports while retaining guarded fallback, idle timeouts, host/runner/CJS compatibility, unknown recovery, native parent wake and mission schema 2.
-- Preserve strict wait-record v2, exact native ownership, proven-dead-only takeover, legacy-v1 non-consumption, record-before-claim removal and fork.10's cleanup-error isolation. This is a source candidate, not publication, installation or active-session loading.
 
 ## [0.87.0] - 2026-11-07
 
@@ -142,54 +181,6 @@
 - Old subagent artifacts in nested folders, such as workflow child outputs under `outputs/`, are now removed after `artifactConfig.cleanupDays` like top-level ones. Before, cleanup only looked at the top level, so session artifact folders kept growing. Worktree handoff records and their patches are kept. (#3217)
 - The configuration docs now explain how to turn on delegation in a session that was recorded before pi-subagents was installed. They also no longer say that `"toolActivation": "eager"` makes `subagent` active in every resumed session. Thanks to [@dapp-whisperer](https://github.com/dapp-whisperer) for #3218.
 - On a Pi 1.5 install that is missing `@earendil-works/pi-schema` (seen in a NixOS package), a background subagent launch now fails right away with an error that names the missing package. Before, the launch was accepted and the child then exited with `Cannot find module '@earendil-works/pi-schema'` before its first turn. Thanks to [@Hifive55555](https://github.com/Hifive55555) for #3220.
-## [0.86.0-fork.10] - 2026-11-09
-
-- Continue cleaning later wait-subscription claim files after an individual unlink failure, then report the first error. Preserve the existing single-snapshot batch, record-before-claim ordering, notification count and legacy-v1 boundary; no retry worker is added.
-
-## [0.86.0-fork.9] - 2026-11-09
-
-- Bind durable wait subscriptions to their arming process, allow proven-dead-owner takeover through exclusive claims, and let only the record-removal winner deliver a wake. Ported from community #3205 by [@MidoriKurage](https://github.com/MidoriKurage).
-- Fence owner-bound waits as record version 2. Older readers ignore them; supporting readers leave legacy v1 records untouched instead of competing with old in-memory writers. Native ownership is required before arming, with no history migration or underlying operation replay.
-
-## [0.86.0-fork.8] - 2026-11-09
-
-- Keep detached remote children out of factory disposal and release their factory reference after individual terminal disposal; existing runtime-owned control cleanup remains unchanged.
-- Make the official standalone CI asset fetch resilient to bounded gateway failures by falling back to the same pinned GitHub Release asset through the API, with mandatory SHA-256 verification before extraction.
-- Scope in-process child shutdown to the exact launching parent's session file, including an explicit file-less scope; preserve detached children and whole-process disposal. Ported from community #3204 by [@Jarcis-cy](https://github.com/Jarcis-cy).
-
-## [0.86.0-fork.7] - 2026-11-09
-
-- Protect explicit `provider/id` model requests from resolving under another provider when that provider is known in Pi's full catalog but not currently available/authenticated. Keep parent-aware fallback, scope and response verification semantics; no real provider call is made by the resolver check.
-
-## [0.86.0-fork.6] - 2026-11-08
-
-- Promote mission records containing typed decision metadata to schema 2 on an actual write, so schema-1-only runtimes reject them instead of silently erasing closure and replacement fields. Untyped missions keep schema 1; existing typed schema-1 records remain read-only byte-stable until updated by a supporting writer.
-- Keep schema-2 records at that version, preserve record/index and lease contracts, and reject unsupported versions before mutation. Older package rollback cannot read or downgrade promoted records; no historical migration, forced reload or lost-metadata reconstruction is performed.
-
-## [0.86.0-fork.5] - 2026-11-07
-
-- Add explicit same-mission decision replacement intent and separate typed supersession/withdrawal closure through existing mission updates. Keep the two-write gap, exact-ID late-answer refusal, and unknown legacy closure reasons.
-- Preserve original decision states, record leases, private content boundaries and open-decision lifecycle; no new action, tool schema, task store, approval or automatic answer-validity inference.
-
-## [0.86.0-fork.4] - 2026-11-06
-
-- Require explicit `autoCreated: true` bindings matching the mission, store and project before `mission.show` bypasses recorded acceptance. Missing bindings, manually attached runs and older bindings without this field no longer imply automatic completion.
-- Preserve explicit automatic missions, accepted results, manual closure, terminal missions and serialized refresh calculations; malformed bindings remain errors. No historical terminal records are rewritten.
-
-## [0.86.0-fork.3] - 2026-11-06
-
-- Serialize cooperating mission record read/modify/write and lifecycle calculations with the existing bounded file lease, preventing concurrent writers from dropping decisions, run evidence or derived status.
-- Recheck retention candidates under a non-waiting lease and keep unchanged observation reads lock-free. Recover only proven dead owners; unknown/live locks remain untouched. Old runtimes do not participate in this protection.
-
-## [0.86.0-fork.2] - 2026-11-06
-
-- Retain acceptance on each linked mission run so a later success or a late completion cannot accept another result still awaiting review. Missing fields do not erase an earlier reported acceptance.
-- Refresh and display exact-run acceptance through `mission.show`, including changes with unchanged execution state. Preserve terminal/manual-close, default-mission, owner, no-replay and raw-result contracts.
-
-## [0.86.0-fork.1] - 2026-11-06
-
-- Integrate community v0.86.0 through fd6d45b31, retaining guarded model fallback, activity-based idle timeout, the 60-minute wait contract, host/runner compatibility, unknown recovery and same-owner mission continuity.
-- Combine configurable wait tool naming and trusted relaunch records with fork preflight and recovery fields; preserve existing work and immutable rollback releases.
 
 ## [0.86.0] - 2026-11-05
 
@@ -254,22 +245,6 @@
 - A workflow script that calls `runs.run` again with a key it already launched now adds one "reused" entry to the workflow trace for that key, not one per call. Before, a script that re-delivered the same call in a loop grew the trace without limit, and because every trace change rewrites the whole trace to the run's status file and event log, one run wrote about 11 GB. Thanks to [@Hu3yLin](https://github.com/Hu3yLin) for the diagnosis and regression test in #3145.
 - A Claude Code run no longer fails with a parser line-length error when it reads an image. Claude Code puts the image's base64 in the tool-result line twice, so one full-page screenshot gives a line of over 1 MB. That line is now skipped and the run keeps going, the way the Cursor adapter already handles large tool calls. Both adapters now skip such lines up to 8 MiB each (it was 1 MiB); the 32 MiB limit on a run's whole output still applies. An oversized assistant line or final result still fails the run, so a dropped answer never passes as a success. Thanks to [@drye](https://github.com/drye) for #3138.
 - Disposing a foreground or in-process background child now also releases the per-session resources that the host's extensions registered with `registerSessionResourceCleanup`, such as a provider's cached WebSocket. Before, under Pi's bundled CLI only the SDK's own copy of the cleanup registry ran, so those resources stayed open and `pi -p` could hang after the run finished. Thanks to [@tmustier](https://github.com/tmustier) for the report and fix. (#3140)
-
-## [0.84.0-fork.4] - 2026-11-05
-
-- Preserve an existing mission when the same native parent owner resumes a top-level single async run. The new run joins the original mission and returns its native binding without rewriting earlier results or acceptance.
-- Keep missing/corrupt/foreign or failed mission attachment non-fatal after native launch; retain the run and report incomplete association instead of creating a replacement mission or replaying work. Cross-owner, nested, workflow/chain and external recovery contracts are unchanged.
-
-## [0.84.0-fork.3] - 2026-11-03
-
-- Sync community main through `8520aeb788ca19479baa852b5a7884a86bed813e`, retaining guarded fallback, activity-based idle timeout, runner/host compatibility, native-child evidence and unknown async-run recovery.
-- Include community workflow-child permission boundaries, workflow-script process isolation, launcher-aware recovery, placement fixes and async widget/runtime fixes.
-
-
-### Community fixes in this synchronization
-
-- Before a workflow starts a child, pi-subagents now makes a nested `subagent_launch` tool call carrying the child's agent, task, working directory and workflow key. Permission extensions such as pi-guard and @gotgenes/pi-permission-system see it in their `tool_call` handler and can block that child, which then fails with the block reason. Extensions that ask about tools they have no rule for will ask once per workflow child until you allow `subagent_launch`, and ones that deny unknown tools in `pi -p` will refuse workflow children there. Schedule ticks, auto-resume, `/prompt-workflow` and prompt-template delegation, RPC launches and workflows inside child agents are not offered; see [Workflows](docs/workflows.md#approving-workflow-children-in-permission-extensions). Thanks to [@ducn1806](https://github.com/ducn1806) for the report and the first implementation in #3123. (#3109)
-- Warm agent discovery checks watched files once when chain definitions are already loaded, instead of repeating the same filesystem scan. Freshness checks and discovery results are unchanged. Thanks to [@ArietidsZ](https://github.com/ArietidsZ) for #3115.
 - Resuming a background run now refuses when the run's status file names a different run than its directory, and the error names both. Before, the resume took the run id from whatever the status file said. Thanks to [@ViperJuice](https://github.com/ViperJuice) for the report. (#3116)
 - Resuming a background run whose saved recovery record does not say which launcher it used, such as a workflow child resumed through its workflow run, now uses the agent file's current `launcher`. Before, the resumed child ran without its launcher. The same applies to a foreground run whose agent file gained a `launcher` since. New background runs record "no launcher" explicitly, so a background run started unwrapped still resumes unwrapped. Thanks to [@ViperJuice](https://github.com/ViperJuice) for the report. (#3116)
 - When a launcher-wrapped background run fails to start, pi-subagents now stops the process the runner reported only if that process is the launcher or one of its descendants. Before, a sandboxed runner could report any process id, and pi-subagents would send it SIGTERM and SIGKILL, including to the parent Pi. A runner that is not stopped exits by itself within 30 seconds when it is never told to proceed. Thanks to [@ViperJuice](https://github.com/ViperJuice) for the report. (#3116)
@@ -289,28 +264,6 @@
 - Reloading or switching sessions now stops the `npm root -g` lookup that finds globally installed agent packages. Before, it kept running for up to 5 seconds after the session it served was gone, and then rescanned agents for nothing. Thanks to [@ArietidsZ](https://github.com/ArietidsZ) for #3117.
 - A child placed on another machine with an `output` path is now told to return its artifact in its final reply, which Pi saves to that path. Before, it was told to write to a path on the parent's machine that doesn't exist where it runs, and children stopped to ask what to do. A child in a Rex `local` pane runs on the parent's machine and still writes the file itself. Thanks to [@tjcarskadon](https://github.com/tjcarskadon) for the report and patch. (#3121)
 - A native Pi child placed on a Herdr machine no longer fails on its first prompt with "is not an active named agent". Herdr registers a newly started agent's name a moment after it starts, so the first prompt could arrive too early and end the run before the child saw its task. That refusal is now retried for up to 5 seconds; any other prompt error still fails at once. Thanks to [@tjcarskadon](https://github.com/tjcarskadon) for the report and patch. (#3121)
-
-## [0.84.0-fork.2] - 2026-10-31
-
-### Added
-- Add a pure action-boundary preflight for `bg_wait` that omits nullable optional fields, rejects placeholder run ids and unknown options, and refuses invalid non-blocking combinations before polling or arming a subscription.
-- Return structured `NOT_ARMED` correction evidence for invalid wait calls while preserving existing wait, timeout and subscription semantics.
-
-## [0.84.0-fork.1] - 2026-10-30
-
-- Integrate community v0.84.0 at `a04617faa7f5edc8fd4d87f6d9bca8f3a6b9e3d4` while retaining the fork's unknown async-run recovery changes and prior guarded fallback, timeout, runner/host compatibility, native-child evidence and Pi 1.x contracts.
-- Carry forward the community workflow-script sandbox security fix, locked-down provider diagnostics and background-run retention fix.
-- Preserve the maintained fork's release/install contract, bilingual documentation and rollback path from `0.83.0-fork.1`.
-
-### Community 0.84.0 changes
-
-### Changed
-
-- On Node, workflow scripts now run in a fresh permission-restricted process with no inherited startup flags or credentials, and cannot write files or start processes through Node APIs even outside the VM. A supervisor exits when the parent disconnects, including when the script is busy. Bun keeps its existing worker boundary. Thanks to [@XLi-hub](https://github.com/XLi-hub) for #3104.
-
-### Fixed
-
-- The `cost` RPC and `/subagent-cost` now include background runs that were started without a `subagent` tool call, such as RPC `spawn` launches and their workflow children. Before, these runs were left out of the child rows and totals. Thanks to [@BenedictP](https://github.com/BenedictP) for #3106.
 
 ## [0.84.0] - 2026-10-28
 
@@ -408,7 +361,7 @@
 ### Added
 
 - Background workflows cut off by Pi exiting, crashing or reloading now resume on their own when you reopen or reload their session within a day, and steps that already finished are not run again. You can also resume one yourself with `subagent({ action: "resume", id })`, or set `autoResume: false` to resume them only by hand. A stopped workflow is resumed only once, and its notice says how it resumed. If you start a new Pi in the same folder instead, it tells you which session to reopen. See [docs/workflows.md](docs/workflows.md).
-- `machine: "local"` runs a native Pi child in a new background tab of your own Rex session, with the same controls as a Herdr-placed Pi child: prompts, steering, follow-ups, abort, `contact_supervisor` and results. The launch fails if the parent Pi is not running inside Rex, and Claude Code, Codex, Cursor and generic `external-cli` agents are rejected. A finished child's tab stays open until you close it; an aborted or stopped child's tab is closed. See [docs/agents.md](docs/agents.md#running-a-pi-child-in-a-rex-pane-on-this-machine).
+- `machine: "local"` runs a native Pi child in a new background tab of your own Rex session, with the same controls as a Herdr-placed Pi child: prompts, steering, follow-ups, abort, `contact_supervisor` and results. The launch fails if the parent Pi is not running inside Rex, and Claude Code, Codex, Cursor and generic `external-cli` agents are rejected. A finished child's tab stays open until you close it; an aborted or stopped child's tab is closed. See [docs/agents.md](docs/agents.md#running-a-pi-child-in-a-new-tab-on-this-machine-rex-or-herdr).
 - A native Pi child can also run in a Rex tab on another Mac over SSH. Name the Mac in your user settings with `subagents.machines.<name>.rex.ssh`, then pass `machine: "<name>"`. The child opens in that Mac's `subagents` Rex session, which is created the first time it is needed. These machines do not need Herdr, and project settings cannot name a Rex host. See [docs/agents.md](docs/agents.md#running-a-pi-child-in-a-rex-pane-on-another-mac).
 
 ### Changed

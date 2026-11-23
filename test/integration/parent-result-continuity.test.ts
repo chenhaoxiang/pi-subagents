@@ -273,7 +273,7 @@ for (const { outcome, exitOwner } of [
 				assert.notEqual(read<ProcessTerminal>(path.join(asyncDir, "process-terminal.json")).state, "observed", "stale repair must not certify the lost close observer");
 				assert.deepEqual(settled.steps?.[0]?.acceptance, active.steps?.[0]?.acceptance);
 			} else {
-				assert.equal(reconciled.details.lifecycleStatus?.processTerminal?.state, exitOwner ? "pending" : "observed", "session shutdown keeps the host close observer; process exit loses it");
+				assert.equal(reconciled.details.lifecycleStatus?.processTerminal?.state, exitOwner ? "unknown" : "observed", "session shutdown keeps the host close observer; process exit leaves unobserved runner closure unknown");
 			}
 			const mission = save("fresh-mission-show", await fresh.call({ action: "mission.show", options: { missionId: launch.details.missionId } }));
 			assert.equal(mission.details.mission?.ownerSessionId, identity.sessionFile);
