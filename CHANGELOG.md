@@ -2,10 +2,17 @@
 
 ## [Unreleased]
 
+## [Unreleased]
+
+### Changed
+
+- The `subagent` tool description now says to use a messaging tool, not `subagent`, to message a Pi session that is already running. With a peer-messaging extension also installed, asking to message another open session is less likely to launch a new subagent instead. Two redundant hints were cut so the tool text stays within its per-request budget. Thanks to [@Pl8tinium](https://github.com/Pl8tinium) for the report (#3337).
+
 ## [0.90.0-fork.1] - 2026-11-23
 
 - Integrate community v0.90.0 while retaining the maintained fork's heterogeneous-model fallback, idle-timeout, runner/host compatibility, UNKNOWN reconciliation and fail-closed recovery behavior.
 - Preserve the prior 0.89.0-fork.4 release for rollback; source synchronization does not migrate live sessions or replay retained work.
+
 
 ## [0.90.0] - 2026-11-22
 
