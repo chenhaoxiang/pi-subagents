@@ -2,7 +2,9 @@
 
 ## [Unreleased]
 
-## [Unreleased]
+### Added
+
+- `toolExposure: "deferred"` in `config.json` keeps the pi-subagents tools out of the model's tool list, which saves about 5 KB on every request once a session has delegated. Codemode scripts start background runs with `tools.subagent({...})`; the runs show in the async widget, FleetView and `status` as usual, and a child's question still reaches the session. The default stays `"direct"`. See [configuration](docs/configuration.md#toolexposure).
 
 ### Changed
 
