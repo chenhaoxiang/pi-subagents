@@ -388,7 +388,6 @@ async function runSingleAttempt(
 		outputSnapshot?: SingleOutputSnapshot;
 		originalTask?: string;
 		orcaProgressTab?: OrcaProgressTab;
-		launchWarnings: { emitted: boolean };
 		verifyModel: boolean;
 		providerDiagnostics?: SingleResult["providerDiagnostics"];
 	},
@@ -472,11 +471,7 @@ async function runSingleAttempt(
 		host: "parent",
 	});
 	if (!options.machine && options.parentProviderRegistry) launch.session.parentProviderRegistry = options.parentProviderRegistry;
-	const { toolPlan, capabilityAudit, warnings, launchResolvedExtensions, capture } = launch;
-	if (!shared.launchWarnings.emitted && warnings.length > 0) {
-		for (const warning of warnings) console.warn(`[pi-subagents] ${warning}`);
-		shared.launchWarnings.emitted = true;
-	}
+	const { toolPlan, capabilityAudit, launchResolvedExtensions, capture } = launch;
 
 	const effectiveSystemPrompt = shared.systemPrompt;
 	const fast = options.fast ?? agent.fast;
@@ -1990,7 +1985,6 @@ async function runSyncCompletionInner(
 	}
 	const aggregateUsage = emptyUsage();
 	const attemptNotes: string[] = [];
-	const launchWarnings = { emitted: false };
 	let totalToolCount = 0;
 	let totalDurationMs = 0;
 
@@ -2091,13 +2085,13 @@ async function runSyncCompletionInner(
 				outputSnapshot,
 				originalTask: task,
 				orcaProgressTab,
-				launchWarnings,
 				verifyModel: Boolean(candidate) && !(options.modelOverrideFromParent && modelIndex === 0),
 				providerDiagnostics: lastResult?.providerDiagnostics,
 			});
 			lastResult = attemptResult;
 			const recoveryState = attemptRecoveryState.get(attemptResult);
 			const remainingMs = recoveryState?.remainingTimeoutMs;
+
 			if (remainingMs !== undefined) attemptOptions.deadlineAt = Date.now() + remainingMs;
 			const model = attemptResult.model ?? candidate ?? "default";
 			if (!attemptedModels.includes(model)) attemptedModels.push(model);

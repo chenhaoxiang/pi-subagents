@@ -143,7 +143,6 @@ export interface InProcessChildLaunch {
 	session: Omit<ChildSessionLaunch, "onExtensionError">;
 	capture: InProcessChildCapture;
 	launchResolvedExtensions: LaunchResolvedChildExtensions;
-	warnings: string[];
 	capabilityAudit?: SubagentCapabilityAudit;
 }
 
@@ -370,7 +369,6 @@ export function buildInProcessChildLaunch(input: BuildInProcessChildLaunchInput)
 			finalDrainHeld: capturedHooks.finalDrainHeld,
 		},
 		launchResolvedExtensions,
-		warnings: toolPlan.warnings,
 		...(toolPlan.capabilityAudit ? { capabilityAudit: toolPlan.capabilityAudit } : {}),
 	};
 }
