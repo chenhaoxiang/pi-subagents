@@ -7,7 +7,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { ChildWatchdogConfig, ChildWatchdogStatusEvent } from "../../watchdog/child-status.ts";
-import type { ThinkingLevel } from "../../shared/model-info.ts";
+import type { ModelInfo, ThinkingLevel } from "../../shared/model-info.ts";
 import { intersectThinkingCeilings } from "../../shared/thinking-ceiling.ts";
 import {
 	resolveChildDepth,
@@ -106,6 +106,7 @@ export interface BuildInProcessChildLaunchInput {
 	runFanoutBudget?: RunFanoutBudgetDescriptor;
 	structuredOutput?: StructuredOutputRuntime;
 	fast?: boolean;
+	modelInfo?: Pick<ModelInfo, "fullId" | "api">;
 	toolBudget?: ResolvedToolBudget;
 	permissionRules?: PermissionRules;
 	permissionAuditPath?: string;
@@ -215,7 +216,7 @@ export function buildInProcessChildLaunch(input: BuildInProcessChildLaunchInput)
 		requireReadTool: input.requireReadTool,
 		structuredOutput: Boolean(input.structuredOutput),
 		fast: input.fast,
-		model: input.model,
+		modelInfo: input.modelInfo,
 		capabilityCeiling: capabilityCeilingForPlanning,
 		inheritedCapabilityCeiling: inheritedCeiling,
 		agentName: input.childAgentName,
