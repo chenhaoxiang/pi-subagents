@@ -14,6 +14,8 @@ const CONTROL_EVENT_TYPES: ControlEventType[] = ["active_long_running", "needs_a
 const CONTROL_NOTIFICATION_CHANNELS: ControlNotificationChannel[] = ["event", "async", "intercom"];
 const DEFAULT_NOTIFY_ON: ControlEventType[] = ["active_long_running", "needs_attention"];
 
+export const CHECK_IN_INTERVAL_MS = 30 * 60_000;
+
 export const DEFAULT_CONTROL_CONFIG: ResolvedControlConfig = {
 	enabled: true,
 	needsAttentionAfterMs: 60_000,

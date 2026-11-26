@@ -77,6 +77,11 @@ describe("pane-native Herdr placement public contracts", { skip: process.platfor
 
 	it("rejects MCP tool contracts at the public factory boundary before provisioning, and leaves required tools to the remote acknowledgement", async () => { let provisioned = 0; const factory = createPlacementAwareChildSessionFactory({ async create() { return child; }, async dispose() {} }, async () => { provisioned++; return child; }); await assert.rejects(factory.create({ ...launch(true), runtime: { ...runtime, mcpDirectTools: ["mcp_tool"] } }), /MCP direct tools/u); assert.equal(provisioned, 0); await factory.create({ ...launch(true), runtime: { ...runtime, requiredTools: ["read"] } }); assert.equal(provisioned, 1); });
 
+	it("rejects Fast before provisioning a remote runner that cannot forward it", () => {
+		const placed = launch(true);
+		assert.throws(() => serializeHerdrPiLaunch({ ...placed, runtime: { ...placed.runtime, fast: true } }), /cannot forward fast mode.*fast: false/);
+	});
+
 	it("propagates resolved placement into the detached native child launch", () => {
 		const built = buildRunnerChildLaunch({ agent: "worker", task: "inspect", machine, cwd: machine.cwd, tools: ["read"], inheritProjectContext: true, inheritGlobalContext: true, inheritSkills: false }, { cwd: "/local/repo", id: "run-route", flatIndex: 0 }, { sessionEnabled: true, watchdogStatus() {} });
 		assert.deepEqual(built.session.machine, machine); assert.equal(built.session.cwd, machine.cwd);
@@ -362,12 +367,12 @@ describe("pane-native Herdr placement public contracts", { skip: process.platfor
 		await runSync(process.cwd(), [makeAgent("worker")], "worker", "inspect", { machine: { ...machine, cwd: os.tmpdir() }, cwd: os.tmpdir(), childSessionFactory: factory });
 		const resources = serializeHerdrPiLaunch(placedLaunch!).resources;
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pha-")); const old = { mode: process.env[HERDR_PI_MODE_ENV], run: process.env[HERDR_PI_RUN_ENV], dir: process.env[HERDR_PI_RUNTIME_DIR_ENV] }; process.env[HERDR_PI_MODE_ENV] = "1"; process.env[HERDR_PI_RUN_ENV] = "run_accept001"; process.env[HERDR_PI_RUNTIME_DIR_ENV] = dir; const handlers = new Map<string, Function>(); let socket: net.Socket | undefined;
-		let activeTools = ["read", "bash"]; const pi = { registerTool() {}, registerCommand() {}, on(name: string, handler: Function) { handlers.set(name, handler); }, getAllTools: () => activeTools.map((name) => ({ name })), getActiveTools: () => [...activeTools], setActiveTools(value: string[]) { activeTools = [...value]; } };
+		let activeTools = ["read", "bash"]; const pi = { registerTool() {}, registerCommand() {}, on(name: string, handler: Function) { handlers.set(name, handler); }, getAllTools: () => activeTools.map((name) => ({ name })), getActiveTools: () => [...activeTools], setActiveTools(value: string[]) { activeTools = [...value]; }, getThinkingLevel: () => "low" };
 		try {
 			registerHerdrPiBridge(pi as never); handlers.get("session_start")?.({}, { sessionManager: { getSessionId: () => "native", getSessionFile: () => "/remote/session" }, isIdle: () => true, hasPendingMessages: () => false });
 			socket = net.createConnection(path.join(dir, "bridge.sock")); const decoder = new HerdrPiFrameDecoder(); const frames: any[] = []; socket.on("data", (chunk) => frames.push(...decoder.push(chunk))); await new Promise<void>((resolve) => socket!.once("connect", resolve));
 			socket.write(encodeHerdrPiFrame({ protocol: 1, runId: "run_accept001", type: "configure", requestId: "cfg", resources: { ...resources, toolCeiling: ["read"] } })); await new Promise((resolve) => setTimeout(resolve, 50));
-			assert.ok(frames.some((frame) => frame.type === "configured"));
+			assert.equal(frames.find((frame) => frame.type === "configured")?.thinkingLevel, "low");
 			const prompt = (handlers.get("before_agent_start")?.({ systemPrompt: "BASE" }) as { systemPrompt: string }).systemPrompt;
 			assert.match(prompt, /## Acceptance Contract\nAcceptance level: attested/u);
 			assert.match(prompt, /```acceptance-report/u);

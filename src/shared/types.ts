@@ -30,6 +30,12 @@ export type AcceptanceRole = "read-only" | "writer";
 
 export type JsonSchemaObject = Record<string, unknown>;
 
+export function assertJsonSchemaObject(schema: unknown, label = "outputSchema"): asserts schema is JsonSchemaObject {
+	if (!schema || typeof schema !== "object" || Array.isArray(schema)) {
+		throw new Error(`${label} must be a JSON Schema object.`);
+	}
+}
+
 export interface ChainOutputMapEntry {
 	text: string;
 	structured?: unknown;
@@ -346,6 +352,7 @@ export interface ControlConfig {
 	failedToolAttemptsBeforeAttention?: number;
 	notifyOn?: ControlEventType[];
 	notifyChannels?: ControlNotificationChannel[];
+	checkInAfterMs?: number;
 }
 
 export interface ResolvedControlConfig {
@@ -358,6 +365,7 @@ export interface ResolvedControlConfig {
 	failedToolAttemptsBeforeAttention: number;
 	notifyOn: ControlEventType[];
 	notifyChannels: ControlNotificationChannel[];
+	checkInAfterMs?: number;
 }
 
 /**
@@ -400,7 +408,7 @@ export interface ControlEvent {
 	nestedRunId?: string;
 	nestingPath?: NestedRunAddress["path"];
 	message: string;
-	reason?: "idle" | "active_long_running" | "tool_failures" | "supervisor_request" | "time_threshold" | "turn_threshold" | "token_threshold" | "tool_open_threshold";
+	reason?: "idle" | "active_long_running" | "tool_failures" | "supervisor_request" | "time_threshold" | "turn_threshold" | "token_threshold" | "tool_open_threshold" | "check_in";
 	turns?: number;
 	tokens?: number;
 	toolCount?: number;
@@ -1870,8 +1878,16 @@ export interface HerdrLocalMachineReference {
 	cwd: string;
 }
 
+export interface HerdrCoreLocalMachineReference {
+	provider: "herdr-core";
+	id: "local";
+	socket: string;
+	parentTerminal: string;
+	cwd: string;
+}
+
 /** Where a placed native Pi child runs. A reference without `target` is on this machine. */
-export type PlacementMachineReference = HerdrMachineReference | HerdrLocalMachineReference | RexMachineReference;
+export type PlacementMachineReference = HerdrMachineReference | HerdrLocalMachineReference | HerdrCoreLocalMachineReference | RexMachineReference;
 
 export interface ExternalCliMachineStatus extends HerdrMachineReference {
 	remoteGit?: HerdrRemoteGitStatus;
@@ -2689,7 +2705,7 @@ export interface RunSyncOptions {
 	nestedRoute?: NestedRouteInfo;
 	/** Override the agent's default model (format: "provider/id" or just "id") */
 	modelOverride?: string;
-	/** Opt into priority service tier for supported native OpenAI-Codex launches. */
+	/** Request the configured OpenAI service tier on compatible native adapters. */
 	fast?: boolean;
 	/** The override came from the running parent session, not configuration. */
 	modelOverrideFromParent?: boolean;
@@ -2764,6 +2780,7 @@ export interface ProactiveSkillSubagentsConfig {
 
 export type ToolDescriptionMode = "full" | "compact" | "custom";
 export type ToolActivationMode = "auto" | "dynamic" | "eager";
+export type SubagentToolExposure = "direct" | "deferred";
 export type InlineToolDisplay = "rich" | "summary";
 
 export interface ScheduledRunsConfig {
@@ -2845,7 +2862,7 @@ export interface ExtensionConfig {
 	asyncWidgetLayout?: AsyncWidgetLayout;
 	/** Report subagent run state to the terminal with OSC 7501. Defaults to true. */
 	programStatus?: boolean;
-	/** OpenAI-Codex `service_tier` that `fast: true` requests for native children. Defaults to "priority". */
+	/** OpenAI `service_tier` that `fast: true` requests on compatible native adapters. Defaults to "priority". */
 	fastServiceTier?: FastServiceTier;
 	/** Add a short `active_subagents` system prompt section listing this session's active background runs. Defaults to false. */
 	activeRunsPrompt?: boolean;
@@ -2857,6 +2874,8 @@ export interface ExtensionConfig {
 	toolDescriptionMode?: ToolDescriptionMode;
 	/** How a new parent session offers the subagent tool. Defaults to auto. */
 	toolActivation?: ToolActivationMode;
+	/** "deferred" keeps `subagent` out of the model's tool list; codemode scripts launch async runs with tools.subagent(...). Defaults to "direct". */
+	toolExposure?: SubagentToolExposure;
 	/** Keep a resumed session on the pi-subagents tool definitions and prompt text it already declared. Defaults to true. */
 	pinToolDeclarations?: boolean;
 	/** Register the pi-subagents slash commands and the foreground-detach shortcut. Defaults to true. */

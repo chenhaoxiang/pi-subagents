@@ -60,6 +60,7 @@ import {
 } from "../../shared/types.ts";
 import {
 	DEFAULT_CONTROL_CONFIG,
+	CHECK_IN_INTERVAL_MS,
 	buildControlEvent,
 	deriveActivityState,
 	claimControlNotification,
@@ -92,11 +93,11 @@ import { SUBAGENT_CHILD_ENV, SUBAGENT_RUNNER_PID_ENV } from "../shared/child-run
 import { deriveChildSessionName } from "../../shared/child-session-name.ts";
 import { alignForkedSessionCwd } from "../../shared/fork-session-cwd.ts";
 import { outputEntryFromAsyncResult, resolveOutputReferences } from "../shared/chain-outputs.ts";
-import { clearStructuredOutputCaptures, createStructuredOutputFileCapture, createStructuredOutputRuntime, formatStructuredOutputRejectionError, MISSING_STRUCTURED_OUTPUT_CALL_ERROR, readStructuredOutput, readStructuredOutputAcceptanceReport } from "../shared/structured-output.ts";
+import { clearStructuredOutputCaptures, createStructuredOutputFileCapture, createStructuredOutputRuntime, formatStructuredOutputRejectionError, MISSING_STRUCTURED_OUTPUT_CALL_ERROR, readStructuredOutput, readStructuredOutputAcceptanceReport, validateStructuredOutputValue } from "../shared/structured-output.ts";
 import { formatMidToolExitError, isOrdinaryToolForMidToolExit, isUnexplainedProcessSignal } from "../shared/process-signal.ts";
 import { formatChildToolDiagnostic } from "../shared/tool-availability.ts";
 import { buildTimeoutRecoverySummary, collectTrackedMutationEvidence, remoteMutationEvidence, remoteMutationSnapshot, snapshotTrackedMutations } from "../shared/mutation-evidence.ts";
-import { collectDynamicResults, DynamicFanoutError, materializeDynamicParallelStep, validateDynamicCollection } from "../shared/dynamic-fanout.ts";
+import { collectDynamicResults, DynamicFanoutError, materializeDynamicParallelStep, type DynamicCollectedResult } from "../shared/dynamic-fanout.ts";
 import { claimRunFanoutBatch, getRunFanoutBudgetSnapshot } from "../shared/run-fanout-budget.ts";
 import { nestedSummaryFromAsyncStatus, projectNestedEvents, resolveNestedAsyncDir, writeNestedEvent } from "../shared/nested-events.ts";
 import { formatSubagentModelVerificationError, isContextOverflow } from "../shared/model-resolution.ts";
@@ -120,7 +121,7 @@ import {
 	summarizeRecentMutatingFailures,
 } from "../shared/long-running-guard.ts";
 import { parseSessionTokens } from "../../shared/session-tokens.ts";
-import type { TokenUsage } from "../../shared/types.ts";
+import type { JsonSchemaObject, TokenUsage } from "../../shared/types.ts";
 import {
 	cleanupWorktrees,
 	createWorktrees,
@@ -307,6 +308,14 @@ interface StepResult {
 	runner?: ExternalCliRunnerStatus | ExternalJobRunnerStatus;
 	externalProcess?: ExternalProcessStatus;
 	externalJob?: ExternalJobStatus;
+}
+
+export async function validateDynamicCollection(schema: JsonSchemaObject | undefined, value: DynamicCollectedResult[]): Promise<void> {
+	if (!schema) return;
+	const validation = await validateStructuredOutputValue(schema, value);
+	if (validation.status === "invalid") {
+		throw new DynamicFanoutError(`Collected output validation failed: ${validation.message}`);
+	}
 }
 
 function persistStepArtifacts(input: {
@@ -828,7 +837,6 @@ export async function runSingleStepInner(
 			extensions: step.extensions,
 			subagentOnlyExtensions: step.subagentOnlyExtensions,
 			fast: step.fast,
-			model: step.model,
 			mcpDirectTools: step.mcpDirectTools,
 			builtinMcpTools: step.builtinMcpTools,
 			cwd: step.cwd ?? ctx.cwd,
@@ -1104,7 +1112,6 @@ export async function runSingleStepInner(
 	let finalMutationEvidence = await collectTrackedMutationEvidence(mutationSnapshot, step.cwd ?? ctx.cwd);
 
 	let contextOverflow = false;
-	let launchWarningsEmitted = false;
 	const aggregateUsage = emptyUsage();
 	let launched = false;
 	let cumulativeToolCount = 0;
@@ -1164,11 +1171,7 @@ export async function runSingleStepInner(
 			// The runner reads the value back from the runtime's files after the run.
 			launch.config.structuredOutput.capture = createStructuredOutputFileCapture(effectiveStructuredOutput);
 		}
-		const { warnings, capabilityAudit: attemptCapabilityAudit } = launch;
-		if (!launchWarningsEmitted && warnings.length > 0) {
-			for (const warning of warnings) console.warn(`[pi-subagents] ${warning}`);
-			launchWarningsEmitted = true;
-		}
+		const { capabilityAudit: attemptCapabilityAudit } = launch;
 		if (step.definitionDigest) {
 			const toolPlan = resolvedTaskToolPlan ?? resolvePiLaunchToolPlan(omitUndefinedProperties({
 				tools: step.tools,
@@ -1177,7 +1180,6 @@ export async function runSingleStepInner(
 				extensions: step.extensions,
 				subagentOnlyExtensions: step.subagentOnlyExtensions,
 				fast: step.fast,
-				model: step.model,
 				mcpDirectTools: step.mcpDirectTools,
 				builtinMcpTools: step.builtinMcpTools,
 				cwd: step.cwd ?? ctx.cwd,
@@ -1503,6 +1505,7 @@ export async function runSingleStepInner(
 			artifactsDir: ctx.artifactsDir,
 			runId: ctx.id,
 			watchdog: finalResult?.watchdog,
+			validateValue: validateStructuredOutputValue,
 		}))
 		: undefined;
 	const stoppedAfterAcceptance = finalResult?.stopped === true || ctx.stopSignal?.aborted === true;
@@ -2005,6 +2008,9 @@ export async function runSubagent(
 
 	const flatSteps = flattenSteps(steps);
 	const initialFlatStepCount = flatSteps.length;
+	const statusStepConfigsOf = (list: RunnerStep[]): SubagentStep[] => list.flatMap((step) => isParallelGroup(step) ? step.parallel : isDynamicRunnerGroup(step) ? [step.parallel] : [step]);
+	const statusStepConfigs = statusStepConfigsOf(steps);
+
 	const parallelGroups: Array<{ start: number; count: number; stepIndex: number }> = [];
 	const initialStatusSteps: RunnerStatusStep[] = [];
 	let flatStepCount = 0;
@@ -2636,7 +2642,8 @@ export async function runSubagent(
 		}
 		const appendedSteps = requests.flatMap((request) => request.steps);
 		steps.push(...appendedSteps);
-		flatSteps.push(...flattenSteps(appendedSteps));
+		statusStepConfigs.push(...statusStepConfigsOf(appendedSteps));
+
 		const now = Date.now();
 		const pendingAppends = countPendingChainAppendRequests(asyncDir);
 		const added = appendRunnerStepsToStatus({
@@ -2648,6 +2655,9 @@ export async function runSubagent(
 		mutatingFailureStates.push(...Array.from({ length: added.addedFlatSteps }, () => createMutatingFailureState()));
 		pendingToolResults.push(...Array.from({ length: added.addedFlatSteps }, () => undefined));
 		pendingToolResultsByCallId.push(...Array.from({ length: added.addedFlatSteps }, () => new Map<string, PendingToolResult>()));
+		activeToolCalls.push(...Array.from({ length: added.addedFlatSteps }, () => new Map<string, ActiveToolCall>()));
+		activeToolKeysByName.push(...Array.from({ length: added.addedFlatSteps }, () => new Map<string, string[]>()));
+		activeToolSequences.push(...Array.from({ length: added.addedFlatSteps }, () => 0));
 		if (config.childIntercomTargets) {
 			config.childIntercomTargets = statusPayload.steps.map((statusStep, index) => resolveSubagentIntercomTarget(id, statusStep.agent, index));
 		}
@@ -2935,6 +2945,30 @@ export async function runSubagent(
 		return true;
 	};
 	const steeringMarkerPath = (requestId: string): string => path.join(asyncDir, "control", "steer-recovery", `${Buffer.from(requestId).toString("base64url")}.json`);
+
+	const checkInAfterMs = controlConfig.checkInAfterMs ?? CHECK_IN_INTERVAL_MS;
+	const checkInsSent = new Map<number, number>();
+	const maybeEmitCheckIn = (flatIndex: number, now: number): void => {
+		if (config.deadlineAt !== undefined || config.timeoutMs !== undefined || statusStepConfigs[flatIndex]?.timeoutMs !== undefined) return;
+		const step = statusPayload.steps[flatIndex];
+		if (!step || step.status !== "running") return;
+		const elapsedMs = Math.max(0, now - (step.startedAt ?? overallStartTime));
+		const due = Math.floor(elapsedMs / checkInAfterMs);
+		if (due <= (checkInsSent.get(flatIndex) ?? 0)) return;
+		checkInsSent.set(flatIndex, due);
+		appendControlEvent(buildControlEvent({
+			type: "active_long_running",
+			to: step.activityState ?? "active_long_running",
+			runId: id,
+			agent: step.agent,
+			index: flatIndex,
+			ts: now,
+			message: `${step.agent} has been running ${Math.round(elapsedMs / 60_000)} min`,
+			reason: "check_in",
+			elapsedMs,
+		}));
+	};
+
 	const markSteeringAttention = (index: number): void => {
 		const step = statusPayload.steps[index];
 		if (step) step.activityState = "needs_attention";
@@ -3187,12 +3221,12 @@ export async function runSubagent(
 			}
 		}
 		if (event.type === "tool_execution_start" && event.toolName) {
-			const mutates = isMutatingTool(event.toolName, event.args, flatSteps[flatIndex]?.mutationTools);
+			const mutates = isMutatingTool(event.toolName, event.args, statusStepConfigs[flatIndex]?.mutationTools);
 			const currentPath = resolveCurrentPath(event.toolName, event.args);
 			const argsPreview = extractToolArgsPreview(event.args ?? {});
 			const blocksSupervisor = isBlockingSupervisorTool(event.toolName, event.args);
 			step.toolCount = (step.toolCount ?? 0) + 1;
-			const configuredToolBudget = flatSteps[flatIndex]?.toolBudget;
+			const configuredToolBudget = statusStepConfigs[flatIndex]?.toolBudget;
 			if (configuredToolBudget) {
 				step.toolBudget = toolBudgetState(configuredToolBudget, step.toolCount, step.toolBudget?.blockedTool);
 				statusPayload.toolBudget = step.toolBudget;
@@ -3261,7 +3295,7 @@ export async function runSubagent(
 				step.progressUpdatedAt = now;
 			}
 			const blockedTool = (typeof resultToolName === "string" && resultToolName.length > 0 ? resultToolName : undefined) ?? toolSnapshot?.tool;
-			const configuredToolBudget = flatSteps[flatIndex]?.toolBudget;
+			const configuredToolBudget = statusStepConfigs[flatIndex]?.toolBudget;
 			const budgetBlocked = configuredToolBudget !== undefined && isToolBudgetBlockedMessage(configuredToolBudget, resultText, blockedTool);
 			if (budgetBlocked) {
 				step.toolBudget = toolBudgetState(configuredToolBudget, step.toolCount ?? 0, blockedTool);
@@ -3313,7 +3347,7 @@ export async function runSubagent(
 			// model each assistant message actually ran on. Mirrors the foreground
 			// path's `progress.model = observedModel`.
 			if (event.message.model) {
-				const observedModel = qualifyModelWithProvider(event.message.model, event.message.provider, flatSteps[flatIndex]?.modelVerificationRegistry) ?? event.message.model;
+				const observedModel = qualifyModelWithProvider(event.message.model, event.message.provider, statusStepConfigs[flatIndex]?.modelVerificationRegistry) ?? event.message.model;
 				if (observedModel !== step.model) {
 					step.launchModel ??= step.model;
 					step.model = observedModel;
@@ -3365,7 +3399,7 @@ export async function runSubagent(
 				config: controlConfig,
 				startedAt: step.startedAt ?? overallStartTime,
 				lastActivityAt,
-				turnCount: flatSteps[index]?.runner?.type === "external-cli" ? 1 : step.turnCount,
+				turnCount: statusStepConfigs[index]?.runner?.type === "external-cli" ? 1 : step.turnCount,
 				currentTool: step.currentTool,
 				thinking: step.thinking,
 				now,
@@ -3755,6 +3789,7 @@ export async function runSubagent(
 						signal: combinedAbortSignal([timeoutAbortController.signal, stopAbortController.signal]),
 						abortMessage: stopAbortController.signal.aborted ? stopMessage : timeoutMessage ?? SUBAGENT_TIMED_OUT_MESSAGE,
 						reportOptional: isAgentContract(step.agentContract),
+						validateValue: validateStructuredOutputValue,
 					}))
 					: undefined;
 				const groupStopped = stopped || stopAbortController.signal.aborted;
@@ -3852,12 +3887,18 @@ export async function runSubagent(
 				});
 			});
 			statusPayload.steps.splice(groupStartFlatIndex, 1, ...dynamicStatusSteps);
+
+			statusStepConfigs.splice(groupStartFlatIndex, 1, ...dynamicSteps);
+
 			if (config.childIntercomTargets) {
 				config.childIntercomTargets = statusPayload.steps.map((statusStep, index) => resolveSubagentIntercomTarget(id, statusStep.agent, index));
 			}
 			mutatingFailureStates.splice(groupStartFlatIndex, 1, ...dynamicStatusSteps.map(() => createMutatingFailureState()));
 			pendingToolResults.splice(groupStartFlatIndex, 1, ...dynamicStatusSteps.map(() => undefined));
 			pendingToolResultsByCallId.splice(groupStartFlatIndex, 1, ...dynamicStatusSteps.map(() => new Map<string, PendingToolResult>()));
+			activeToolCalls.splice(groupStartFlatIndex, 1, ...dynamicStatusSteps.map(() => new Map<string, ActiveToolCall>()));
+			activeToolKeysByName.splice(groupStartFlatIndex, 1, ...dynamicStatusSteps.map(() => new Map<string, string[]>()));
+			activeToolSequences.splice(groupStartFlatIndex, 1, ...dynamicStatusSteps.map(() => 0));
 			const materializedDelta = dynamicStatusSteps.length - 1;
 			for (const group of statusPayload.parallelGroups) {
 				if (group.stepIndex === stepIndex) {
@@ -4091,6 +4132,7 @@ export async function runSubagent(
 							signal: combinedAbortSignal([timeoutAbortController.signal, stopAbortController.signal]),
 							abortMessage: stopAbortController.signal.aborted ? stopMessage : timeoutMessage ?? SUBAGENT_TIMED_OUT_MESSAGE,
 							reportOptional: isAgentContract(step.agentContract),
+							validateValue: validateStructuredOutputValue,
 						}))
 						: undefined;
 					const groupStopped = stopped || stopAbortController.signal.aborted;

@@ -119,6 +119,18 @@ Controls how a new parent session offers the `subagent` tool. The default is `"a
 
 The choice is made only for a session with no messages, using the model selected before its first prompt. Switching models after that prompt does not change it. If a compaction that kept no tool checkpoint dropped the record of this choice, the session is decided again as a new session would be; tool selections recorded after that compaction (for `bg_wait` or another extension's tools) are not evidence that the choice survived. Under `"auto"`, resumed sessions keep the tools they recorded. `"dynamic"` also adds the loader to recorded sessions that did not have it. `"auto"` avoids only the loader's cache miss; other tool-list or provider changes can still miss the cache. An active `subagent` sends its full schema on every request. An invalid value is a config error, not a fallback to the default. Restart Pi after changing it.
 
+## `toolExposure`
+
+```json
+{ "toolExposure": "deferred" }
+```
+
+Controls how the model reaches the `subagent` tool. The default `"direct"` declares it to the model as described in [`toolActivation`](#toolactivation). `"deferred"` keeps every pi-subagents tool out of the model's tool list and adds one line to the system prompt instead, telling the model to call `tools.subagent({...})` from codemode; `tools.subagent({ action: "list" })` lists the agents, and `describeTool("subagent")` returns the tool's description. `toolActivation` does not apply, there is no `subagents_enable` loader, and the prompt has no agent list. pi-subagents then adds no tool text to a request, with two exceptions: a child asking this session a question declares `subagent_supervisor` (about 420 characters) so the model can answer, and another extension's [background-work provider](extension-api.md#background-work-provider-api) declares `bg_wait`, as in direct mode. Pi's `tool_search` can still activate `subagent`, which declares the full tool for the rest of that session: it works, but gives up the savings.
+
+A launch from a script always runs in the background, even for an agent whose frontmatter sets `async: false`; `async: false`, a foreground-only launch, and `workflow: true` (which reads a reply block a script does not have; pass `options.script` or a script path instead) are refused with an error. Every action works from a script except those that would wait: `refine`, which waits for a foreground reviewer child, and any action whose [`authorityPolicy`](#authoritypolicy) decision is `"confirm"`, which would wait for the user (by default `worktree.discard`, `worktree.cleanup` with `mode: "apply"`, `grant-spawn-budget` and `project.open`). A launch that has started finishes even when Pi cancels the script's call, so a run either never started or shows in the async widget, FleetView, and `status` like any background run, and its completion wakes the session as usual. Launch receipts and recovery hints point to the completion notice rather than `bg_wait`. Foreground children that slash commands or prompt templates start in a deferred session run in the same process and see that wording in their own launch receipts too.
+
+Script access needs Pi's `codemode` tool active in the session. Without it the model cannot call `tools.subagent`, though Pi's `tool_search` can still activate the full tool; pi-subagents reports the missing codemode once per session instead of falling back to `"direct"`. The setting applies at startup; restart Pi after changing it.
+
 ## `toolDescriptionMode`
 
 ```json
@@ -164,7 +176,7 @@ Removes feature groups you do not use from the `subagent` tool. Each listed feat
 | `session-sharing` | `share` | |
 | `workflow-scripts` | `workflow`, `args`, `preflight`, `globalConcurrencyLimit`, `maxSubagentSpawnsPerRun` | `validate` |
 
-Disabling a per-call option removes only the per-call override. Configured defaults such as `toolBudget`, `usageBudget`, and `control` in this file still apply, the watchdog still follows its own settings, missions still attach automatically when [`missions`](#missions) enables them, and agents with a `machine` in their definition still run there. `share` is the exception: it has no configured default, so `session-sharing` removes the only path that uploads a session to a GitHub Gist. Operator screens that do not go through the `subagent` executor, such as `/subagents-admin`, are unchanged. With every feature and [`scheduledRuns.enabled`](#scheduledruns) disabled, the default `subagent` tool declaration (name, description, and parameter schema as JSON) shrinks from 18,239 to 10,263 characters (80 to 41 parameters). Restart Pi after changing this setting. The smaller declaration applies to new sessions; a resumed session keeps the tool declaration it already sent, so its prompt cache stays valid. Disabled options and actions are still rejected in every session.
+Disabling a per-call option removes only the per-call override. Configured defaults such as `toolBudget`, `usageBudget`, and `control` in this file still apply, the watchdog still follows its own settings, missions still attach automatically when [`missions`](#missions) enables them, and agents with a `machine` in their definition still run there. `share` is the exception: it has no configured default, so `session-sharing` removes the only path that uploads a session to a GitHub Gist. Operator screens that do not go through the `subagent` executor, such as `/subagents-admin`, are unchanged. Most parameters in the table are passed inside `options`, which the `subagent` tool declaration describes in one line. So with the default or `"compact"` [`toolDescriptionMode`](#tooldescriptionmode), disabling a feature does not shrink the declaration, and disabling `workflow-scripts` makes it slightly larger because `tasks` and `chain` replace `workflow` and `args`. With `"full"`, disabled features also drop their lines from the description, so the declaration gets smaller. Restart Pi after changing this setting. The new declaration applies to new sessions; a resumed session keeps the tool declaration it already sent, so its prompt cache stays valid. Disabled options and actions are still rejected in every session.
 
 ### Chain and tasks without workflow scripts
 
@@ -310,7 +322,7 @@ With `"fork"`, the setting uses the existing implicit-fork behavior. A launch st
 { "fastServiceTier": "ultrafast" }
 ```
 
-Sets the OpenAI `service_tier` that `fast: true` requests for native OpenAI-Codex children: `"priority"` (default) or `"ultrafast"`. Whether a tier is available depends on the model and account.
+Sets the OpenAI `service_tier` that `fast: true` requests for native children using Pi’s OpenAI Responses or Codex Responses adapter: `"priority"` (default) or `"ultrafast"`. An explicit tier already on the request takes precedence. If this config file is invalid, a Fast launch fails instead of falling back to Priority. Whether the requested tier is available depends on the model and account.
 
 ## `forkContext`
 
@@ -819,6 +831,16 @@ PI_CACHE_RETENTION=long PI_SUBAGENT_CACHE_RETENTION=short
 Unset by default, so children inherit the parent's retention and behaviour is unchanged unless you opt in. Both spawned children (through the launch environment) and in-process children (through the session's own stream function) honour it; the in-process path scopes the value per session rather than mutating `process.env`, so a child cannot change retention for a parent turn streaming at the same time.
 
 Provider-reported `cacheWrite1h` usage confirms which tier a request used: it matches `cacheWrite` on the 1h tier and is `0` on the short one.
+
+## `PI_SUBAGENT_STRICT_THINKING`
+
+Set to `1` to refuse a native child whose requested thinking level its model does not support. Environment-only; there is no config key.
+
+Pi runs a level the model does not support at the nearest one it does, so `provider/model:high` on a model without `high` silently runs at `medium`. With this set, that child fails before its first request, and the error lists the levels the model supports. A level the launch did not request, such as Pi's default, is still adjusted as before. The level is checked wherever the launch asked for it: the `:level` suffix, the `thinking` option or the agent's `thinking` field.
+
+This is for setups where the requested level has to be honoured exactly or not at all, for example when a provider forwards it to another agent or service whose levels differ from Pi's.
+
+Unset by default, so behaviour is unchanged unless you opt in. Background runners inherit it from the parent's environment. A child placed on a machine (`machine`) is checked against the level its remote Pi reports, and its error names the level that remote Pi applied instead of listing the supported ones.
 
 ## `PI_SUBAGENT_FS_RETRY_MAX_TOTAL_MS`
 

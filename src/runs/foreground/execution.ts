@@ -63,9 +63,9 @@ import { applyThinkingSuffix, deriveForkPromptCacheKey, supervisorChannelDir } f
 import { retainsChildCommand } from "../shared/child-commands.ts";
 import { deriveChildSessionName } from "../../shared/child-session-name.ts";
 import { assertAgentAllowedByCapabilityCeiling, intersectSubagentCapabilityCeilings, resolveCurrentSubagentCapabilityCeiling } from "../shared/capability-ceiling.ts";
-import { qualifyModelWithProvider, resolveEffectiveThinking } from "../../shared/model-info.ts";
+import { findModelInfo, qualifyModelWithProvider, resolveEffectiveThinking } from "../../shared/model-info.ts";
 import { assertThinkingWithinCeiling, intersectThinkingCeilings } from "../../shared/thinking-ceiling.ts";
-import { formatStructuredOutputRejectionError, MISSING_STRUCTURED_ACCEPTANCE_REPORT_ERROR, MISSING_STRUCTURED_OUTPUT_CALL_ERROR, STRUCTURED_OUTPUT_FOLLOW_UP } from "../shared/structured-output.ts";
+import { formatStructuredOutputRejectionError, MISSING_STRUCTURED_ACCEPTANCE_REPORT_ERROR, MISSING_STRUCTURED_OUTPUT_CALL_ERROR, STRUCTURED_OUTPUT_FOLLOW_UP, validateStructuredOutputValue } from "../shared/structured-output.ts";
 import { formatMidToolExitError, isOrdinaryToolForMidToolExit } from "../shared/process-signal.ts";
 import { formatChildToolDiagnostic } from "../shared/tool-availability.ts";
 import { formatChildModelResolutionDiagnostic, formatInheritedProviderDiagnostic, isChildModelResolutionFailure } from "../shared/model-resolution-diagnostic.ts";
@@ -388,7 +388,6 @@ async function runSingleAttempt(
 		outputSnapshot?: SingleOutputSnapshot;
 		originalTask?: string;
 		orcaProgressTab?: OrcaProgressTab;
-		launchWarnings: { emitted: boolean };
 		verifyModel: boolean;
 		providerDiagnostics?: SingleResult["providerDiagnostics"];
 	},
@@ -456,6 +455,7 @@ async function runSingleAttempt(
 		forkCacheKey: options.context === "fork" ? deriveForkPromptCacheKey(options.parentSessionId) : undefined,
 		structuredOutput: options.structuredOutput,
 		fast: options.fast ?? agent.fast,
+		modelInfo: findModelInfo(modelArg, options.availableModels, agent.modelProvider ?? options.preferredModelProvider),
 		toolBudget: options.toolBudget,
 		permissionRules,
 		permissionAuditPath,
@@ -472,11 +472,7 @@ async function runSingleAttempt(
 		host: "parent",
 	});
 	if (!options.machine && options.parentProviderRegistry) launch.session.parentProviderRegistry = options.parentProviderRegistry;
-	const { toolPlan, capabilityAudit, warnings, launchResolvedExtensions, capture } = launch;
-	if (!shared.launchWarnings.emitted && warnings.length > 0) {
-		for (const warning of warnings) console.warn(`[pi-subagents] ${warning}`);
-		shared.launchWarnings.emitted = true;
-	}
+	const { toolPlan, capabilityAudit, launchResolvedExtensions, capture } = launch;
 
 	const effectiveSystemPrompt = shared.systemPrompt;
 	const fast = options.fast ?? agent.fast;
@@ -1990,7 +1986,6 @@ async function runSyncCompletionInner(
 	}
 	const aggregateUsage = emptyUsage();
 	const attemptNotes: string[] = [];
-	const launchWarnings = { emitted: false };
 	let totalToolCount = 0;
 	let totalDurationMs = 0;
 
@@ -2091,13 +2086,13 @@ async function runSyncCompletionInner(
 				outputSnapshot,
 				originalTask: task,
 				orcaProgressTab,
-				launchWarnings,
 				verifyModel: Boolean(candidate) && !(options.modelOverrideFromParent && modelIndex === 0),
 				providerDiagnostics: lastResult?.providerDiagnostics,
 			});
 			lastResult = attemptResult;
 			const recoveryState = attemptRecoveryState.get(attemptResult);
 			const remainingMs = recoveryState?.remainingTimeoutMs;
+
 			if (remainingMs !== undefined) attemptOptions.deadlineAt = Date.now() + remainingMs;
 			const model = attemptResult.model ?? candidate ?? "default";
 			if (!attemptedModels.includes(model)) attemptedModels.push(model);
@@ -2235,6 +2230,7 @@ async function runSyncCompletionInner(
 				artifactsDir: options.artifactsDir,
 				runId: options.runId,
 				watchdog: result.watchdog,
+				validateValue: validateStructuredOutputValue,
 			});
 		}
 	} catch (error) {

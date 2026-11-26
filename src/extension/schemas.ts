@@ -246,7 +246,7 @@ const SubagentParamProperties = {
 	usageBudget: Type.Optional(UsageBudgetOverride),
 	agentScope: Type.Optional(Type.String({ description: "user/project/both (default); project wins collisions." })),
 	cwd: Type.Optional(Type.String({ description: "Execution/project-pane directory." })),
-	machine: Type.Optional(Type.String({ minLength: 1, maxLength: 128, description: "Herdr saved machine id or label (runs an external CLI agent), a Rex host named in settings (runs a Pi child), or \"local\" (a Pi child in a new tab of the Herdr or Rex session this Pi runs in). On another machine, cwd is a directory there." })),
+	machine: Type.Optional(Type.String({ minLength: 1, maxLength: 128, description: "Herdr saved machine id or label (runs an external CLI agent), a Rex host named in settings (runs a Pi child), or \"local\" (a Pi child in a new tab of the Herdr or Rex session this Pi runs in, or a headless Herdr Core terminal). On another machine, cwd is a directory there." })),
 	requireLauncher: Type.Optional(Type.Object({
 		name: Type.String({ pattern: RUNNER_LAUNCHER_NAME_PATTERN.source }),
 		definitionDigest: Type.String({ pattern: "^[0-9a-f]{64}$" }),
@@ -270,7 +270,7 @@ const SubagentParamProperties = {
 	maxOutput: Type.Optional(Type.Object({ bytes: Type.Optional(Type.Integer({ minimum: 1 })), lines: Type.Optional(Type.Integer({ minimum: 1 })) }, { additionalProperties: false })),
 	skill: Type.Optional(SkillOverride),
 	model: Type.Optional(Type.String({ description: "Child model provider/id; bare id only if unique. Suffix :off/minimal/low/medium/high/xhigh/max overrides agent thinking default." })),
-	fast: Type.Optional(Type.Boolean({ description: "Native OpenAI-Codex priority tier; default false, may cost more/quota." })),
+	fast: Type.Optional(Type.Boolean({ description: "OpenAI service tier (see fastServiceTier); default false, may cost more/quota." })),
 	outputSchema: Type.Optional(OutputSchemaOverride),
 	agentContract: Type.Optional(AgentContractOverride),
 	acceptance: Type.Optional(AcceptanceOverride),

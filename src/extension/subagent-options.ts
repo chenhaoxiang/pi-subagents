@@ -7,6 +7,7 @@ import { closestMatch } from "../shared/edit-distance.ts";
 import { removedModelWorkflowFieldError } from "./public-execution.ts";
 import { SUBAGENT_OPTION_KEYS, SubagentOptionParams, createSubagentParamsSchema } from "./schemas.ts";
 
+
 const optionKeys = new Set(SUBAGENT_OPTION_KEYS);
 const ALIAS_HINTS: Record<string, string> = { runId: "id (top-level)", maxRuntimeMs: "options.timeoutMs", isolation: "worktree (top-level)" };
 const optionsValidator = Compile(SubagentOptionParams);
@@ -29,6 +30,8 @@ export function flattenSubagentToolOptions(params: Record<string, unknown>, disa
 	const removedTopLevel = removedModelWorkflowFieldError(params);
 	if (removedTopLevel) throw new Error(removedTopLevel);
 	const { options, ...topLevel } = params;
+	if (!disabled?.params.has("workflow") && typeof topLevel.workflow === "string" && /[\r\n]/.test(topLevel.workflow)) throw new Error("subagent: workflow has line breaks, so it is script text; pass it as options.script (or a ```js workflow block with workflow: true).");
+
 	if (options === undefined) return topLevel;
 	if (!options || typeof options !== "object" || Array.isArray(options)) throw new Error("subagent: options must be an object.");
 	const removedField = removedModelWorkflowFieldError(options);

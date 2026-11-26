@@ -1,9 +1,7 @@
 import { listBackgroundWorkProviders } from "../../api/background-work.ts";
 import { ReadonlyDrainObservation } from "./readonly-drain-observation.ts";
 import registerFanoutChildSubagentExtension, { createChildSafeState } from "../../extension/fanout-child.ts";
-import registerSubagentFastModeExtension from "./fast-mode-extension.ts";
 import registerSubagentPromptRuntime, { registerSubagentPromptBoundary } from "./subagent-prompt-runtime.ts";
-import { structuredOutputValidatorReady } from "./structured-output.ts";
 import type { ChildRuntimeConfig } from "./child-runtime-config.ts";
 import type { ChildToolDiagnostic } from "./tool-availability.ts";
 import type { ChildHookExtension, ChildSessionLaunch } from "./child-session.ts";
@@ -113,8 +111,7 @@ export function captureReadonlyChildDrain(hooks: ChildHookExtension[]): (() => b
 
 /**
  * The child-side hooks pi-subagents installs in every child, keyed off the
- * launch config. The registrations live in `subagent-prompt-runtime.ts`,
- * `fast-mode-extension.ts`, and `fanout-child.ts`.
+ * launch config. The registrations live in `subagent-prompt-runtime.ts` and `fanout-child.ts`.
  */
 export function createChildHooks(config: ChildRuntimeConfig): ChildHookExtension[] {
 	return childHooks(config);
@@ -159,12 +156,8 @@ function childHooks(config: ChildRuntimeConfig, capture?: OwnedCapture, holdFina
 				proof.observeNext = undefined;
 				registerSubagentPromptRuntime(pi, runtime, proof.observation);
 			}
-			// Pi awaits extension factories, so structured_output's synchronous prepareArguments has its
-			// validator before the model can call it.
-			if (runtime.structuredOutput) return structuredOutputValidatorReady();
 		} },
 	];
-	if (config.fast) hooks.push({ name: "pi-subagents:fast-mode", factory: (pi) => registerSubagentFastModeExtension(pi) });
 	if (config.fanoutChild) hooks.push({ name: "pi-subagents:fanout-child", factory: (pi) => registerFanoutChildSubagentExtension(pi, runtime) });
 	hooks.push({ name: "pi-subagents:prompt-boundary", factory: (pi) => registerSubagentPromptBoundary(pi, runtime) });
 	if (proof) {
