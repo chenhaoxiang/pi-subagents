@@ -28,6 +28,11 @@
 - A child with `acceptanceRole: "read-only"` and an `output` path was told to write the file itself whenever it had `bash`, an MCP server or an extension tool the runtime doesn't list as read-only (for example a code-search tool). Without a write tool it either failed or replied with an apology, which was then saved into the file. A read-only child is now always told to return the artifact in its final reply, which the runtime saves to the path. Thanks to [@srobroek](https://github.com/srobroek) for the report (#3349).
 - On Windows, the inspector command for an async run now quotes for the pane's own shell. A Herdr pane running Git Bash received the PowerShell form `& "node.exe" …` and failed with `syntax error near unexpected token '&'`, so the inspector never started (#3306 fixed only the project pane). Thanks to [@mystery4f](https://github.com/mystery4f) for #3370.
 
+## [0.90.0-fork.3] - 2026-11-27
+
+- Port the workflow Node-on-PATH fix and inspector shell formatting from the post-0.90 community line.
+- Skip the cleanup commit that depends on the community guided-tool rewrite; the fork tool surface is unchanged.
+
 ## [0.90.0-fork.2] - 2026-11-27
 
 - Selectively port the post-0.90 community fixes that fit the maintained fork: output artifacts, strict thinking, stale notify context, Herdr Core children, extension warnings, workflow script-text refusal, static TypeBox, service tiers, per-step runner settings, and workflow/tool fixes.

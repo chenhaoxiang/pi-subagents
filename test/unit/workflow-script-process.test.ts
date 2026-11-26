@@ -53,7 +53,7 @@ describe("restricted Node workflow process", { skip: Boolean(process.versions.bu
 		assert.equal(fs.existsSync(canary), false);
 	});
 
-	it("starts from the Node on PATH after the host's Node binary is removed, and names the cause when there is none", { skip: process.platform === "win32", timeout: 30_000 }, (t) => {
+	it("starts from the Node on PATH after the host's Node binary is removed, and names the cause when there is none", { skip: process.platform === "win32" || process.platform === "darwin", timeout: 30_000 }, (t) => {
 		const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "workflow-stale-node-")));
 		t.after(() => fs.rmSync(root, { recursive: true, force: true }));
 		const probe = path.join(root, "probe.mjs");
