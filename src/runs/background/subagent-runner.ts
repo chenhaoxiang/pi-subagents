@@ -2007,6 +2007,9 @@ export async function runSubagent(
 
 	const flatSteps = flattenSteps(steps);
 	const initialFlatStepCount = flatSteps.length;
+	const statusStepConfigsOf = (list: RunnerStep[]): SubagentStep[] => list.flatMap((step) => isParallelGroup(step) ? step.parallel : isDynamicRunnerGroup(step) ? [step.parallel] : [step]);
+	const statusStepConfigs = statusStepConfigsOf(steps);
+
 	const parallelGroups: Array<{ start: number; count: number; stepIndex: number }> = [];
 	const initialStatusSteps: RunnerStatusStep[] = [];
 	let flatStepCount = 0;
@@ -2638,7 +2641,8 @@ export async function runSubagent(
 		}
 		const appendedSteps = requests.flatMap((request) => request.steps);
 		steps.push(...appendedSteps);
-		flatSteps.push(...flattenSteps(appendedSteps));
+		statusStepConfigs.push(...statusStepConfigsOf(appendedSteps));
+
 		const now = Date.now();
 		const pendingAppends = countPendingChainAppendRequests(asyncDir);
 		const added = appendRunnerStepsToStatus({
@@ -2650,6 +2654,9 @@ export async function runSubagent(
 		mutatingFailureStates.push(...Array.from({ length: added.addedFlatSteps }, () => createMutatingFailureState()));
 		pendingToolResults.push(...Array.from({ length: added.addedFlatSteps }, () => undefined));
 		pendingToolResultsByCallId.push(...Array.from({ length: added.addedFlatSteps }, () => new Map<string, PendingToolResult>()));
+		activeToolCalls.push(...Array.from({ length: added.addedFlatSteps }, () => new Map<string, ActiveToolCall>()));
+		activeToolKeysByName.push(...Array.from({ length: added.addedFlatSteps }, () => new Map<string, string[]>()));
+		activeToolSequences.push(...Array.from({ length: added.addedFlatSteps }, () => 0));
 		if (config.childIntercomTargets) {
 			config.childIntercomTargets = statusPayload.steps.map((statusStep, index) => resolveSubagentIntercomTarget(id, statusStep.agent, index));
 		}
@@ -2937,6 +2944,30 @@ export async function runSubagent(
 		return true;
 	};
 	const steeringMarkerPath = (requestId: string): string => path.join(asyncDir, "control", "steer-recovery", `${Buffer.from(requestId).toString("base64url")}.json`);
+
+	const checkInAfterMs = controlConfig.checkInAfterMs ?? CHECK_IN_INTERVAL_MS;
+	const checkInsSent = new Map<number, number>();
+	const maybeEmitCheckIn = (flatIndex: number, now: number): void => {
+		if (config.deadlineAt !== undefined || config.timeoutMs !== undefined || statusStepConfigs[flatIndex]?.timeoutMs !== undefined) return;
+		const step = statusPayload.steps[flatIndex];
+		if (!step || step.status !== "running") return;
+		const elapsedMs = Math.max(0, now - (step.startedAt ?? overallStartTime));
+		const due = Math.floor(elapsedMs / checkInAfterMs);
+		if (due <= (checkInsSent.get(flatIndex) ?? 0)) return;
+		checkInsSent.set(flatIndex, due);
+		appendControlEvent(buildControlEvent({
+			type: "active_long_running",
+			to: step.activityState ?? "active_long_running",
+			runId: id,
+			agent: step.agent,
+			index: flatIndex,
+			ts: now,
+			message: `${step.agent} has been running ${Math.round(elapsedMs / 60_000)} min`,
+			reason: "check_in",
+			elapsedMs,
+		}));
+	};
+
 	const markSteeringAttention = (index: number): void => {
 		const step = statusPayload.steps[index];
 		if (step) step.activityState = "needs_attention";
@@ -3189,12 +3220,12 @@ export async function runSubagent(
 			}
 		}
 		if (event.type === "tool_execution_start" && event.toolName) {
-			const mutates = isMutatingTool(event.toolName, event.args, flatSteps[flatIndex]?.mutationTools);
+			const mutates = isMutatingTool(event.toolName, event.args, statusStepConfigs[flatIndex]?.mutationTools);
 			const currentPath = resolveCurrentPath(event.toolName, event.args);
 			const argsPreview = extractToolArgsPreview(event.args ?? {});
 			const blocksSupervisor = isBlockingSupervisorTool(event.toolName, event.args);
 			step.toolCount = (step.toolCount ?? 0) + 1;
-			const configuredToolBudget = flatSteps[flatIndex]?.toolBudget;
+			const configuredToolBudget = statusStepConfigs[flatIndex]?.toolBudget;
 			if (configuredToolBudget) {
 				step.toolBudget = toolBudgetState(configuredToolBudget, step.toolCount, step.toolBudget?.blockedTool);
 				statusPayload.toolBudget = step.toolBudget;
@@ -3263,7 +3294,7 @@ export async function runSubagent(
 				step.progressUpdatedAt = now;
 			}
 			const blockedTool = (typeof resultToolName === "string" && resultToolName.length > 0 ? resultToolName : undefined) ?? toolSnapshot?.tool;
-			const configuredToolBudget = flatSteps[flatIndex]?.toolBudget;
+			const configuredToolBudget = statusStepConfigs[flatIndex]?.toolBudget;
 			const budgetBlocked = configuredToolBudget !== undefined && isToolBudgetBlockedMessage(configuredToolBudget, resultText, blockedTool);
 			if (budgetBlocked) {
 				step.toolBudget = toolBudgetState(configuredToolBudget, step.toolCount ?? 0, blockedTool);
@@ -3315,7 +3346,7 @@ export async function runSubagent(
 			// model each assistant message actually ran on. Mirrors the foreground
 			// path's `progress.model = observedModel`.
 			if (event.message.model) {
-				const observedModel = qualifyModelWithProvider(event.message.model, event.message.provider, flatSteps[flatIndex]?.modelVerificationRegistry) ?? event.message.model;
+				const observedModel = qualifyModelWithProvider(event.message.model, event.message.provider, statusStepConfigs[flatIndex]?.modelVerificationRegistry) ?? event.message.model;
 				if (observedModel !== step.model) {
 					step.launchModel ??= step.model;
 					step.model = observedModel;
@@ -3367,7 +3398,7 @@ export async function runSubagent(
 				config: controlConfig,
 				startedAt: step.startedAt ?? overallStartTime,
 				lastActivityAt,
-				turnCount: flatSteps[index]?.runner?.type === "external-cli" ? 1 : step.turnCount,
+				turnCount: statusStepConfigs[index]?.runner?.type === "external-cli" ? 1 : step.turnCount,
 				currentTool: step.currentTool,
 				thinking: step.thinking,
 				now,
@@ -3855,12 +3886,18 @@ export async function runSubagent(
 				});
 			});
 			statusPayload.steps.splice(groupStartFlatIndex, 1, ...dynamicStatusSteps);
+
+			statusStepConfigs.splice(groupStartFlatIndex, 1, ...dynamicSteps);
+
 			if (config.childIntercomTargets) {
 				config.childIntercomTargets = statusPayload.steps.map((statusStep, index) => resolveSubagentIntercomTarget(id, statusStep.agent, index));
 			}
 			mutatingFailureStates.splice(groupStartFlatIndex, 1, ...dynamicStatusSteps.map(() => createMutatingFailureState()));
 			pendingToolResults.splice(groupStartFlatIndex, 1, ...dynamicStatusSteps.map(() => undefined));
 			pendingToolResultsByCallId.splice(groupStartFlatIndex, 1, ...dynamicStatusSteps.map(() => new Map<string, PendingToolResult>()));
+			activeToolCalls.splice(groupStartFlatIndex, 1, ...dynamicStatusSteps.map(() => new Map<string, ActiveToolCall>()));
+			activeToolKeysByName.splice(groupStartFlatIndex, 1, ...dynamicStatusSteps.map(() => new Map<string, string[]>()));
+			activeToolSequences.splice(groupStartFlatIndex, 1, ...dynamicStatusSteps.map(() => 0));
 			const materializedDelta = dynamicStatusSteps.length - 1;
 			for (const group of statusPayload.parallelGroups) {
 				if (group.stepIndex === stepIndex) {
