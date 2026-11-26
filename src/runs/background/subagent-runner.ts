@@ -60,6 +60,7 @@ import {
 } from "../../shared/types.ts";
 import {
 	DEFAULT_CONTROL_CONFIG,
+	CHECK_IN_INTERVAL_MS,
 	buildControlEvent,
 	deriveActivityState,
 	claimControlNotification,

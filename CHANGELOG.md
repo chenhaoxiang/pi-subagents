@@ -26,6 +26,11 @@
 - A background completion that came due after the host disposed the session without `session_shutdown` (for example an SDK host calling `session.dispose()`) no longer crashes the process. Subscribing the settle hook on the stale extension ctx threw `This extension ctx is stale after session replacement or reload.` from a timer, as an uncaught exception. The stale-ctx error is now ignored; the notice is not sent to the disposed session and its result stays saved. Thanks to [@suveng](https://github.com/suveng) for #3345.
 - A child with `acceptanceRole: "read-only"` and an `output` path was told to write the file itself whenever it had `bash`, an MCP server or an extension tool the runtime doesn't list as read-only (for example a code-search tool). Without a write tool it either failed or replied with an apology, which was then saved into the file. A read-only child is now always told to return the artifact in its final reply, which the runtime saves to the path. Thanks to [@srobroek](https://github.com/srobroek) for the report (#3349).
 
+## [0.90.0-fork.2] - 2026-11-27
+
+- Selectively port the post-0.90 community fixes that fit the maintained fork: output artifacts, strict thinking, stale notify context, Herdr Core children, extension warnings, workflow script-text refusal, static TypeBox, service tiers, per-step runner settings, and workflow/tool fixes.
+- Keep the fork's guided-tool surface, wait/subscription contracts and `bg_wait`/supervisor tools; the community guided-tool rewrite (#3343, #3354, #3362, #3365, #3369) is intentionally not adopted in this revision.
+
 ## [0.90.0-fork.1] - 2026-11-23
 
 - Integrate community v0.90.0 while retaining the maintained fork's heterogeneous-model fallback, idle-timeout, runner/host compatibility, UNKNOWN reconciliation and fail-closed recovery behavior.

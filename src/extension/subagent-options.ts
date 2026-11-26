@@ -4,7 +4,7 @@ import { Value } from "typebox/value";
 import type { SubagentParamsLike } from "../runs/foreground/subagent-executor.ts";
 import type { DisabledFeatureSurface } from "../shared/disabled-features.ts";
 import { closestMatch } from "../shared/edit-distance.ts";
-import { isWorkflowScriptText, removedModelWorkflowFieldError } from "./public-execution.ts";
+import { removedModelWorkflowFieldError } from "./public-execution.ts";
 import { SUBAGENT_OPTION_KEYS, SubagentOptionParams, createSubagentParamsSchema } from "./schemas.ts";
 
 
@@ -30,8 +30,7 @@ export function flattenSubagentToolOptions(params: Record<string, unknown>, disa
 	const removedTopLevel = removedModelWorkflowFieldError(params);
 	if (removedTopLevel) throw new Error(removedTopLevel);
 	const { options, ...topLevel } = params;
-	checkTopLevelFields(topLevel, disabled);
-	if (!disabled?.params.has("workflow") && typeof topLevel.workflow === "string" && isWorkflowScriptText(topLevel.workflow)) throw new Error("subagent: workflow has line breaks, so it is script text; pass it as options.script (or a ```js workflow block with workflow: true).");
+	if (!disabled?.params.has("workflow") && typeof topLevel.workflow === "string" && /[\r\n]/.test(topLevel.workflow)) throw new Error("subagent: workflow has line breaks, so it is script text; pass it as options.script (or a ```js workflow block with workflow: true).");
 
 	if (options === undefined) return topLevel;
 	if (!options || typeof options !== "object" || Array.isArray(options)) throw new Error("subagent: options must be an object.");
